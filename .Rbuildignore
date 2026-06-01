@@ -1,0 +1,9 @@
+^renv$
+^renv\.lock$
+\.Rproj$
+^\.Rproj\.user$
+^\.Rprofile$
+^\.DS_Store$
+^\.gitignore$
+^dev$
+^LICENSE\.md$

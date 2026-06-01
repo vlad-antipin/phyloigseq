@@ -1,0 +1,59 @@
+Package: PhyloIgSeq
+Title: Ig Coating Analysis from Phyloseq Data
+Version: 0.0.0.9000
+Authors@R: 
+    person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre"))
+Description: Provides wrappers for phyloseq functions, adapting them for
+    usage in a web application as well for analysis of diversity and Ig
+    coating.
+License: MIT + file LICENSE
+Depends: 
+    R (>= 3.5)
+Imports: 
+    ade4,
+    car,
+    ComplexHeatmap,
+    dplyr,
+    DT,
+    gganimate,
+    ggExtra,
+    ggplot2,
+    ggpubr,
+    ggrepel,
+    ggsci,
+    gifski,
+    gtools,
+    htmlwidgets,
+    latex2exp,
+    magrittr,
+    MASS,
+    microbiome,
+    openxlsx,
+    phyloseq,
+    speedyseq,
+    plotly,
+    ragg,
+    rlang,
+    rstatix,
+    Rtsne,
+    scales,
+    sp,
+    tidyr,
+    tools,
+    umap,
+    utils,
+    vegan,
+    VIM,
+    zCompositions
+Remotes:
+    mikemc/speedyseq
+Suggests:
+    BiocManager,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.0.0
+Config/testthat/edition: 3

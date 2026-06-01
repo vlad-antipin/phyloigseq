@@ -1,0 +1,26 @@
+# R session artefacts
+.Rproj.user
+.Rhistory
+.RData
+.RDataTmp*
+.Ruserdata
+
+# macOS
+**/.DS_Store
+
+# renv (packages declared in DESCRIPTION, not renv)
+renv/
+renv.lock
+
+# Build artefacts
+*.Rcheck/
+*.tar.gz
+*.tgz
+
+# Vignettes (built output)
+vignettes/*.html
+vignettes/*.pdf
+inst/doc/
+
+# pkgdown site
+docs/
