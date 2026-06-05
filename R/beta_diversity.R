@@ -969,6 +969,7 @@ ggplot_beta_dispersion = function(
   facet.levels = NULL,
   shape.name = NULL,
   shape.levels = NULL,
+  size.name = NULL,
   animation.variable.name = NULL,
   animation.variable.levels = NULL,
   remove.na.from.plot = FALSE,
@@ -1152,6 +1153,7 @@ ggplot_beta_dispersion = function(
     for (var.name in c(
       label.name,
       shape.name,
+      size.name,
       facet.name,
       animation.variable.name
     )) {
@@ -1265,6 +1267,12 @@ ggplot_beta_dispersion = function(
     shape = NULL
   }
 
+  if (!is.null(size.name)) {
+    size = sample.data[[size.name]]
+  } else {
+    size = NULL
+  }
+
   hover.variables = colnames(sample.data)[
     colnames(sample.data) %in% hover.variables
   ]
@@ -1290,11 +1298,12 @@ ggplot_beta_dispersion = function(
         y = Comp2,
         color = label, # OK if NULL
         text = hover.text,
-        shape = shape # OK if NULL
+        shape = shape, # OK if NULL
+        size = size # OK if NULL
       ),
       plot.df
     ) +
-    labs(color = label.name, shape = shape.name)
+    labs(color = label.name, shape = shape.name, size = size.name)
 
   if (ellipses & is.factor(label)) {
     plt = plt +
