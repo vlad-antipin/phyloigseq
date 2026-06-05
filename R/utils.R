@@ -193,9 +193,20 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
       title = "Rarefaction Curves"
     )
 
-  if (!show_legend) {
-    p <- p + theme(legend.position = "none")
-  }
+  p <- p +
+    theme_minimal() +
+    ggplot2::theme(
+      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 10, hjust = 0.5),
+      legend.title = if (show_legend) {
+        element_text(face = "bold", hjust = 0.5)
+      },
+      legend.position = if (show_legend) {
+        "right"
+      } else {
+        "none"
+      }
+    )
 
   return(p)
 }
