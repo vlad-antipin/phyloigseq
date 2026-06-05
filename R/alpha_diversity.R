@@ -134,12 +134,12 @@ plot_alpha_diversity = function(
   facet.levels = NULL,
   shape = NULL,
   shape.levels = NULL,
+  size = NULL,
   remove.na.from.plot = FALSE,
   plot_type = NULL, # automatic if NULL
   color_vector = c("brown", "darkgreen", "orange", "violet"),
   stat = FALSE,
   check_depth = FALSE, # NOTE: not compatible with plotly
-  size = 1.5,
   alpha = 1
 ) {
   # Assuming alpha diversity is in the first column !
@@ -186,7 +186,10 @@ plot_alpha_diversity = function(
   # having NA for at least one of graphical parameters (x-axis variable and group variable)
   # remove these samples from sample data
   if (remove.na.from.plot) {
-    full.sample.data = remove_nas(full.sample.data, c(x, group, facet, shape))
+    full.sample.data = remove_nas(
+      full.sample.data,
+      c(x, group, facet, shape, size)
+    )
   }
 
   # Prepare hover information about samples based on sample_data
@@ -245,10 +248,10 @@ plot_alpha_diversity = function(
       point_mapping,
       aes(size = .data[["depth"]])
     )
-  } else {
+  } else if (!is.null(size)) {
     point_mapping = modifyList(
       point_mapping,
-      aes(size = size)
+      aes(size = .data[[size]])
     )
   }
 
