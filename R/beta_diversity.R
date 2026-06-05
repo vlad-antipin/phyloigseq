@@ -928,9 +928,10 @@ scree_plot = function(eigen.values, max.nb.comp = 10) {
     warning("No eigen values are furnished")
     return(NULL)
   }
+  total_var = sum(eigen.values[eigen.values > 0])
   eigen.values = eigen.values[1:min(max.nb.comp, length(eigen.values))]
   plot.data = data.frame(
-    prop_var = eigen.values / sum(eigen.values) * 100,
+    prop_var = eigen.values / total_var * 100,
     dim = if (!is.null(names(eigen.values))) {
       names(eigen.values)
     } else {
@@ -1058,7 +1059,9 @@ ggplot_beta_dispersion = function(
 
   if (!is.null(beta.dispersion.fit$eigen.values)) {
     prop.var.explained = beta.dispersion.fit$eigen.values /
-      sum(beta.dispersion.fit$eigen.values) *
+      sum(beta.dispersion.fit$eigen.values[
+        beta.dispersion.fit$eigen.values > 0
+      ]) *
       100
   } else {
     prop.var.explained = NULL
