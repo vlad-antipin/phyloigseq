@@ -43,7 +43,6 @@
 #' @import gifski
 
 #' @keywords internal
-#' Score name constants used for filtering column names
 IG_SCORES = c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # scores to come:
 #"purity_corrected_prob_index", "purity_corrected_prob_ratio")
@@ -117,6 +116,168 @@ transform_abundances =
       return(abundance_table)
     }
   }
+
+#' Plot Rarefaction Curves
+#'
+#' Computes and plots rarefaction curves for all samples in a \code{phyloseq}
+#' object using \code{\link[vegan]{rarecurve}}.
+#'
+#' @param ps A \code{\link[phyloseq]{phyloseq}} object with an OTU table and
+#'   sample data. Samples with zero total counts are automatically excluded.
+#' @param step Integer. Sampling-depth increment passed to
+#'   \code{\link[vegan]{rarecurve}}. Smaller values yield smoother curves at
+#'   the cost of computation time. Default \code{100}.
+#' @param show_legend Logical. Whether to display the sample legend.
+#'   Default \code{TRUE}.
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object with one rarefaction curve
+#'   per sample, coloured by sample name.
+#'
+#' @seealso \code{\link[vegan]{rarecurve}}, \code{\link{plot_seq_depth}}
+#'
+#' @export
+plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
+  # Load required packages
+  require(phyloseq)
+  require(vegan)
+  require(ggplot2)
+  require(dplyr)
+  require(tidyr)
+
+  # Extract OTU table
+  otu <- as(otu_table(ps), "matrix")
+
+  # Ensure samples are rows
+  if (taxa_are_rows(ps)) {
+    otu <- t(otu)
+  }
+
+  # Remove samples with zero counts
+  otu <- otu[rowSums(otu) > 0, ]
+
+  # Compute rarefaction curves
+  rare_df <- rarecurve(
+    otu,
+    step = step,
+    xlab = "Reads",
+    ylab = "Richness",
+    tidy = TRUE,
+    label = FALSE
+  )
+  rare_df = rare_df %>%
+    rename(Reads = Sample, Richness = Species, Sample = Site)
+
+  # names(rare_list) <- row.names(ps@sam_data)
+  # # Convert rarecurve output to dataframe
+  # rare_df <- lapply(names(rare_list), function(sample) {
+  #   data.frame(
+  #     Sample = sample,
+  #     Reads = attr(rare_list[[sample]], "Subsample"),
+  #     Richness = rare_list[[sample]]
+  #   )
+  # }) %>%
+  #   bind_rows()
+
+  # print(head(rare_df))
+
+  # Plot
+  p <- ggplot(
+    rare_df,
+    aes(x = Reads, y = Richness, group = Sample, color = Sample)
+  ) +
+    geom_line(alpha = 0.8) +
+    theme_bw() +
+    labs(
+      x = "Sequencing depth",
+      y = "Observed richness",
+      title = "Rarefaction Curves"
+    )
+
+  if (!show_legend) {
+    p <- p + theme(legend.position = "none")
+  }
+
+  return(p)
+}
+
+#' Plot Sequencing Depth
+#'
+#' Visualises per-sample sequencing depth from a \code{\link[phyloseq]{phyloseq}}
+#' object as either a bar chart (one bar per sample) or a grouped boxplot with
+#' jittered points.
+#'
+#' @param ps A \code{\link[phyloseq]{phyloseq}} object with an OTU table and
+#'   sample data.
+#' @param type Character. Plot type: \code{"bar"} (default) for a bar chart
+#'   ordered by sample name, or \code{"box"} for a boxplot grouped by a
+#'   metadata variable.
+#' @param x_var Character. Name of a sample-data column to use as the x-axis
+#'   grouping variable. Required when \code{type = "box"}, ignored otherwise.
+#' @param facet_var Character or \code{NULL}. Name of a sample-data column used
+#'   to facet the plot with \code{\link[ggplot2]{facet_wrap}}. Only applied
+#'   when \code{type = "box"}. Default \code{NULL} (no faceting).
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object.
+#'
+#' @seealso \code{\link{plot_rarefaction}}
+#'
+#' @export
+plot_seq_depth <- function(
+  ps,
+  type = c("bar", "box"),
+  x_var = NULL,
+  facet_var = NULL
+) {
+  require(phyloseq)
+  require(ggplot2)
+  require(dplyr)
+
+  type <- match.arg(type)
+
+  # Compute sequencing depth
+  depth_df <- data.frame(
+    Sample = sample_names(ps),
+    Depth = sample_sums(ps)
+  )
+
+  # Add metadata
+  meta <- as.data.frame(sample_data(ps))
+  meta$Sample <- rownames(meta)
+
+  depth_df <- left_join(depth_df, meta, by = "Sample")
+
+  # -----------------------
+  # BARPLOT
+  # -----------------------
+  if (type == "bar") {
+    p <- ggplot(depth_df, aes(x = Sample, y = Depth)) +
+      geom_bar(stat = "identity") +
+      theme_bw() +
+      labs(x = "Sample", y = "Sequencing depth") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  }
+
+  # -----------------------
+  # BOXPLOT + JITTER
+  # -----------------------
+  if (type == "box") {
+    if (is.null(x_var)) {
+      stop("For boxplot, please provide x_var (independent variable).")
+    }
+
+    p <- ggplot(depth_df, aes_string(x = x_var, y = "Depth")) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_jitter(width = 0.2, alpha = 0.7) +
+      theme_bw() +
+      labs(x = x_var, y = "Sequencing depth")
+
+    if (!is.null(facet_var)) {
+      p <- p + facet_wrap(as.formula(paste("~", facet_var)))
+    }
+  }
+
+  return(p)
+}
 
 #' Rarefy Abundances to Same Depth by multinomial resampling
 #' @export

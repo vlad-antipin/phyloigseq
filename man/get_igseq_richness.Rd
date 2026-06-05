@@ -4,7 +4,12 @@
 \alias{get_igseq_richness}
 \title{Get Richness Based on Ig Score Significance}
 \usage{
-get_igseq_richness(ps_ig_score, proportions = FALSE, low_lim = -5, high_lim = 5)
+get_igseq_richness(
+  ps_ig_score,
+  proportions = FALSE,
+  low_lim = -5,
+  high_lim = 5
+)
 }
 \description{
 Get Richness Based on Ig Score Significance
