@@ -130,8 +130,10 @@ plot_alpha_diversity = function(
   x.levels = NULL,
   group = NULL,
   group.levels = NULL,
-  facet = NULL,
-  facet.levels = NULL,
+  facet.row = NULL,
+  facet.row.levels = NULL,
+  facet.col = NULL,
+  facet.col.levels = NULL,
   shape = NULL,
   shape.levels = NULL,
   size = NULL,
@@ -169,13 +171,23 @@ plot_alpha_diversity = function(
     full.sample.data[[x]] = set_levels(full.sample.data, x, x.levels)
   }
 
-  is_valid_facet = is_valid_factor(full.sample.data, facet)
+  is_valid_facet_row = is_valid_factor(full.sample.data, facet.row)
 
-  if (is_valid_facet) {
-    full.sample.data[[facet]] = set_levels(
+  if (is_valid_facet_row) {
+    full.sample.data[[facet.row]] = set_levels(
       full.sample.data,
-      facet,
-      facet.levels
+      facet.row,
+      facet.row.levels
+    )
+  }
+
+  is_valid_facet_col = is_valid_factor(full.sample.data, facet.col)
+
+  if (is_valid_facet_col) {
+    full.sample.data[[facet.col]] = set_levels(
+      full.sample.data,
+      facet.col,
+      facet.col.levels
     )
   }
 
@@ -188,7 +200,7 @@ plot_alpha_diversity = function(
   if (remove.na.from.plot) {
     full.sample.data = remove_nas(
       full.sample.data,
-      c(x, group, facet, shape, size)
+      c(x, group, facet.row, facet.col, shape, size)
     )
   }
 
@@ -291,9 +303,20 @@ plot_alpha_diversity = function(
 
   plt = plt + theme_minimal()
 
-  if (is_valid_facet) {
+  if (is_valid_facet_row && is_valid_facet_col) {
     plt = plt +
-      facet_wrap(~ .data[[facet]])
+      facet_grid(
+        rows = vars(!!sym(facet.row)),
+        cols = vars(!!sym(facet.col)),
+        labeller = "label_value" #"label_both" or "label_value"
+      )
+    #facet_grid(.data[[facet.row]] ~ .data[[facet.col]])
+  } else if (is_valid_facet_row) {
+    plt = plt +
+      facet_wrap(~ .data[[facet.row]])
+  } else if (is_valid_facet_col) {
+    plt = plt +
+      facet_wrap(~ .data[[facet.col]])
   }
 
   # TODO: ignored it since ggarrange is incompatible with plotly after
