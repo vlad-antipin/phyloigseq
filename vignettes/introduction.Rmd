@@ -1,0 +1,142 @@
+---
+title: "Introduction to PhyloIgSeq"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to PhyloIgSeq}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+```{r setup}
+library(PhyloIgSeq)
+```
+
+## Overview
+
+PhyloIgSeq provides a unified workflow for microbiota diversity analysis and
+immunoglobulin (Ig) coating quantification from 16S amplicon sequencing data.
+The package takes a `phyloseq` object — typically the output of a DADA2
+pipeline — and guides the user through filtering, alpha/beta diversity
+analysis, compositional visualisation, and Ig coating scoring.
+
+This vignette walks through a complete end-to-end analysis using the bundled
+example datasets.
+
+---
+
+## Data
+
+```{r data}
+# TODO: load example dataset(s)
+# data("...")
+```
+
+---
+
+## Filtering
+
+Apply sample- and taxa-level filters before downstream analysis.
+
+```{r filter}
+# TODO: show filter_samples() / filter_taxa() usage on ps_16s_human
+```
+
+---
+
+## Alpha diversity
+
+Alpha diversity summarises within-sample richness and evenness.
+
+```{r alpha}
+# TODO: plot_alpha_diversity(ps_16s_human, measures = c("Observed", "Shannon"), group_var = "...")
+```
+
+---
+
+## Beta diversity
+
+Beta diversity compares community composition between samples via ordination.
+
+```{r beta-unconstrained}
+# TODO: unconstrained ordination (PCoA / PCA / MDS) on ps_16s_human
+```
+
+```{r beta-constrained}
+# TODO: constrained ordination (RDA / CCA) with environmental variables
+```
+
+---
+
+## Compositional analysis
+
+### Barplots
+
+```{r barplot}
+# TODO: taxonomic barplot at phylum or genus level
+```
+
+### Heatmaps
+
+```{r heatmap}
+# TODO: heatmap of top N taxa across samples
+```
+
+---
+
+## Ig coating analysis
+
+The `PhyloIgSeq` S4 class stores Ig-Seq fractions and coating scores together
+with optional taxonomic and sample metadata.
+
+### Building a PhyloIgSeq object
+
+```{r igseq-build}
+# TODO: construct a PhyloIgSeq object from ps_mice_iga
+# igseq <- new("PhyloIgSeq", ...)
+```
+
+### Computing Ig scores
+
+`compute_ig_score()` supports several established scoring methods:
+
+```{r ig-scores}
+# TODO: compute Palm and Kau scores; compare across methods
+# scores <- compute_ig_score(method = "kau", pos = ..., neg = ...)
+```
+
+### Sliding Z-score
+
+The sliding Z-score is a novel per-taxon coating metric that accounts for
+variation in Ig+ / Ig− frequency across the abundance range.
+
+```{r slide-z}
+# TODO: compute and visualise sliding Z-score
+```
+
+---
+
+## Export
+
+Results can be exported to Excel-ready tables for use in downstream modelling
+(e.g., the Feature Selector App).
+
+```{r export, eval = FALSE}
+# TODO: export metadata, taxonomy, and abundance tables
+```
+
+---
+
+## Session info
+
+```{r session}
+sessionInfo()
+```
