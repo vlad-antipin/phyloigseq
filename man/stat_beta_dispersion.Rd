@@ -7,6 +7,8 @@
 stat_beta_dispersion(
   beta.dispersion.fit,
   facet.name = NULL,
+  facet.row.name = NULL,
+  facet.col.name = NULL,
   comp = c(1, 2),
   strata.name = NULL,
   label.name

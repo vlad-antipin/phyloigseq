@@ -19,10 +19,20 @@ fractions, and taxonomic or sample-level metadata.
 
 \item{\code{second_negative_fraction_name}}{Character or NULL. Name of the secondary negative fraction (e.g., 10\%)}
 
+\item{\code{presorting_fraction_name}}{Character or NULL. Name of the pre-sorting (whole community) fraction}
+
+\item{\code{ig_freq_name}}{Character or NULL. Name of the column containing total Ig+ frequency per sample}
+
 \item{\code{ellipse_coords}}{A data.frame or NULL. Stores coordinates for sliding Z-score ellipses}
 
 \item{\code{sample_data}}{A data.frame or NULL. Optional metadata for each sample}
 
 \item{\code{tax_table}}{A data.frame or NULL. Taxonomic information}
+
+\item{\code{phyloseq_sample_ids}}{Vector or NULL. Correspondence between phyloseq sample IDs and sample IDs used in \code{ig_coating}}
+
+\item{\code{total_reads}}{A data.frame or NULL. Total read counts per sample and fraction before rarefaction}
+
+\item{\code{imputed_taxa}}{List or NULL. Taxa that had zeros imputed, stored per sample}
 }}
 

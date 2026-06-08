@@ -9,7 +9,7 @@ Description: Provides wrappers for phyloseq functions, adapting them for
 License: MIT + file LICENSE
 Depends: 
     R (>= 3.5)
-Imports: 
+Imports:
     ade4,
     car,
     ComplexHeatmap,
@@ -26,12 +26,11 @@ Imports:
     htmlwidgets,
     latex2exp,
     magrittr,
-    MASS,
+    methods,
     microbiome,
     openxlsx,
     phyloseq,
     speedyseq,
-    plotly,
     ragg,
     rlang,
     rstatix,
@@ -50,8 +49,10 @@ Remotes:
 Suggests:
     BiocManager,
     knitr,
+    plotly,
     rmarkdown,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)

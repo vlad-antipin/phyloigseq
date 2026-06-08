@@ -11,9 +11,14 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #' @slot positive_fraction_name Character. Name of the positive Ig-coated fraction
 #' @slot first_negative_fraction_name Character. Name of the main negative fraction (e.g., 90%)
 #' @slot second_negative_fraction_name Character or NULL. Name of the secondary negative fraction (e.g., 10%)
+#' @slot presorting_fraction_name Character or NULL. Name of the pre-sorting (whole community) fraction
+#' @slot ig_freq_name Character or NULL. Name of the column containing total Ig+ frequency per sample
 #' @slot ellipse_coords A data.frame or NULL. Stores coordinates for sliding Z-score ellipses
 #' @slot sample_data A data.frame or NULL. Optional metadata for each sample
 #' @slot tax_table A data.frame or NULL. Taxonomic information
+#' @slot phyloseq_sample_ids Vector or NULL. Correspondence between phyloseq sample IDs and sample IDs used in \code{ig_coating}
+#' @slot total_reads A data.frame or NULL. Total read counts per sample and fraction before rarefaction
+#' @slot imputed_taxa List or NULL. Taxa that had zeros imputed, stored per sample
 #'
 #' @exportClass PhyloIgSeq
 setClass(
@@ -67,7 +72,7 @@ collapsePhyloIgSeq = function(phyloigseq_list) {
 #' This function computes various Ig scores based on sample fraction data.
 #'
 #' @param physeq A `phyloseq` object containing raw count data.
-#' @param grouped_data Optional. A data frame with pre-grouped sample information.
+#' @param taxrank Character or NULL. Taxonomic rank to agglomerate to before computing scores.
 #' @param sample_id_name Name of the column identifying unique samples.
 #' @param sample_ids Optional. A character vector of sample IDs to subset.
 #' @param fraction_id_name Name of the column indicating fraction (e.g., pos, neg).

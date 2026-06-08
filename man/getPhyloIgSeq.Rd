@@ -27,6 +27,8 @@ getPhyloIgSeq(
 \arguments{
 \item{physeq}{A \code{phyloseq} object containing raw count data.}
 
+\item{taxrank}{Character or NULL. Taxonomic rank to agglomerate to before computing scores.}
+
 \item{sample_id_name}{Name of the column identifying unique samples.}
 
 \item{sample_ids}{Optional. A character vector of sample IDs to subset.}
@@ -56,8 +58,6 @@ getPhyloIgSeq(
 \item{confidence_levels}{Optional. Confidence levels for scoring.}
 
 \item{scores}{Vector of score names to compute.}
-
-\item{grouped_data}{Optional. A data frame with pre-grouped sample information.}
 }
 \value{
 A data frame or list with computed scores per sample.

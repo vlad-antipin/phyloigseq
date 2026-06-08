@@ -11,16 +11,18 @@ plot_alpha_diversity(
   x.levels = NULL,
   group = NULL,
   group.levels = NULL,
-  facet = NULL,
-  facet.levels = NULL,
+  facet.row = NULL,
+  facet.row.levels = NULL,
+  facet.col = NULL,
+  facet.col.levels = NULL,
   shape = NULL,
   shape.levels = NULL,
+  size = NULL,
   remove.na.from.plot = FALSE,
   plot_type = NULL,
   color_vector = c("brown", "darkgreen", "orange", "violet"),
   stat = FALSE,
   check_depth = FALSE,
-  size = 1.5,
   alpha = 1
 )
 }

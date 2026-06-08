@@ -9,10 +9,8 @@
 
 
 #' @import openxlsx
-
 #' @import DT
 #' @import ade4
-#' @import plotly
 #' @import vegan
 #' @import Rtsne
 #' @import umap
@@ -25,23 +23,23 @@
 #' @import rstatix
 #' @import scales
 #' @import phyloseq
+#' @importFrom speedyseq plot_bar psmelt plot_tree transform_sample_counts filter_taxa plot_heatmap tax_glom tip_glom
+#' @import ggplot2
+#' @import methods
 #' @importFrom microbiome transform
 #' @import zCompositions
 #' @importFrom magrittr %>%
 #' @importFrom gtools mixedsort
 #' @import rlang
 #' @import ggExtra
-
 #' @importFrom car dataEllipse
 #' @import sp
-
 #' @importFrom ComplexHeatmap Heatmap HeatmapAnnotation anno_text
-
 #' @import ragg
-
 #' @import gganimate
 #' @import gifski
-
+#' @importFrom utils globalVariables
+#'
 #' @keywords internal
 IG_SCORES = c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # scores to come:
@@ -137,13 +135,6 @@ transform_abundances =
 #'
 #' @export
 plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
-  # Load required packages
-  require(phyloseq)
-  require(vegan)
-  require(ggplot2)
-  require(dplyr)
-  require(tidyr)
-
   # Extract OTU table
   otu <- as(otu_table(ps), "matrix")
 
@@ -239,10 +230,6 @@ plot_seq_depth <- function(
   x_var = NULL,
   facet_var = NULL
 ) {
-  require(phyloseq)
-  require(ggplot2)
-  require(dplyr)
-
   type <- match.arg(type)
 
   # Compute sequencing depth
