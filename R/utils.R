@@ -7,6 +7,20 @@
 #'  \url{https://www.immulab.fr/cms/index.php/team/tools/lab-tools}.
 "_PACKAGE"
 
+# Compute the optimal ncol for facet_wrap: minimize empty cells, prefer wider
+# (more columns) layouts. Avoids degenerate single-row/column results for n > 3.
+smart_facet_ncol <- function(n) {
+  if (n <= 3) return(n)
+  divisors <- which(n %% seq_len(n) == 0)
+  perfect_wide <- divisors[divisors >= sqrt(n) & divisors <= ceiling(n / 2)]
+  if (length(perfect_wide) > 0) {
+    return(min(perfect_wide))
+  }
+  nc_range <- seq(ceiling(sqrt(n)), ceiling(n / 2))
+  empties  <- ceiling(n / nc_range) * nc_range - n
+  max(nc_range[empties == min(empties)])
+}
+
 
 #' @import openxlsx
 #' @import DT

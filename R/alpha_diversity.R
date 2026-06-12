@@ -313,10 +313,20 @@ plot_alpha_diversity = function(
     #facet_grid(.data[[facet.row]] ~ .data[[facet.col]])
   } else if (is_valid_facet_row) {
     plt = plt +
-      facet_wrap(~ .data[[facet.row]])
+      facet_wrap(
+        ~ .data[[facet.row]],
+        ncol = smart_facet_ncol(
+          nlevels(factor(full.sample.data[[facet.row]]))
+        )
+      )
   } else if (is_valid_facet_col) {
     plt = plt +
-      facet_wrap(~ .data[[facet.col]])
+      facet_wrap(
+        ~ .data[[facet.col]],
+        ncol = smart_facet_ncol(
+          nlevels(factor(full.sample.data[[facet.col]]))
+        )
+      )
   }
 
   # TODO: ignored it since ggarrange is incompatible with plotly after

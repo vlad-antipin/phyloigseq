@@ -1035,6 +1035,7 @@ ggplot_beta_dispersion = function(
   animation.variable.levels = NULL,
   remove.na.from.plot = FALSE,
   ellipses = FALSE, # only for factor lable
+  fill.ellipses = FALSE, # fill ellipses with color (requires ellipses = TRUE)
   stat.beta.dispersion = NULL, # in case of stats performed between groups
   # can contain  label.name, overwriting the parameter `label.name`
   biplot.loadings = FALSE, # aka species
@@ -1052,7 +1053,8 @@ ggplot_beta_dispersion = function(
   max.overlaps = 10, # in case of repel
   marginal.plot = NULL, # only for factor label
   # NOTE: marginal plot is incompatible with plotly!
-  raw.loadings = TRUE # TODO: think if you should implement correlations here as an alternative
+  raw.loadings = TRUE, # TODO: think if you should implement correlations here as an alternative
+  point.alpha = 1
 ) {
   fit = beta.dispersion.fit$fit
   sample.data = beta.dispersion.fit$sample.data
@@ -1382,13 +1384,24 @@ ggplot_beta_dispersion = function(
         shape = shape, # OK if NULL
         size = size # OK if NULL
       ),
-      plot.df
+      plot.df,
+      alpha = point.alpha
     ) +
     labs(color = label.name, shape = shape.name, size = size.name)
 
   if (ellipses & is.factor(label)) {
-    plt = plt +
-      stat_ellipse(aes(x = Comp1, y = Comp2, color = label), plot.df)
+    if (fill.ellipses) {
+      plt = plt +
+        stat_ellipse(
+          aes(x = Comp1, y = Comp2, color = label, fill = label),
+          plot.df,
+          geom = "polygon",
+          alpha = 0.2
+        )
+    } else {
+      plt = plt +
+        stat_ellipse(aes(x = Comp1, y = Comp2, color = label), plot.df)
+    }
   }
 
   plt = plt +
@@ -1705,7 +1718,10 @@ ggplot_beta_dispersion = function(
     }
   } else if (!is.null(facet)) {
     plt = plt +
-      facet_wrap(. ~ facet, scales = "fixed")
+      facet_wrap(
+        . ~ facet, scales = "fixed",
+        ncol = smart_facet_ncol(nlevels(plot.df$facet))
+      )
   }
 
   # Marginal plot in case of factor variable - boxplot, density...
