@@ -23,7 +23,7 @@
 #' @import rstatix
 #' @import scales
 #' @import phyloseq
-#' @importFrom speedyseq plot_bar psmelt plot_tree transform_sample_counts filter_taxa plot_heatmap tax_glom tip_glom
+#' @importFrom speedyseq tax_glom
 #' @import ggplot2
 #' @import methods
 #' @importFrom microbiome transform
