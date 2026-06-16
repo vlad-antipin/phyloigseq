@@ -8,6 +8,12 @@ get_beta_dispersion = function(
   transform.abundances = "identity",
   dist = "bray", # for PCoA, NMDS or dbRDA
   method = "PCoA",
+  ndims = 10, # number of ordination axes to retain in coords/loadings/
+  # covariates. Models can have up to nsamples - 1 axes, but only a couple
+  # are ever plotted - keeping them all makes correlating every taxon
+  # against every axis for `loadings` (and storing the resulting matrices)
+  # far slower than necessary. Raise this if you need to plot axes beyond
+  # the default range.
   model = NULL, # in case of constrained model,
   # string with a part of the formula
   # for covariates e.g. "Var1+Var2"
@@ -106,26 +112,32 @@ get_beta_dispersion = function(
     if (method == "pcoa") {
       fit = vegan::wcmdscale(dist.matrix, eig = TRUE)
       eigen.values = vegan::eigenvals(fit)
+      n.axes = min(ndims, length(eigen.values))
 
       coords[[1]] = scores(
         fit,
         display = "sites",
-        choices = 1:length(eigen.values),
+        choices = 1:n.axes,
         scaling = 1
       )
       coords[[2]] = scores(
         fit,
         display = "sites",
-        choices = 1:length(eigen.values),
+        choices = 1:n.axes,
         scaling = 2
       )
 
-      # NOTE: we don't get loading from the model but we can nevertheless correlate
-      #       abundances against axes - be careful when interpret
-      vectors = envfit(fit, otu_table(physeq), permutations = 0)$vectors
-      # by default envfit gives scaled unit vectors,
-      # so scale it back with corr.coeff.
-      loadings[[1]] = vectors$arrows * vectors$r # ≈ scaling 1 ?
+      # NOTE: we don't get loadings from the model but we can nevertheless
+      #       correlate abundances against axes - be careful when interpreting.
+      # We used to get these via envfit(), which fits a multiple regression of
+      # each taxon onto ALL requested axes. PCoA axes are orthogonal though, so
+      # that multiple regression reduces to a plain per-axis correlation -
+      # envfit's QR-based implementation doesn't exploit this and becomes very
+      # slow as the number of axes/taxa grows, so just correlate directly.
+      loadings[[1]] = suppressWarnings(cor(
+        as(otu_table(physeq), "matrix"),
+        coords[[1]]
+      ))
       # TODO:for now same thing for both "scalings"
       # loadings[[2]] = wascores(fit$points, otu_table(physeq)) ≈ scaling 2 ?
     } else if (method == "tsne") {
@@ -181,29 +193,30 @@ get_beta_dispersion = function(
       fit = vegan::decorana(otu)
     }
     eigen.values = vegan::eigenvals(fit)
+    n.axes = min(ndims, length(eigen.values))
 
     coords[[1]] = scores(
       fit,
       display = "sites",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 1
     )
     coords[[2]] = scores(
       fit,
       display = "sites",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 2
     )
     loadings[[1]] = scores(
       fit,
       display = "species",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 1
     )
     loadings[[2]] = scores(
       fit,
       display = "species",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 2
     )
   } else if (!is.null(model)) {
@@ -242,41 +255,42 @@ get_beta_dispersion = function(
     }
 
     eigen.values = vegan::eigenvals(fit)
+    n.axes = min(ndims, length(eigen.values))
 
     coords[[1]] = scores(
       fit,
       display = "sites",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 1
     )
     coords[[2]] = scores(
       fit,
       display = "sites",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 2
     )
     loadings[[1]] = scores(
       fit,
       display = "species",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 1
     )
     loadings[[2]] = scores(
       fit,
       display = "species",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 2
     )
     covariates[[1]] = scores(
       fit,
       display = "bp",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 1
     )
     covariates[[2]] = scores(
       fit,
       display = "bp",
-      choices = 1:length(eigen.values),
+      choices = 1:n.axes,
       scaling = 2
     )
   } else {
