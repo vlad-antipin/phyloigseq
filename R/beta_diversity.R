@@ -61,7 +61,7 @@ get_beta_dispersion = function(
 
   # Agglomerate taxa by taxrank
   if (!is.null(taxrank)) {
-    physeq = tax_glom(physeq = physeq, taxrank = taxrank)
+    physeq = speedyseq::tax_glom(physeq = physeq, taxrank = taxrank)
     taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank]) # NOTE: names of taxons are not necesserily unique!
   }
 
@@ -332,9 +332,9 @@ get_beta_dispersion = function(
 #' @export
 stat_beta_dispersion = function(
   beta.dispersion.fit,
-  facet.name = NULL,      # single facet (backward compat alias for facet.row.name)
-  facet.row.name = NULL,  # row facet variable name
-  facet.col.name = NULL,  # col facet variable name; when set alongside facet.row.name, enables grid mode
+  facet.name = NULL, # single facet (backward compat alias for facet.row.name)
+  facet.row.name = NULL, # row facet variable name
+  facet.col.name = NULL, # col facet variable name; when set alongside facet.row.name, enables grid mode
   comp = c(1, 2), # if NULL, consider all components
   strata.name = NULL, # in case of paired design
   label.name
@@ -364,15 +364,26 @@ stat_beta_dispersion = function(
   }
 
   if (!is.null(strata.name)) {
-    stat.data.full[[strata.name]] = beta.dispersion.fit$sample.data[[strata.name]]
+    stat.data.full[[strata.name]] = beta.dispersion.fit$sample.data[[
+      strata.name
+    ]]
   }
 
   # Embed facet variables into stat.data.full before na.omit so subsetting is consistent
-  if (!is.null(facet.row.name) && facet.row.name %in% colnames(beta.dispersion.fit$sample.data)) {
-    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[facet.row.name]]
+  if (
+    !is.null(facet.row.name) &&
+      facet.row.name %in% colnames(beta.dispersion.fit$sample.data)
+  ) {
+    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[
+      facet.row.name
+    ]]
   }
-  if (grid.mode && facet.col.name %in% colnames(beta.dispersion.fit$sample.data)) {
-    stat.data.full[[".facet.col"]] = beta.dispersion.fit$sample.data[[facet.col.name]]
+  if (
+    grid.mode && facet.col.name %in% colnames(beta.dispersion.fit$sample.data)
+  ) {
+    stat.data.full[[".facet.col"]] = beta.dispersion.fit$sample.data[[
+      facet.col.name
+    ]]
   }
 
   stat.data.full = na.omit(stat.data.full)
@@ -398,12 +409,24 @@ stat_beta_dispersion = function(
       )
       p.raw = test.result$`Pr(>F)`[1]
       p.text = if (!is.null(strata)) {
-        paste0("restricted by ", strata.name, " PERMANOVA p = ",
-               format(signif(p.raw, digits = 2), scientific = TRUE))
+        paste0(
+          "restricted by ",
+          strata.name,
+          " PERMANOVA p = ",
+          format(signif(p.raw, digits = 2), scientific = TRUE)
+        )
       } else {
-        paste0("PERMANOVA p = ", format(signif(p.raw, digits = 2), scientific = TRUE))
+        paste0(
+          "PERMANOVA p = ",
+          format(signif(p.raw, digits = 2), scientific = TRUE)
+        )
       }
-      list(test.result = test.result, p.raw = p.raw, p.text = p.text, stat = "permanova")
+      list(
+        test.result = test.result,
+        p.raw = p.raw,
+        p.text = p.text,
+        stat = "permanova"
+      )
     } else {
       test.result = vegan::envfit(
         stat.data[, colnames(stat.data) != "Label"] ~ Label,
@@ -411,22 +434,40 @@ stat_beta_dispersion = function(
         permutations = 999
       )
       p.raw = test.result$vectors$pvals[1]
-      p.text = paste0("Correlation p = ", format(signif(p.raw, digits = 2), scientific = TRUE))
-      list(test.result = test.result, p.raw = p.raw, p.text = p.text, stat = "envfit")
+      p.text = paste0(
+        "Correlation p = ",
+        format(signif(p.raw, digits = 2), scientific = TRUE)
+      )
+      list(
+        test.result = test.result,
+        p.raw = p.raw,
+        p.text = p.text,
+        stat = "envfit"
+      )
     }
   }
 
-  dim_used = if (!is.null(comp)) comp else paste("all", ncol(beta.dispersion.fit$coords))
+  dim_used = if (!is.null(comp)) {
+    comp
+  } else {
+    paste("all", ncol(beta.dispersion.fit$coords))
+  }
 
   if (grid.mode) {
     row.vals = unique(stat.data.full[[".facet.row"]])
     col.vals = unique(stat.data.full[[".facet.col"]])
-    combinations = expand.grid(row = row.vals, col = col.vals, stringsAsFactors = FALSE)
+    combinations = expand.grid(
+      row = row.vals,
+      col = col.vals,
+      stringsAsFactors = FALSE
+    )
 
     test.result.all = list()
     p.value.df = data.frame(
-      facet.row = character(0), facet.col = character(0),
-      p.label = character(0), p.raw = numeric(0),
+      facet.row = character(0),
+      facet.col = character(0),
+      p.label = character(0),
+      p.raw = numeric(0),
       stringsAsFactors = FALSE
     )
     stat.type = NULL
@@ -439,20 +480,29 @@ stat_beta_dispersion = function(
           stat.data.full[[".facet.col"]] == col.val,
       ]
       if (length(unique(stat.data$Label)) < 2) {
-        warning(paste0("Facet [", row.val, ", ", col.val, "]: label doesn't vary, skipping."))
+        warning(paste0(
+          "Facet [",
+          row.val,
+          ", ",
+          col.val,
+          "]: label doesn't vary, skipping."
+        ))
         next
       }
       res = run_test(stat.data)
       key = paste(row.val, col.val, sep = "//")
       test.result.all[[key]] = res$test.result
       stat.type = res$stat
-      p.value.df = rbind(p.value.df, data.frame(
-        facet.row = as.character(row.val),
-        facet.col = as.character(col.val),
-        p.label = res$p.text,
-        p.raw = res$p.raw,
-        stringsAsFactors = FALSE
-      ))
+      p.value.df = rbind(
+        p.value.df,
+        data.frame(
+          facet.row = as.character(row.val),
+          facet.col = as.character(col.val),
+          p.label = res$p.text,
+          p.raw = res$p.raw,
+          stringsAsFactors = FALSE
+        )
+      )
     }
 
     return(list(
@@ -1036,11 +1086,11 @@ ggplot_beta_dispersion = function(
   comp = c(1, 2), # components to plot (loadings might be lacking components beyond 2)
   label.name = NULL,
   label.levels = NULL,
-  facet.name = NULL,       # single facet (backward compat alias for facet.row.name)
-  facet.levels = NULL,     # levels for facet.name
-  facet.row.name = NULL,   # row facet variable
+  facet.name = NULL, # single facet (backward compat alias for facet.row.name)
+  facet.levels = NULL, # levels for facet.name
+  facet.row.name = NULL, # row facet variable
   facet.row.levels = NULL,
-  facet.col.name = NULL,   # col facet variable; when set alongside facet.row.name, enables grid mode
+  facet.col.name = NULL, # col facet variable; when set alongside facet.row.name, enables grid mode
   facet.col.levels = NULL,
   shape.name = NULL,
   shape.levels = NULL,
@@ -1179,15 +1229,25 @@ ggplot_beta_dispersion = function(
 
   if (!is.null(facet.row.name) && !is.numeric(sample.data[[facet.row.name]])) {
     if (!is.null(facet.row.levels)) {
-      sample.data[[facet.row.name]] = factor(sample.data[[facet.row.name]], levels = facet.row.levels)
+      sample.data[[facet.row.name]] = factor(
+        sample.data[[facet.row.name]],
+        levels = facet.row.levels
+      )
     } else {
       sample.data[[facet.row.name]] = as.factor(sample.data[[facet.row.name]])
     }
   }
 
-  if (grid.mode && !is.null(facet.col.name) && !is.numeric(sample.data[[facet.col.name]])) {
+  if (
+    grid.mode &&
+      !is.null(facet.col.name) &&
+      !is.numeric(sample.data[[facet.col.name]])
+  ) {
     if (!is.null(facet.col.levels)) {
-      sample.data[[facet.col.name]] = factor(sample.data[[facet.col.name]], levels = facet.col.levels)
+      sample.data[[facet.col.name]] = factor(
+        sample.data[[facet.col.name]],
+        levels = facet.col.levels
+      )
     } else {
       sample.data[[facet.col.name]] = as.factor(sample.data[[facet.col.name]])
     }
@@ -1213,7 +1273,9 @@ ggplot_beta_dispersion = function(
       # Grid mode: p-values come as a data frame, rendered as geom_text annotations
       p.value.df = stat.beta.dispersion$p.value.df
     } else if (!is.null(stat.beta.dispersion$p.value)) {
-      if (is.null(facet.row.name) && is.null(names(stat.beta.dispersion$p.value))) {
+      if (
+        is.null(facet.row.name) && is.null(names(stat.beta.dispersion$p.value))
+      ) {
         # No facets: embed single p-value in subtitle
         p.value = paste(
           strsplit(stat.beta.dispersion$p.value[[1]], "\n")[[1]],
@@ -1222,10 +1284,15 @@ ggplot_beta_dispersion = function(
       } else if (
         !is.null(facet.row.name) &&
           !is.null(names(stat.beta.dispersion$p.value)) &&
-          all(levels(sample.data[[facet.row.name]]) %in% names(stat.beta.dispersion$p.value))
+          all(
+            levels(sample.data[[facet.row.name]]) %in%
+              names(stat.beta.dispersion$p.value)
+          )
       ) {
         # Single-facet: embed per-facet p-value into facet strip labels
-        p.value = stat.beta.dispersion$p.value[levels(sample.data[[facet.row.name]])]
+        p.value = stat.beta.dispersion$p.value[levels(sample.data[[
+          facet.row.name
+        ]])]
       }
     }
   }
@@ -1733,7 +1800,8 @@ ggplot_beta_dispersion = function(
   } else if (!is.null(facet)) {
     plt = plt +
       facet_wrap(
-        . ~ facet, scales = "fixed",
+        . ~ facet,
+        scales = "fixed",
         ncol = smart_facet_ncol(nlevels(plot.df$facet))
       )
   }
