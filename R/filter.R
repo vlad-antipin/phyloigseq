@@ -321,7 +321,7 @@ plot_phylo_tree = function(
     }
 
     if (!is.null(taxrank)) {
-      physeq = tax_glom(physeq = physeq, taxrank = taxrank)
+      physeq = speedyseq::tax_glom(physeq = physeq, taxrank = taxrank)
       taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank])
     }
   }

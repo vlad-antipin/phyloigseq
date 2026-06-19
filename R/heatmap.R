@@ -67,7 +67,7 @@ get_phylo_heatmap = function(
       physeq %>%
         {
           if (!is.null(taxrank.for.hclust)) {
-            tax_glom(., taxrank = taxrank.for.hclust)
+            speedyseq::tax_glom(., taxrank = taxrank.for.hclust)
           } else {
             .
           }
@@ -89,7 +89,7 @@ get_phylo_heatmap = function(
   dendrogram = as.dendrogram(cluster.fit)
 
   if (!is.null(taxrank.for.heatmap)) {
-    physeq = tax_glom(physeq, taxrank = taxrank.for.heatmap)
+    physeq = speedyseq::tax_glom(physeq, taxrank = taxrank.for.heatmap)
     taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank.for.heatmap]) # NOTE: names of taxa are not necessarily unique!
   }
 
