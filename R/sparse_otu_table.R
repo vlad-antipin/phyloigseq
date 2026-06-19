@@ -1,10 +1,12 @@
 # Clean up stale sparse_otu_table method definitions
-for (.m in c("initialize", "dim", "dimnames", "length", "[", "t")) {
-  if (existsMethod(.m, "sparse_otu_table")) removeMethod(.m, "sparse_otu_table")
-}
-if (isClass("sparse_otu_table")) {
-  removeClass("sparse_otu_table")
-}
+suppressMessages({
+  for (.m in c("initialize", "dim", "dimnames", "length", "[", "t")) {
+    if (existsMethod(.m, "sparse_otu_table")) removeMethod(.m, "sparse_otu_table")
+  }
+  if (isClass("sparse_otu_table")) {
+    removeClass("sparse_otu_table")
+  }
+})
 
 #' @exportClass sparse_otu_table
 setClass(
