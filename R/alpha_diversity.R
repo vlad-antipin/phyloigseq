@@ -3,6 +3,30 @@
 # plot_foo(): builds plot based on the result of get_foo()
 # full_foo(): combines get_foo() and plot_foo() to restore the original foo()
 
+#' Sparse-aware Shannon alpha diversity
+#'
+#' Computes Shannon entropy per sample directly from the sparse matrix slot,
+#' without materialising the full dense OTU table.
+#'
+#' @param physeq A \code{phyloseq} object whose OTU table is a
+#'   \code{\link{sparse_otu_table-class}}.
+#' @return A named numeric vector of Shannon entropy values (nats), one per sample.
+#' @export
+sparse_shannon <- function(physeq) {
+  ot <- phyloseq::otu_table(physeq)
+  sp <- ot@sparse_data
+  if (phyloseq::taxa_are_rows(ot)) {
+    sp <- Matrix::t(sp)
+  }
+  # sp: samples x taxa (rows = samples)
+  N <- Matrix::rowSums(sp)
+  sp_norm <- Matrix::Diagonal(x = 1 / N) %*% sp
+  log_nz <- sp_norm
+  log_nz@x <- log(sp_norm@x)
+  h <- -Matrix::rowSums(sp_norm * log_nz)
+  setNames(as.numeric(h), rownames(sp))
+}
+
 #' Get Alpha-Diversity from Phyloseq Object
 #'
 #' Identity (raw counts) is suitable for all metrics,
@@ -61,7 +85,17 @@ get_alpha_diversity = function(
     }
 
     # alpha diversity is in the first column
-    alpha.diversity = estimate_richness(physeq, measures = measure)
+    if (
+      is(otu_table(physeq), "sparse_otu_table") && identical(measure, "Shannon")
+    ) {
+      shannon_vals <- sparse_shannon(physeq)
+      alpha.diversity <- data.frame(
+        Shannon = shannon_vals,
+        row.names = names(shannon_vals)
+      )
+    } else {
+      alpha.diversity = estimate_richness(physeq, measures = measure)
+    }
     full.sample.data = cbind(
       alpha.diversity,
       as(sample_data(physeq), "data.frame")
