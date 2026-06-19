@@ -16,9 +16,17 @@ get_sp_taxa_by_samples <- function(ps) {
   sp <- if (is(ot, "sparse_otu_table")) {
     ot@sparse_data
   } else {
-    as(as(Matrix::Matrix(methods::as(ot, "matrix"), sparse = TRUE), "generalMatrix"), "CsparseMatrix")
+    as(
+      as(
+        Matrix::Matrix(methods::as(ot, "matrix"), sparse = TRUE),
+        "generalMatrix"
+      ),
+      "CsparseMatrix"
+    )
   }
-  if (!phyloseq::taxa_are_rows(ot)) sp <- Matrix::t(sp)
+  if (!phyloseq::taxa_are_rows(ot)) {
+    sp <- Matrix::t(sp)
+  }
   sp
 }
 
@@ -26,16 +34,18 @@ get_sp_taxa_by_samples <- function(ps) {
 # Iterates over the CSC structure of t(sp): each column is a taxon, non-zero entries
 # are the samples that carry it.  Only pairs of samples sharing the same taxon contribute.
 compute_min_matrix <- function(sp) {
-  n    <- ncol(sp)
-  spt  <- Matrix::t(sp)
-  p    <- spt@p
+  n <- ncol(sp)
+  spt <- Matrix::t(sp)
+  p <- spt@p
   ridx <- spt@i + 1L
   rval <- spt@x
   C <- matrix(0.0, n, n)
   for (k in seq_len(ncol(spt))) {
     s <- p[k] + 1L
     e <- p[k + 1L]
-    if (e < s + 1L) next  # 0 or 1 non-zero sample: no pairwise contribution
+    if (e < s + 1L) {
+      next
+    } # 0 or 1 non-zero sample: no pairwise contribution
     si <- ridx[s:e]
     sv <- rval[s:e]
     C[si, si] <- C[si, si] + outer(sv, sv, pmin)
@@ -48,13 +58,13 @@ compute_min_matrix <- function(sp) {
 # ============================================================
 
 bray_curtis_sparse <- function(ps) {
-  sp  <- get_sp_taxa_by_samples(ps)
-  n   <- ncol(sp)
-  ss  <- Matrix::colSums(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  n <- ncol(sp)
+  ss <- Matrix::colSums(sp)
   nms <- colnames(sp)
-  C   <- compute_min_matrix(sp)
+  C <- compute_min_matrix(sp)
   denom <- outer(ss, ss, `+`)
-  bc  <- ifelse(denom == 0, 0.0, 1.0 - 2.0 * C / denom)
+  bc <- ifelse(denom == 0, 0.0, 1.0 - 2.0 * C / denom)
   diag(bc) <- 0
   dimnames(bc) <- list(nms, nms)
   stats::as.dist(bc)
@@ -63,13 +73,13 @@ bray_curtis_sparse <- function(ps) {
 # Abundance-weighted Jaccard: 1 - C / (A + B - C)
 # Equivalent to vegan's "jaccard" for quantitative data (Ruzicka index).
 jaccard_sparse <- function(ps) {
-  sp  <- get_sp_taxa_by_samples(ps)
-  ss  <- Matrix::colSums(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  ss <- Matrix::colSums(sp)
   nms <- colnames(sp)
-  C   <- compute_min_matrix(sp)
-  n   <- length(ss)
-  A   <- matrix(ss, n, n, byrow = FALSE)
-  B   <- matrix(ss, n, n, byrow = TRUE)
+  C <- compute_min_matrix(sp)
+  n <- length(ss)
+  A <- matrix(ss, n, n, byrow = FALSE)
+  B <- matrix(ss, n, n, byrow = TRUE)
   denom <- A + B - C
   jac <- ifelse(denom == 0, 0.0, 1.0 - C / denom)
   diag(jac) <- 0
@@ -79,13 +89,13 @@ jaccard_sparse <- function(ps) {
 
 # Kulczynski: 1 - 0.5 * (C/A + C/B)
 kulczynski_sparse <- function(ps) {
-  sp  <- get_sp_taxa_by_samples(ps)
-  ss  <- Matrix::colSums(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  ss <- Matrix::colSums(sp)
   nms <- colnames(sp)
-  C   <- compute_min_matrix(sp)
-  n   <- length(ss)
-  A   <- matrix(ss, n, n, byrow = FALSE)
-  B   <- matrix(ss, n, n, byrow = TRUE)
+  C <- compute_min_matrix(sp)
+  n <- length(ss)
+  A <- matrix(ss, n, n, byrow = FALSE)
+  B <- matrix(ss, n, n, byrow = TRUE)
   sim <- 0.5 * (ifelse(A == 0, 0, C / A) + ifelse(B == 0, 0, C / B))
   kul <- 1 - sim
   diag(kul) <- 0
@@ -96,12 +106,12 @@ kulczynski_sparse <- function(ps) {
 # L1 (Manhattan) distance for non-negative data: A + B - 2*C
 # Valid because |xi - yi| = (xi + yi) - 2*min(xi, yi) for xi, yi >= 0.
 manhattan_sparse <- function(ps) {
-  sp  <- get_sp_taxa_by_samples(ps)
-  ss  <- Matrix::colSums(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  ss <- Matrix::colSums(sp)
   nms <- colnames(sp)
-  C   <- compute_min_matrix(sp)
+  C <- compute_min_matrix(sp)
   man <- outer(ss, ss, `+`) - 2 * C
-  man[man < 0] <- 0  # floating-point guard
+  man[man < 0] <- 0 # floating-point guard
   diag(man) <- 0
   dimnames(man) <- list(nms, nms)
   stats::as.dist(man)
@@ -109,13 +119,13 @@ manhattan_sparse <- function(ps) {
 
 # Euclidean via the dot-product identity: ||xi - xj||^2 = ||xi||^2 + ||xj||^2 - 2*(xi.xj)
 euclidean_sparse <- function(ps) {
-  sp    <- get_sp_taxa_by_samples(ps)
-  nms   <- colnames(sp)
-  D     <- as.matrix(Matrix::crossprod(sp))  # n x n dot-product matrix
+  sp <- get_sp_taxa_by_samples(ps)
+  nms <- colnames(sp)
+  D <- as.matrix(Matrix::crossprod(sp)) # n x n dot-product matrix
   norm2 <- diag(D)
-  n     <- ncol(sp)
+  n <- ncol(sp)
   eu_sq <- outer(norm2, rep(1, n)) + outer(rep(1, n), norm2) - 2 * D
-  eu_sq[eu_sq < 0] <- 0  # floating-point guard
+  eu_sq[eu_sq < 0] <- 0 # floating-point guard
   eu <- sqrt(eu_sq)
   diag(eu) <- 0
   dimnames(eu) <- list(nms, nms)
@@ -130,30 +140,32 @@ euclidean_sparse <- function(ps) {
 # Summed: n_union - 2 * sum_{both>0} min(xi,xj)/(xi+xj)
 # Normalized by n_union = nnz_i + nnz_j - n_both (union of non-zero taxa).
 canberra_sparse <- function(ps) {
-  sp   <- get_sp_taxa_by_samples(ps)
-  n    <- ncol(sp)
-  nms  <- colnames(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  n <- ncol(sp)
+  nms <- colnames(sp)
 
-  spt  <- Matrix::t(sp)
-  p    <- spt@p
+  spt <- Matrix::t(sp)
+  p <- spt@p
   ridx <- spt@i + 1L
   rval <- spt@x
 
-  n_both   <- matrix(0L,  n, n)
+  n_both <- matrix(0L, n, n)
   harm_min <- matrix(0.0, n, n)
 
   for (k in seq_len(ncol(spt))) {
     s <- p[k] + 1L
     e <- p[k + 1L]
-    if (e < s) next  # taxon absent from all samples
+    if (e < s) {
+      next
+    } # taxon absent from all samples
     si <- ridx[s:e]
     sv <- rval[s:e]
-    n_both[si, si]   <- n_both[si, si] + 1L
+    n_both[si, si] <- n_both[si, si] + 1L
     harm_min[si, si] <- harm_min[si, si] +
       outer(sv, sv, function(a, b) pmin(a, b) / (a + b))
   }
 
-  nnz     <- Matrix::colSums(sp != 0)  # non-zero taxa count per sample
+  nnz <- Matrix::colSums(sp != 0) # non-zero taxa count per sample
   n_union <- outer(nnz, rep(1, n)) + outer(rep(1, n), nnz) - n_both
 
   can <- ifelse(n_union == 0, 0.0, 1.0 - 2 * harm_min / n_union)
@@ -166,11 +178,11 @@ canberra_sparse <- function(ps) {
 # da = sum(xi^2)/N1^2, db = sum(xj^2)/N2^2
 # Denominator simplifies to outer(sq/ss, ss) + outer(ss, sq/ss).
 horn_sparse <- function(ps) {
-  sp   <- get_sp_taxa_by_samples(ps)
-  nms  <- colnames(sp)
-  ss   <- Matrix::colSums(sp)
-  sq   <- Matrix::colSums(sp^2)
-  D    <- as.matrix(Matrix::crossprod(sp))
+  sp <- get_sp_taxa_by_samples(ps)
+  nms <- colnames(sp)
+  ss <- Matrix::colSums(sp)
+  sq <- Matrix::colSums(sp^2)
+  D <- as.matrix(Matrix::crossprod(sp))
   sqss <- ifelse(ss == 0, 0, sq / ss)
   denom <- outer(sqss, ss) + outer(ss, sqss)
   horn <- ifelse(denom == 0, 0.0, 1.0 - 2 * D / denom)
@@ -182,13 +194,13 @@ horn_sparse <- function(ps) {
 # Chord: Euclidean distance after L2-normalizing each sample.
 # chord[i,j] = sqrt(2 - 2*(xi.xj) / (||xi|| * ||xj||))
 chord_sparse <- function(ps) {
-  sp    <- get_sp_taxa_by_samples(ps)
-  nms   <- colnames(sp)
-  D     <- as.matrix(Matrix::crossprod(sp))
+  sp <- get_sp_taxa_by_samples(ps)
+  nms <- colnames(sp)
+  D <- as.matrix(Matrix::crossprod(sp))
   norm2 <- diag(D)
   denom <- outer(sqrt(norm2), sqrt(norm2))
   inner <- ifelse(denom == 0, 0, 2 - 2 * D / denom)
-  inner[inner < 0] <- 0  # floating-point guard
+  inner[inner < 0] <- 0 # floating-point guard
   ch <- sqrt(inner)
   diag(ch) <- 0
   dimnames(ch) <- list(nms, nms)
@@ -199,15 +211,15 @@ chord_sparse <- function(ps) {
 # hellinger[i,j] = sqrt(2 - 2 * DH[i,j] / sqrt(ss_i * ss_j))
 # where DH[i,j] = sum_k sqrt(x_ki) * sqrt(x_kj)  (sparse: zero entries stay zero)
 hellinger_sparse <- function(ps) {
-  sp      <- get_sp_taxa_by_samples(ps)
-  nms     <- colnames(sp)
-  ss      <- Matrix::colSums(sp)
+  sp <- get_sp_taxa_by_samples(ps)
+  nms <- colnames(sp)
+  ss <- Matrix::colSums(sp)
   sp_sqrt <- sp
   sp_sqrt@x <- sqrt(sp_sqrt@x)
-  DH    <- as.matrix(Matrix::crossprod(sp_sqrt))
+  DH <- as.matrix(Matrix::crossprod(sp_sqrt))
   denom <- outer(sqrt(ss), sqrt(ss))
   inner <- ifelse(denom == 0, 0, 2 - 2 * DH / denom)
-  inner[inner < 0] <- 0  # floating-point guard
+  inner[inner < 0] <- 0 # floating-point guard
   hel <- sqrt(inner)
   diag(hel) <- 0
   dimnames(hel) <- list(nms, nms)
@@ -256,19 +268,24 @@ SPARSE_DISTANCE_METHODS <- c(
 #' @export
 sparse_distance <- function(ps, method) {
   if (method %in% SPARSE_DISTANCE_METHODS) {
-    switch(method,
-      bray       = bray_curtis_sparse(ps),
-      jaccard    = jaccard_sparse(ps),
+    switch(
+      method,
+      bray = bray_curtis_sparse(ps),
+      jaccard = jaccard_sparse(ps),
       kulczynski = kulczynski_sparse(ps),
-      manhattan  = manhattan_sparse(ps),
-      euclidean  = euclidean_sparse(ps),
-      canberra   = canberra_sparse(ps),
-      horn       = horn_sparse(ps),
-      chord      = chord_sparse(ps),
-      hellinger  = hellinger_sparse(ps)
+      manhattan = manhattan_sparse(ps),
+      euclidean = euclidean_sparse(ps),
+      canberra = canberra_sparse(ps),
+      horn = horn_sparse(ps),
+      chord = chord_sparse(ps),
+      hellinger = hellinger_sparse(ps)
     )
   } else {
-    warning("No sparse version for '", method, "', falling back to phyloseq::distance")
+    warning(
+      "No sparse version for '",
+      method,
+      "', falling back to phyloseq::distance"
+    )
     phyloseq::distance(ps, method = method)
   }
 }

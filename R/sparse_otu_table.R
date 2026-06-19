@@ -1,7 +1,9 @@
 # Clean up stale sparse_otu_table method definitions
 suppressMessages({
   for (.m in c("initialize", "dim", "dimnames", "length", "[", "t")) {
-    if (existsMethod(.m, "sparse_otu_table")) removeMethod(.m, "sparse_otu_table")
+    if (existsMethod(.m, "sparse_otu_table")) {
+      removeMethod(.m, "sparse_otu_table")
+    }
   }
   if (isClass("sparse_otu_table")) {
     removeClass("sparse_otu_table")
@@ -60,7 +62,10 @@ setMethod(
 #' @export
 sparse_otu_table <- function(otu) {
   tar <- phyloseq::taxa_are_rows(otu)
-  sp <- as(as(Matrix::Matrix(as(otu, "matrix"), sparse = TRUE), "generalMatrix"), "CsparseMatrix")
+  sp <- as(
+    as(Matrix::Matrix(as(otu, "matrix"), sparse = TRUE), "generalMatrix"),
+    "CsparseMatrix"
+  )
   new(
     "sparse_otu_table",
     .Data = matrix(integer(0), 0L, 0L),
@@ -282,7 +287,10 @@ as_sparse_phyloseq <- function(ps) {
 #'   \code{taxrank}, with a standard dense OTU table.
 #' @export
 tax_glom <- function(physeq, taxrank, ...) {
-  if (is(physeq, "phyloseq") && is(phyloseq::otu_table(physeq), "sparse_otu_table")) {
+  if (
+    is(physeq, "phyloseq") &&
+      is(phyloseq::otu_table(physeq), "sparse_otu_table")
+  ) {
     ot <- phyloseq::otu_table(physeq)
     phyloseq::otu_table(physeq) <- phyloseq::otu_table(
       as(ot, "matrix"),
