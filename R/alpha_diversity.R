@@ -44,7 +44,7 @@ get_alpha_diversity = function(
     # NOTE: agglomerate taxa BEFORE transforming the data
     # Agglomerate taxa up to a certain taxrank
     if (!is.null(taxrank)) {
-      physeq = speedyseq::tax_glom(physeq = physeq, taxrank = taxrank)
+      physeq = tax_glom(physeq = physeq, taxrank = taxrank)
       taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank])
     }
 

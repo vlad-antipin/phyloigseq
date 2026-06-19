@@ -12,6 +12,7 @@ get_beta_dispersion(
   transform.abundances = "identity",
   dist = "bray",
   method = "PCoA",
+  ndims = 10,
   model = NULL,
   confounders = c(),
   species = FALSE,

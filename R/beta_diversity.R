@@ -61,7 +61,7 @@ get_beta_dispersion = function(
 
   # Agglomerate taxa by taxrank
   if (!is.null(taxrank)) {
-    physeq = speedyseq::tax_glom(physeq = physeq, taxrank = taxrank)
+    physeq = tax_glom(physeq = physeq, taxrank = taxrank)
     taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank]) # NOTE: names of taxons are not necesserily unique!
   }
 
@@ -104,7 +104,7 @@ get_beta_dispersion = function(
             method = dist
           )
         } else {
-          dist.matrix = phyloseq::distance(physeq, method = dist)
+          dist.matrix = sparse_distance(physeq, method = dist)
         }
       }
     }

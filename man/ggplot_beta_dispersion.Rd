@@ -24,6 +24,7 @@ ggplot_beta_dispersion(
   animation.variable.levels = NULL,
   remove.na.from.plot = FALSE,
   ellipses = FALSE,
+  fill.ellipses = FALSE,
   stat.beta.dispersion = NULL,
   biplot.loadings = FALSE,
   biplot.covariates = FALSE,
@@ -35,7 +36,8 @@ ggplot_beta_dispersion(
   repel = FALSE,
   max.overlaps = 10,
   marginal.plot = NULL,
-  raw.loadings = TRUE
+  raw.loadings = TRUE,
+  point.alpha = 1
 )
 }
 \description{

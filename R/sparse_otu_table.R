@@ -1,4 +1,3 @@
-library(phyloseq)
 # Clean up stale sparse_otu_table method definitions
 for (.m in c("initialize", "dim", "dimnames", "length", "[", "t")) {
   if (existsMethod(.m, "sparse_otu_table")) removeMethod(.m, "sparse_otu_table")
@@ -7,6 +6,7 @@ if (isClass("sparse_otu_table")) {
   removeClass("sparse_otu_table")
 }
 
+#' @exportClass sparse_otu_table
 setClass(
   "sparse_otu_table",
   contains = "otu_table",
@@ -28,8 +28,9 @@ setMethod(
   }
 )
 
+#' @export
 sparse_otu_table <- function(otu) {
-  tar <- taxa_are_rows(otu)
+  tar <- phyloseq::taxa_are_rows(otu)
   sp <- Matrix::Matrix(as(otu, "matrix"), sparse = TRUE)
   new(
     "sparse_otu_table",
@@ -98,7 +99,9 @@ setAs("sparse_otu_table", "data.frame", function(from) {
 # S3 methods so as.matrix() / as.data.frame() route here instead of
 # *.default, which checks is.matrix() at C-level, sees the 0x0 .Data stub,
 # and returns the sparse_otu_table unchanged (silently wrong).
+#' @exportS3Method base::as.matrix
 as.matrix.sparse_otu_table <- function(x, ...) as(x, "matrix")
+#' @exportS3Method base::as.data.frame
 as.data.frame.sparse_otu_table <- function(x, ...) {
   as.data.frame(as(x, "matrix"), ...)
 }
@@ -117,6 +120,7 @@ setMethod("t", "sparse_otu_table", function(x) {
 # search the global path).  phyloseq's own copies are also patched below via
 # assignInNamespace so that explicit phyloseq::sample_sums() calls from third-
 # party packages (e.g. PhyloIgSeq) go through the sparse-aware path too.
+#' @export
 taxa_sums <- function(physeq, ...) {
   ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
   if (is(ot, "sparse_otu_table")) {
@@ -130,6 +134,7 @@ taxa_sums <- function(physeq, ...) {
     phyloseq::taxa_sums(physeq, ...)
   }
 }
+#' @export
 sample_sums <- function(physeq, ...) {
   ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
   if (is(ot, "sparse_otu_table")) {
@@ -166,6 +171,7 @@ colSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
 # Safe to call repeatedly: returns the object unchanged if the OTU table is
 # already a sparse_otu_table.  All other phyloseq components (tax_table,
 # sample_data, phy_tree, refseq) are preserved.
+#' @export
 as_sparse_phyloseq <- function(ps) {
   stopifnot(is(ps, "phyloseq"))
   ot <- phyloseq::otu_table(ps)
@@ -179,10 +185,11 @@ as_sparse_phyloseq <- function(ps) {
 # speedyseq::merge_taxa_vec calls phyloseq::taxa_sums(otu_table(x)) internally,
 # which falls through to base::rowSums — a C routine that reads .Data directly
 # and errors on the 0x0 stub. Materialise to dense before delegating.
+#' @export
 tax_glom <- function(physeq, taxrank, ...) {
-  if (is(physeq, "phyloseq") && is(otu_table(physeq), "sparse_otu_table")) {
-    ot <- otu_table(physeq)
-    otu_table(physeq) <- phyloseq::otu_table(
+  if (is(physeq, "phyloseq") && is(phyloseq::otu_table(physeq), "sparse_otu_table")) {
+    ot <- phyloseq::otu_table(physeq)
+    phyloseq::otu_table(physeq) <- phyloseq::otu_table(
       as(ot, "matrix"),
       taxa_are_rows = phyloseq::taxa_are_rows(ot)
     )

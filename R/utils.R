@@ -39,7 +39,6 @@ smart_facet_ncol <- function(n) {
 #' @import rstatix
 #' @import scales
 #' @import phyloseq
-#' @importFrom speedyseq tax_glom
 #' @import ggplot2
 #' @import methods
 #' @importFrom microbiome transform

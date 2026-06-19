@@ -121,7 +121,7 @@ getPhyloIgSeq = function(
     empirical_null_distribution = FALSE
   }
   if (!is.null(taxrank)) {
-    physeq = speedyseq::tax_glom(physeq = physeq, taxrank = taxrank)
+    physeq = tax_glom(physeq = physeq, taxrank = taxrank)
     taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank])
   }
 
