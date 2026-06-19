@@ -34,7 +34,24 @@ make_pair <- function(
   list(dense = ps_dense, sparse = ps_sparse)
 }
 
-pair <- make_pair()
+# Reference distance: phyloseq::distance for methods it supports;
+# vegan decostand + vegdist for chord and hellinger.
+ref_distance <- function(ps, method) {
+  if (method %in% c("chord", "hellinger")) {
+    # vegan expects samples x taxa; respect the otu_table orientation
+    m  <- as(otu_table(ps), "matrix")
+    ot <- if (taxa_are_rows(otu_table(ps))) t(m) else m
+    tr <- switch(method,
+      chord     = vegan::decostand(ot, method = "normalize"),
+      hellinger = vegan::decostand(ot, method = "hellinger")
+    )
+    vegan::vegdist(tr, method = "euclidean")
+  } else {
+    phyloseq::distance(ps, method = method)
+  }
+}
+
+pair   <- make_pair()
 pair_t <- make_pair(taxa_are_rows = FALSE)
 
 # ---- SPARSE_DISTANCE_METHODS metadata ----
@@ -43,11 +60,22 @@ test_that("SPARSE_DISTANCE_METHODS contains 'bray'", {
   expect_true("bray" %in% SPARSE_DISTANCE_METHODS)
 })
 
+test_that("SPARSE_DISTANCE_METHODS contains all expected methods", {
+  expected <- c("bray", "jaccard", "kulczynski", "manhattan",
+                "euclidean", "canberra", "horn", "chord", "hellinger")
+  expect_true(all(expected %in% SPARSE_DISTANCE_METHODS))
+})
+
 test_that("unsupported method falls back to phyloseq::distance with a warning", {
-  expect_warning(
-    sparse_distance(pair$dense, method = "jaccard"),
-    regexp = "No sparse version"
+  warns <- character(0)
+  withCallingHandlers(
+    sparse_distance(pair$dense, method = "gower"),
+    warning = function(w) {
+      warns <<- c(warns, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
   )
+  expect_true(any(grepl("No sparse version", warns)))
 })
 
 # ---- Per-method generic tests ----
@@ -77,18 +105,18 @@ for (method in SPARSE_DISTANCE_METHODS) {
       )
     })
 
-    test_that(paste0("[", m, "] matches phyloseq::distance (tar = TRUE)"), {
+    test_that(paste0("[", m, "] matches reference distance (tar = TRUE)"), {
       expect_equal(
         as.numeric(sparse_distance(pair$sparse, method = m)),
-        as.numeric(phyloseq::distance(pair$dense, method = m)),
+        as.numeric(ref_distance(pair$dense, method = m)),
         tolerance = 1e-8
       )
     })
 
-    test_that(paste0("[", m, "] matches phyloseq::distance (tar = FALSE)"), {
+    test_that(paste0("[", m, "] matches reference distance (tar = FALSE)"), {
       expect_equal(
         as.numeric(sparse_distance(pair_t$sparse, method = m)),
-        as.numeric(phyloseq::distance(pair_t$dense, method = m)),
+        as.numeric(ref_distance(pair_t$dense, method = m)),
         tolerance = 1e-8
       )
     })
@@ -96,7 +124,7 @@ for (method in SPARSE_DISTANCE_METHODS) {
     test_that(paste0("[", m, "] accepts plain dense phyloseq"), {
       expect_equal(
         as.numeric(sparse_distance(pair$dense, method = m)),
-        as.numeric(phyloseq::distance(pair$dense, method = m)),
+        as.numeric(ref_distance(pair$dense, method = m)),
         tolerance = 1e-8
       )
     })
@@ -138,7 +166,7 @@ for (method in SPARSE_DISTANCE_METHODS) {
       p <- make_pair(n_taxa = 50, n_samples = 10, sparsity = 0.50, seed = 7)
       expect_equal(
         as.numeric(sparse_distance(p$sparse, method = m)),
-        as.numeric(phyloseq::distance(p$dense, method = m)),
+        as.numeric(ref_distance(p$dense, method = m)),
         tolerance = 1e-8
       )
     })
@@ -174,6 +202,220 @@ test_that("[bray] completely disjoint samples have distance 1", {
   expect_equal(
     as.numeric(sparse_distance(ps, method = "bray")),
     1,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Jaccard specific ----
+
+test_that("[jaccard] all distances are in [0, 1]", {
+  d <- sparse_distance(pair$sparse, method = "jaccard")
+  expect_true(all(as.numeric(d) >= 0))
+  expect_true(all(as.numeric(d) <= 1 + 1e-10))
+})
+
+test_that("[jaccard] two-sample hand-computed formula (13/18)", {
+  # s1=(10,0,5) A=15, s2=(0,3,5) B=8, C=min(10,0)+min(0,3)+min(5,5)=5
+  # jaccard = 1 - 5/(15+8-5) = 13/18
+  mat <- matrix(c(10L, 0L, 5L, 0L, 3L, 5L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "jaccard")),
+    13 / 18,
+    tolerance = 1e-12
+  )
+})
+
+test_that("[jaccard] disjoint samples have distance 1", {
+  mat <- matrix(c(5L, 0L, 0L, 3L), nrow = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "jaccard")),
+    1,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Kulczynski specific ----
+
+test_that("[kulczynski] all distances are in [0, 1]", {
+  d <- sparse_distance(pair$sparse, method = "kulczynski")
+  expect_true(all(as.numeric(d) >= -1e-10))
+  expect_true(all(as.numeric(d) <= 1 + 1e-10))
+})
+
+test_that("[kulczynski] two-sample hand-computed formula (25/48)", {
+  # s1=(10,0,5) A=15, s2=(0,3,5) B=8, C=5
+  # kulczynski = 1 - 0.5*(5/15 + 5/8) = 1 - 0.5*(1/3 + 5/8) = 25/48
+  mat <- matrix(c(10L, 0L, 5L, 0L, 3L, 5L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "kulczynski")),
+    25 / 48,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Manhattan specific ----
+
+test_that("[manhattan] all distances are non-negative", {
+  d <- sparse_distance(pair$sparse, method = "manhattan")
+  expect_true(all(as.numeric(d) >= 0))
+})
+
+test_that("[manhattan] two-sample hand-computed formula (13)", {
+  # s1=(10,0,5), s2=(0,3,5): |10-0|+|0-3|+|5-5| = 13
+  mat <- matrix(c(10L, 0L, 5L, 0L, 3L, 5L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "manhattan")),
+    13,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Euclidean specific ----
+
+test_that("[euclidean] all distances are non-negative", {
+  d <- sparse_distance(pair$sparse, method = "euclidean")
+  expect_true(all(as.numeric(d) >= 0))
+})
+
+test_that("[euclidean] two-sample hand-computed formula (1)", {
+  # s1=(1,2,3), s2=(1,2,4): sqrt((0)^2+(0)^2+(1)^2) = 1
+  mat <- matrix(c(1L, 2L, 3L, 1L, 2L, 4L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "euclidean")),
+    1,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Canberra specific ----
+
+test_that("[canberra] all distances are in [0, 1]", {
+  d <- sparse_distance(pair$sparse, method = "canberra")
+  expect_true(all(as.numeric(d) >= 0))
+  expect_true(all(as.numeric(d) <= 1 + 1e-10))
+})
+
+test_that("[canberra] two-sample hand-computed formula (5/6)", {
+  # s1=(5,0,3), s2=(0,2,1)
+  # |5-0|/(5+0)=1, |0-2|/(0+2)=1, |3-1|/(3+1)=0.5; n_active=3
+  # canberra = (1+1+0.5)/3 = 5/6
+  mat <- matrix(c(5L, 0L, 3L, 0L, 2L, 1L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "canberra")),
+    5 / 6,
+    tolerance = 1e-12
+  )
+})
+
+test_that("[canberra] disjoint samples have distance 1", {
+  mat <- matrix(c(5L, 0L, 0L, 3L), nrow = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "canberra")),
+    1,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Horn specific ----
+
+test_that("[horn] all distances are in [0, 1]", {
+  d <- sparse_distance(pair$sparse, method = "horn")
+  expect_true(all(as.numeric(d) >= -1e-10))
+  expect_true(all(as.numeric(d) <= 1 + 1e-10))
+})
+
+test_that("[horn] completely disjoint samples have distance 1", {
+  mat <- matrix(c(5L, 0L, 0L, 3L), nrow = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "horn")),
+    1,
+    tolerance = 1e-12
+  )
+})
+
+# ---- Chord specific ----
+
+test_that("[chord] all distances are in [0, sqrt(2)]", {
+  d <- sparse_distance(pair$sparse, method = "chord")
+  expect_true(all(as.numeric(d) >= -1e-10))
+  expect_true(all(as.numeric(d) <= sqrt(2) + 1e-10))
+})
+
+test_that("[chord] two-sample hand-computed formula (sqrt(2)/5)", {
+  # s1=(3,4), s2=(4,3): ||s1||=||s2||=5, dot=3*4+4*3=24
+  # chord = sqrt(2 - 2*24/25) = sqrt(2/25) = sqrt(2)/5
+  mat <- matrix(c(3L, 4L, 4L, 3L), nrow = 2, ncol = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "chord")),
+    sqrt(2) / 5,
+    tolerance = 1e-12
+  )
+})
+
+test_that("[chord] orthogonal samples have max distance sqrt(2)", {
+  mat <- matrix(c(5L, 0L, 0L, 3L), nrow = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "chord")),
+    sqrt(2),
+    tolerance = 1e-12
+  )
+})
+
+# ---- Hellinger specific ----
+
+test_that("[hellinger] all distances are in [0, sqrt(2)]", {
+  d <- sparse_distance(pair$sparse, method = "hellinger")
+  expect_true(all(as.numeric(d) >= -1e-10))
+  expect_true(all(as.numeric(d) <= sqrt(2) + 1e-10))
+})
+
+test_that("[hellinger] two-sample hand-computed formula (sqrt(2))", {
+  # s1=(4,0), s2=(0,1): disjoint support
+  # h1=(1,0), h2=(0,1); euclidean = sqrt(2)
+  mat <- matrix(c(4L, 0L, 0L, 1L), nrow = 2, ncol = 2)
+  rownames(mat) <- c("t1", "t2")
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  otu_table(ps) <- sparse_otu_table(otu_table(ps))
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "hellinger")),
+    sqrt(2),
     tolerance = 1e-12
   )
 })

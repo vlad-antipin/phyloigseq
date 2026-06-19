@@ -93,7 +93,17 @@ get_beta_dispersion = function(
         )
         dist.matrix = phyloseq::distance(physeq, method = "bray")
       } else {
-        # scale the data before applying euclidean or manhattan distance
+        # NOTE: euclidean and manhattan use z-score standardization (decostand "standardize")
+        # so that high-abundance taxa don't dominate the distance in ordination.
+        # This produces STANDARDIZED euclidean/manhattan, intentionally different from
+        # sparse_distance(ps, "euclidean"/"manhattan") which returns raw distances.
+        # The zero-variance filter (apply var > 0) prevents division-by-zero during
+        # z-score scaling; if sparse data leaves very few taxa, results may be degenerate.
+        # NOTE: if transform.abundances was applied above (e.g. CLR, Hellinger), this
+        # z-score step stacks on top of it. For CLR that is still useful (removes
+        # scale differences between taxa); for Hellinger it is redundant but harmless.
+        # TODO: consider routing through sparse_distance once standardization can be
+        # done sparsely, to avoid materializing the full dense OTU matrix here.
         if (!is.null(dist) && dist %in% c("euclidean", "manhattan")) {
           otu.mat = as(otu_table(physeq), "matrix")
           dist.matrix = vegdist(
