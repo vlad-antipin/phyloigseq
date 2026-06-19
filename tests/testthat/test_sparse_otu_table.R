@@ -1,8 +1,5 @@
-library(testthat)
 library(phyloseq)
-library(Matrix)
-
-source("../R/sparse_otu_table.R")
+library(PhyloIgSeq)
 
 # ---- Synthetic test data helpers ----
 

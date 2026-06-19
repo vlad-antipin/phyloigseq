@@ -24,3 +24,6 @@ inst/doc/
 
 # pkgdown site
 docs/
+
+# testthat snapshots (empty dir created automatically; only commit when snapshots exist)
+tests/testthat/_snaps/

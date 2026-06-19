@@ -33,7 +33,7 @@ setMethod(
 #' @export
 sparse_otu_table <- function(otu) {
   tar <- phyloseq::taxa_are_rows(otu)
-  sp <- Matrix::Matrix(as(otu, "matrix"), sparse = TRUE)
+  sp <- as(as(Matrix::Matrix(as(otu, "matrix"), sparse = TRUE), "generalMatrix"), "CsparseMatrix")
   new(
     "sparse_otu_table",
     .Data = matrix(integer(0), 0L, 0L),

@@ -12,7 +12,7 @@ bray_curtis_sparse <- function(ps) {
   sp <- if (is(ot, "sparse_otu_table")) {
     ot@sparse_data
   } else {
-    methods::as(Matrix::Matrix(methods::as(ot, "matrix"), sparse = TRUE), "dgCMatrix")
+    as(as(Matrix::Matrix(methods::as(ot, "matrix"), sparse = TRUE), "generalMatrix"), "CsparseMatrix")
   }
   if (!phyloseq::taxa_are_rows(ot)) {
     sp <- Matrix::t(sp)
@@ -48,12 +48,16 @@ bray_curtis_sparse <- function(ps) {
 }
 
 #' @export
-sparse_distance = function(ps, method) {
-  if (method == "bray") {
-    dist.matrix = bray_curtis_sparse(ps)
+SPARSE_DISTANCE_METHODS <- c("bray")
+
+#' @export
+sparse_distance <- function(ps, method) {
+  if (method %in% SPARSE_DISTANCE_METHODS) {
+    switch(method,
+      bray = bray_curtis_sparse(ps)
+    )
   } else {
-    warning("No sparse version for this distance metric")
-    dist.matrix = phyloseq::distance(ps, method = method)
+    warning("No sparse version for '", method, "', falling back to phyloseq::distance")
+    phyloseq::distance(ps, method = method)
   }
-  dist.matrix
 }
