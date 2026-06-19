@@ -10,5 +10,5 @@ SPARSE_DISTANCE_METHODS
 Character vector of distance method names that have a native sparse-matrix
 implementation in \pkg{PhyloIgSeq}. Pass one of these to
 \code{\link{sparse_distance}} to avoid converting the OTU table to a dense
-matrix. Currently supported: \code{"bray"} (Bray-Curtis dissimilarity).
+matrix.
 }

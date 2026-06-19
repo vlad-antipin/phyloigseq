@@ -12,7 +12,9 @@ a \code{\link{sparse_otu_table-class}} or a standard dense
 \code{\link[phyloseq]{otu_table}}.}
 
 \item{method}{A single character string naming the distance metric
-(e.g. \code{"bray"}).}
+(e.g. \code{"bray"}, \code{"jaccard"}, \code{"kulczynski"},
+\code{"manhattan"}, \code{"euclidean"}, \code{"canberra"}, \code{"horn"},
+\code{"chord"}, \code{"hellinger"}).}
 }
 \value{
 A \code{\link[stats]{dist}} object of pairwise sample distances.
