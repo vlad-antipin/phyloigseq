@@ -1,4 +1,3 @@
-library(phyloseq)
 library(PhyloIgSeq)
 
 # ---- Helpers ----
@@ -35,7 +34,7 @@ make_pair <- function(
   list(dense = ps_dense, sparse = ps_sparse)
 }
 
-pair   <- make_pair()
+pair <- make_pair()
 pair_t <- make_pair(taxa_are_rows = FALSE)
 
 # ---- SPARSE_DISTANCE_METHODS metadata ----
@@ -65,7 +64,10 @@ for (method in SPARSE_DISTANCE_METHODS) {
 
     test_that(paste0("[", m, "] dist has correct size (n*(n-1)/2)"), {
       n <- nsamples(pair$sparse)
-      expect_equal(length(sparse_distance(pair$sparse, method = m)), n * (n - 1L) / 2L)
+      expect_equal(
+        length(sparse_distance(pair$sparse, method = m)),
+        n * (n - 1L) / 2L
+      )
     })
 
     test_that(paste0("[", m, "] dist labels match sample names"), {
@@ -105,7 +107,11 @@ for (method in SPARSE_DISTANCE_METHODS) {
       colnames(mat) <- c("s1", "s2")
       ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
       otu_table(ps) <- sparse_otu_table(otu_table(ps))
-      expect_equal(as.numeric(sparse_distance(ps, method = m)), 0, tolerance = 1e-12)
+      expect_equal(
+        as.numeric(sparse_distance(ps, method = m)),
+        0,
+        tolerance = 1e-12
+      )
     })
 
     test_that(paste0("[", m, "] single-sample returns empty dist"), {
@@ -153,7 +159,11 @@ test_that("[bray] two-sample hand-computed formula (13/23)", {
   colnames(mat) <- c("s1", "s2")
   ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
   otu_table(ps) <- sparse_otu_table(otu_table(ps))
-  expect_equal(as.numeric(sparse_distance(ps, method = "bray")), 13 / 23, tolerance = 1e-12)
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "bray")),
+    13 / 23,
+    tolerance = 1e-12
+  )
 })
 
 test_that("[bray] completely disjoint samples have distance 1", {
@@ -161,5 +171,9 @@ test_that("[bray] completely disjoint samples have distance 1", {
   rownames(mat) <- c("t1", "t2")
   colnames(mat) <- c("s1", "s2")
   ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
-  expect_equal(as.numeric(sparse_distance(ps, method = "bray")), 1, tolerance = 1e-12)
+  expect_equal(
+    as.numeric(sparse_distance(ps, method = "bray")),
+    1,
+    tolerance = 1e-12
+  )
 })

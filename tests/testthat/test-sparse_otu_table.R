@@ -1,4 +1,3 @@
-library(phyloseq)
 library(PhyloIgSeq)
 
 # ---- Synthetic test data helpers ----

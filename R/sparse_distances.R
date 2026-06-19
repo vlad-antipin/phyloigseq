@@ -47,9 +47,29 @@ bray_curtis_sparse <- function(ps) {
   stats::as.dist(bc)
 }
 
+#' Distance methods with native sparse implementations
+#'
+#' Character vector of distance method names that have a native sparse-matrix
+#' implementation in \pkg{PhyloIgSeq}. Pass one of these to
+#' \code{\link{sparse_distance}} to avoid converting the OTU table to a dense
+#' matrix. Currently supported: \code{"bray"} (Bray-Curtis dissimilarity).
+#'
 #' @export
 SPARSE_DISTANCE_METHODS <- c("bray")
 
+#' Compute pairwise sample distances with sparse OTU table support
+#'
+#' Dispatches to a native sparse-matrix implementation when \code{method}
+#' appears in \code{\link{SPARSE_DISTANCE_METHODS}}, and falls back to
+#' \code{\link[phyloseq]{distance}} otherwise.
+#'
+#' @param ps A \code{\link[phyloseq]{phyloseq}} object. The OTU table may be
+#'   a \code{\link{sparse_otu_table-class}} or a standard dense
+#'   \code{\link[phyloseq]{otu_table}}.
+#' @param method A single character string naming the distance metric
+#'   (e.g. \code{"bray"}).
+#'
+#' @return A \code{\link[stats]{dist}} object of pairwise sample distances.
 #' @export
 sparse_distance <- function(ps, method) {
   if (method %in% SPARSE_DISTANCE_METHODS) {
