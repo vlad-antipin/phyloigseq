@@ -100,6 +100,7 @@ filterReads = function(
   if (class(physeq) != "phyloseq") {
     return(NULL)
   }
+  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
   # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
@@ -109,46 +110,51 @@ filterReads = function(
     return(physeq)
   }
   # /!\ Attention: global assignment
-  min.sample.sum.glob <<- min.sample.sum
-  min.taxa.sum.glob <<- min.taxa.sum
-  physeq.filtered = physeq
   if (taxa.first) {
-    if (!any(taxa_sums(physeq.filtered) >= min.taxa.sum.glob)) {
+    keep_taxa <<- taxa_sums(physeq) >= min.taxa.sum
+    if (!any(keep_taxa)) {
       warning("All taxa filtered out\n")
       return(NULL)
     }
-    physeq.filtered = subset_taxa(
-      physeq.filtered,
-      taxa_sums(physeq) >= min.taxa.sum.glob
-    )
-    if (!any(sample_sums(physeq.filtered) >= min.sample.sum.glob)) {
-      warning("All samples filtered out\n")
-      return(NULL)
-    }
-    physeq.filtered = subset_samples(
-      physeq.filtered,
-      sample_sums(physeq) >= min.sample.sum.glob
-    )
-  } else {
-    if (!any(sample_sums(physeq.filtered) >= min.sample.sum.glob)) {
-      warning("All samples filtered out\n")
-      return(NULL)
-    }
-    physeq.filtered = subset_samples(
-      physeq.filtered,
-      sample_sums(physeq) >= min.sample.sum.glob
+    physeq = subset_taxa(
+      physeq,
+      keep_taxa
     )
 
-    if (!any(taxa_sums(physeq.filtered) >= min.taxa.sum.glob)) {
+    keep_samples <<- sample_sums(physeq) >= min.sample.sum
+    if (!any(keep_samples)) {
+      warning("All samples filtered out\n")
+      return(NULL)
+    }
+    physeq = subset_samples(
+      physeq,
+      keep_samples
+    )
+  } else {
+    keep_samples <<- sample_sums(physeq) >= min.sample.sum
+    if (!any(keep_samples)) {
+      warning("All samples filtered out\n")
+      return(NULL)
+    }
+    physeq = subset_samples(
+      physeq,
+      keep_samples
+    )
+
+    keep_taxa <<- taxa_sums(physeq) >= min.taxa.sum
+    if (!any(keep_taxa)) {
       warning("All taxa filtered out\n")
       return(NULL)
     }
-    physeq.filtered = subset_taxa(
-      physeq.filtered,
-      taxa_sums(physeq) >= min.taxa.sum.glob
+    physeq = subset_taxa(
+      physeq,
+      keep_taxa
     )
   }
-  return(physeq.filtered)
+  if (sparse_input) {
+    physeq <- as_sparse_phyloseq(physeq)
+  }
+  return(physeq)
 }
 
 
@@ -222,6 +228,7 @@ filterSampleData = function(
   if (class(physeq) != "phyloseq") {
     return(NULL)
   }
+  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
   # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
@@ -248,6 +255,9 @@ filterSampleData = function(
   } else {
     filtered.physeq = physeq
   }
+  if (sparse_input) {
+    filtered.physeq <- as_sparse_phyloseq(filtered.physeq)
+  }
   return(filtered.physeq)
 }
 
@@ -261,6 +271,7 @@ filterTaxTable = function(
   if (class(physeq) != "phyloseq") {
     return(NULL)
   }
+  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
   # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
@@ -286,6 +297,9 @@ filterTaxTable = function(
       subset_taxa(eval(parse(text = filter.expression)))
   } else {
     filtered.physeq = physeq
+  }
+  if (sparse_input) {
+    filtered.physeq <- as_sparse_phyloseq(filtered.physeq)
   }
   return(filtered.physeq)
 }

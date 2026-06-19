@@ -10,14 +10,16 @@
 # Compute the optimal ncol for facet_wrap: minimize empty cells, prefer wider
 # (more columns) layouts. Avoids degenerate single-row/column results for n > 3.
 smart_facet_ncol <- function(n) {
-  if (n <= 3) return(n)
+  if (n <= 3) {
+    return(n)
+  }
   divisors <- which(n %% seq_len(n) == 0)
   perfect_wide <- divisors[divisors >= sqrt(n) & divisors <= ceiling(n / 2)]
   if (length(perfect_wide) > 0) {
     return(min(perfect_wide))
   }
   nc_range <- seq(ceiling(sqrt(n)), ceiling(n / 2))
-  empties  <- ceiling(n / nc_range) * nc_range - n
+  empties <- ceiling(n / nc_range) * nc_range - n
   max(nc_range[empties == min(empties)])
 }
 
@@ -405,24 +407,29 @@ is.count.like = function(x, allow.na = TRUE, consider.small.part = TRUE) {
   if (!is.numeric(x)) {
     return(FALSE)
   }
-  if (class(x) == "otu_table") {
-    x = as(x, "matrix")
+
+  if (is(x, "sparse_otu_table")) {
+    # Only check stored (non-zero) values; zero is trivially count-like.
+    vals <- x@sparse_data@x
+    if (consider.small.part) vals <- head(vals, 10000L)
+  } else {
+    # Covers both otu_table and any subclass that is not sparse_otu_table.
+    if (is(x, "otu_table")) {
+      x <- as(x, "matrix")
+    }
+    if (consider.small.part) {
+      x <- x[seq_len(min(100L, nrow(x))), seq_len(min(100L, ncol(x)))]
+    }
+    vals <- c(x)
   }
 
-  if (consider.small.part) {
-    # consider only maximum 100x100 part of the matrix
-    x = x[1:min(100, dim(x)[1]), 1:min(100, dim(x)[2])]
-  }
-
-  # Drop NA if allowed
   if (allow.na) {
-    x <- x[!is.na(x)]
-  } else if (anyNA(x)) {
+    vals <- vals[!is.na(vals)]
+  } else if (anyNA(vals)) {
     return(FALSE)
   }
 
-  # Fast check for non-negative integers
-  all(x >= 0 & is.finite(x) & x == floor(x))
+  all(vals >= 0 & is.finite(vals) & vals == floor(vals))
 }
 
 #' Make taxonomy names unique at all taxonomic rank levels

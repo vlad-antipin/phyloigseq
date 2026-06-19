@@ -51,10 +51,11 @@ group_sorted_samples = function(
   full_sample_data = sample_data(physeq) %>% as("data.frame")
 
   # Taxa are assumed to be by rows for this analysis
+  # TODO: optimize for sparse otu table
   if (!taxa_are_rows(physeq)) {
-    abundance_table = t(otu_table(physeq)@.Data)
+    abundance_table = t(otu_table(physeq)) %>% as("matrix")
   } else {
-    abundance_table = otu_table(physeq)@.Data
+    abundance_table = otu_table(physeq) %>% as("matrix")
   }
 
   if (is.null(sample_ids)) {
