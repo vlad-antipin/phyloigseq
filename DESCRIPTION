@@ -26,6 +26,7 @@ Imports:
     htmlwidgets,
     latex2exp,
     magrittr,
+    Matrix,
     methods,
     microbiome,
     openxlsx,
