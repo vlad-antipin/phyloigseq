@@ -315,8 +315,13 @@ plot_alpha_diversity = function(
     }
   }
 
-  plt = ggplot(full.sample.data, mapping) +
-    plot_layer_fn()
+  if (plot_type %in% c("boxplot", "violin")) {
+    plt = ggplot(full.sample.data, mapping) +
+      plot_layer_fn(outlier.shape = NA)
+  } else {
+    plt = ggplot(full.sample.data, mapping) +
+      plot_layer_fn()
+  }
 
   if (plot_type != "scatter") {
     plt = plt + ggplot2::geom_jitter(point_mapping, alpha = alpha)
