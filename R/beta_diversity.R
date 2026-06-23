@@ -1128,7 +1128,9 @@ ggplot_beta_dispersion = function(
   marginal.plot = NULL, # only for factor label
   # NOTE: marginal plot is incompatible with plotly!
   raw.loadings = TRUE, # TODO: think if you should implement correlations here as an alternative
-  point.alpha = 1
+  point.alpha = 1,
+  reverse.dim1 = FALSE,
+  reverse.dim2 = FALSE
 ) {
   fit = beta.dispersion.fit$fit
   sample.data = beta.dispersion.fit$sample.data
@@ -1832,6 +1834,14 @@ ggplot_beta_dispersion = function(
   } else if (!is.null(label)) {
     plt = plt +
       theme(legend.title = element_text(face = "bold", hjust = 0.5))
+  }
+
+  if (reverse.dim1) {
+    plt = plt + scale_x_reverse()
+  }
+
+  if (reverse.dim2) {
+    plt = plt + scale_y_reverse()
   }
 
   return(plt)
