@@ -61,28 +61,29 @@ get_phylo_heatmap = function(
   # Clustering of samples is performed on the original (agglomerated and transformed) data,
   # taxrank for agglomeration can be different for clustering (to balance better between noise and information)
   # and not to affect the heatmap visualisation
-
+  dist_mat = sparse_distance(
+    physeq %>%
+      {
+        if (!is.null(taxrank.for.hclust)) {
+          tax_glom(., taxrank = taxrank.for.hclust)
+        } else {
+          .
+        }
+      } %>%
+      {
+        if (
+          !is.null(transform.abundances) &
+            transform.abundances != "identity"
+        ) {
+          microbiome::transform(., transform = transform.abundances)
+        } else {
+          .
+        }
+      },
+    method = distance
+  )
   cluster.fit = hclust(
-    phyloseq::distance(
-      physeq %>%
-        {
-          if (!is.null(taxrank.for.hclust)) {
-            tax_glom(., taxrank = taxrank.for.hclust)
-          } else {
-            .
-          }
-        } %>%
-        {
-          if (
-            !is.null(transform.abundances) & transform.abundances != "identity"
-          ) {
-            microbiome::transform(., transform = transform.abundances)
-          } else {
-            .
-          }
-        },
-      distance
-    ),
+    dist_mat,
     "ward.D2"
   )
 
