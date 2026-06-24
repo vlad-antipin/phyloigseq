@@ -349,7 +349,8 @@ stat_beta_dispersion = function(
   facet.col = NULL, # grid-mode col facet variable name
   comp = c(1, 2), # if NULL, consider all components
   strata.name = NULL, # in case of paired design
-  label.name
+  label.name,
+  pairwise = FALSE
 ) {
   if (!is.null(facet.name) && is.null(facet)) {
     facet = facet.name
@@ -475,6 +476,49 @@ stat_beta_dispersion = function(
     }
   }
 
+  run_pairwise = function(stat.data) {
+    stat.data[[".facet.row"]] = NULL
+    stat.data[[".facet.col"]] = NULL
+    if (!is.factor(stat.data$Label) && !is.character(stat.data$Label)) {
+      return(NULL)
+    }
+    labels = unique(na.omit(as.character(stat.data$Label)))
+    if (length(labels) < 2) return(NULL)
+    pairs = combn(labels, 2, simplify = FALSE)
+    pair_results = lapply(pairs, function(pair) {
+      sub = stat.data[as.character(stat.data$Label) %in% pair, ]
+      sub = na.omit(sub)
+      if (length(unique(as.character(sub$Label))) < 2) return(NULL)
+      sub_strata = NULL
+      if (!is.null(strata.name) && strata.name %in% colnames(sub)) {
+        sub_strata = sub[[strata.name]]
+        sub[[strata.name]] = NULL
+      }
+      res = tryCatch(
+        vegan::adonis2(
+          sub[, colnames(sub) != "Label"] ~ Label,
+          data = sub,
+          strata = sub_strata,
+          permutations = 999,
+          method = "euclidean"
+        ),
+        error = function(e) NULL
+      )
+      if (is.null(res)) return(NULL)
+      data.frame(
+        group1 = pair[1],
+        group2 = pair[2],
+        R2 = res$R2[1],
+        p.raw = res$`Pr(>F)`[1],
+        stringsAsFactors = FALSE
+      )
+    })
+    pair_results = do.call(rbind, Filter(Negate(is.null), pair_results))
+    if (is.null(pair_results) || nrow(pair_results) == 0) return(NULL)
+    pair_results$p.adj = p.adjust(pair_results$p.raw, method = "BH")
+    pair_results
+  }
+
   dim_used = if (!is.null(comp)) {
     comp
   } else {
@@ -499,6 +543,7 @@ stat_beta_dispersion = function(
       stringsAsFactors = FALSE
     )
     stat.type = NULL
+    pairwise.list = list()
 
     for (i in seq_len(nrow(combinations))) {
       row.val = combinations$row[i]
@@ -531,6 +576,14 @@ stat_beta_dispersion = function(
           stringsAsFactors = FALSE
         )
       )
+      if (pairwise && res$stat == "permanova") {
+        pw = run_pairwise(stat.data)
+        if (!is.null(pw)) {
+          if (!is.null(facet.row)) pw[[facet.row]] = as.character(row.val)
+          if (!is.null(facet.col)) pw[[facet.col]] = as.character(col.val)
+          pairwise.list[[length(pairwise.list) + 1]] = pw
+        }
+      }
     }
 
     return(list(
@@ -545,7 +598,8 @@ stat_beta_dispersion = function(
       test.result = if (length(test.result.all) > 0) test.result.all else NULL,
       p.value = NULL,
       p.value.df = p.value.df,
-      p.value.raw = p.value.df$p.raw
+      p.value.raw = p.value.df$p.raw,
+      pairwise.df = if (pairwise && length(pairwise.list) > 0) do.call(rbind, pairwise.list) else NULL
     ))
   }
 
@@ -560,6 +614,7 @@ stat_beta_dispersion = function(
   p.value.all = c()
   p.value.raw = c()
   stat.type = NULL
+  pairwise.list = list()
 
   for (facet.val in facet.levels.iter) {
     if (is.na(facet.val)) {
@@ -580,6 +635,15 @@ stat_beta_dispersion = function(
     stat.type = res$stat
     p.value.raw[idx] = res$p.raw
     p.value.all[idx] = res$p.text
+    if (pairwise && res$stat == "permanova") {
+      pw = run_pairwise(stat.data)
+      if (!is.null(pw)) {
+        if (!is.na(facet.val) && !is.null(active.facet)) {
+          pw[[active.facet]] = as.character(facet.val)
+        }
+        pairwise.list[[length(pairwise.list) + 1]] = pw
+      }
+    }
   }
 
   return(list(
@@ -594,7 +658,8 @@ stat_beta_dispersion = function(
     test.result = if (length(test.result.all) > 0) test.result.all else NULL,
     p.value = p.value.all,
     p.value.df = NULL,
-    p.value.raw = p.value.raw
+    p.value.raw = p.value.raw,
+    pairwise.df = if (pairwise && length(pairwise.list) > 0) do.call(rbind, pairwise.list) else NULL
   ))
 }
 
