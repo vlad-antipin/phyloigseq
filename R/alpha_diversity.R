@@ -164,10 +164,14 @@ plot_alpha_diversity = function(
   x.levels = NULL,
   group = NULL,
   group.levels = NULL,
+  facet.mode = "wrap", # "grid", "wrap"
+  facet = NULL,
+  facet.levels = NULL,
   facet.row = NULL,
   facet.row.levels = NULL,
   facet.col = NULL,
   facet.col.levels = NULL,
+  facet_labeller = "label_value", #"label_both" or "label_value"
   shape = NULL,
   shape.levels = NULL,
   size = NULL,
@@ -181,6 +185,9 @@ plot_alpha_diversity = function(
   # Assuming alpha diversity is in the first column !
   measure = colnames(full.sample.data)[1] # contains measure name
 
+  if (is.null(facet.mode)) {
+    facet.mode = "wrap"
+  }
   # Set proper data types
 
   if (is_valid_factor(full.sample.data, group)) {
@@ -205,7 +212,19 @@ plot_alpha_diversity = function(
     full.sample.data[[x]] = set_levels(full.sample.data, x, x.levels)
   }
 
-  is_valid_facet_row = is_valid_factor(full.sample.data, facet.row)
+  is_valid_facet = is_valid_factor(full.sample.data, facet) &&
+    facet.mode == "wrap"
+
+  if (is_valid_facet) {
+    full.sample.data[[facet]] = set_levels(
+      full.sample.data,
+      facet,
+      facet.levels
+    )
+  }
+
+  is_valid_facet_row = is_valid_factor(full.sample.data, facet.row) &&
+    facet.mode == "grid"
 
   if (is_valid_facet_row) {
     full.sample.data[[facet.row]] = set_levels(
@@ -215,7 +234,8 @@ plot_alpha_diversity = function(
     )
   }
 
-  is_valid_facet_col = is_valid_factor(full.sample.data, facet.col)
+  is_valid_facet_col = is_valid_factor(full.sample.data, facet.col) &&
+    facet.mode == "grid"
 
   if (is_valid_facet_col) {
     full.sample.data[[facet.col]] = set_levels(
@@ -234,7 +254,7 @@ plot_alpha_diversity = function(
   if (remove.na.from.plot) {
     full.sample.data = remove_nas(
       full.sample.data,
-      c(x, group, facet.row, facet.col, shape, size)
+      c(x, group, facet, facet.row, facet.col, shape, size)
     )
   }
 
@@ -347,24 +367,29 @@ plot_alpha_diversity = function(
       facet_grid(
         rows = vars(!!sym(facet.row)),
         cols = vars(!!sym(facet.col)),
-        labeller = "label_value" #"label_both" or "label_value"
+        labeller = facet_labeller
       )
     #facet_grid(.data[[facet.row]] ~ .data[[facet.col]])
   } else if (is_valid_facet_row) {
     plt = plt +
-      facet_wrap(
-        ~ .data[[facet.row]],
-        ncol = smart_facet_ncol(
-          nlevels(factor(full.sample.data[[facet.row]]))
-        )
+      facet_grid(
+        rows = vars(!!sym(facet.row)),
+        labeller = facet_labeller
       )
   } else if (is_valid_facet_col) {
     plt = plt +
+      facet_grid(
+        cols = vars(!!sym(facet.col)),
+        labeller = facet_labeller
+      )
+  } else if (is_valid_facet) {
+    plt = plt +
       facet_wrap(
-        ~ .data[[facet.col]],
+        ~ .data[[facet]],
         ncol = smart_facet_ncol(
-          nlevels(factor(full.sample.data[[facet.col]]))
-        )
+          nlevels(factor(full.sample.data[[facet]]))
+        ),
+        labeller = facet_labeller
       )
   }
 
