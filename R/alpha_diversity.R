@@ -119,12 +119,34 @@ is_valid_factor = function(df, name) {
   return(!is.null(name) && !is.numeric(df[[name]]))
 }
 
-set_levels = function(df, name, level_names) {
-  if (!is.null(level_names)) {
-    return(factor(df[[name]], levels = level_names))
+keep_levels = function(vals, level_names) {
+  if (!is.null(level_names) && length(level_names) > 0) {
+    if ("(NA)" %in% level_names) {
+      vals = as.character(vals)
+      vals[is.na(vals)] = "(NA)"
+    }
+    as.character(vals) %in% level_names
   } else {
-    return(factor(df[[name]], levels = gtools::mixedsort(unique(df[[name]]))))
+    rep(TRUE, length(vals))
   }
+}
+
+factorize_levels = function(vals, level_names) {
+  if (!is.null(level_names) && length(level_names) > 0) {
+    if ("(NA)" %in% level_names) {
+      vals = as.character(vals)
+      vals[is.na(vals)] = "(NA)"
+    }
+    factor(vals, levels = level_names)
+  } else {
+    factor(vals, levels = gtools::mixedsort(unique(vals[!is.na(vals)])))
+  }
+}
+
+apply_levels = function(df, name, level_names) {
+  df = df[keep_levels(df[[name]], level_names), , drop = FALSE]
+  df[[name]] = factorize_levels(df[[name]], level_names)
+  df
 }
 
 remove_nas = function(df, var.names) {
@@ -141,7 +163,7 @@ get_hover_text = function(df, hover.variables) {
   hover.variables = colnames(df)[colnames(df) %in% hover.variables]
   hover.text.all = rep(NA, nrow(df))
 
-  for (i in 1:nrow(df)) {
+  for (i in seq_len(nrow(df))) {
     sample = rownames(df)[i]
     hover.text = ""
     values = df[sample, , drop = FALSE] %>% as("data.frame")
@@ -191,58 +213,38 @@ plot_alpha_diversity = function(
   # Set proper data types
 
   if (is_valid_factor(full.sample.data, group)) {
-    full.sample.data[[group]] = set_levels(
-      full.sample.data,
-      group,
-      group.levels
-    )
+    full.sample.data = apply_levels(full.sample.data, group, group.levels)
   }
 
   if (is_valid_factor(full.sample.data, shape)) {
-    full.sample.data[[shape]] = set_levels(
-      full.sample.data,
-      shape,
-      shape.levels
-    )
+    full.sample.data = apply_levels(full.sample.data, shape, shape.levels)
   } else {
     shape = NULL
   }
 
   if (is_valid_factor(full.sample.data, x)) {
-    full.sample.data[[x]] = set_levels(full.sample.data, x, x.levels)
+    full.sample.data = apply_levels(full.sample.data, x, x.levels)
   }
 
   is_valid_facet = is_valid_factor(full.sample.data, facet) &&
     facet.mode == "wrap"
 
   if (is_valid_facet) {
-    full.sample.data[[facet]] = set_levels(
-      full.sample.data,
-      facet,
-      facet.levels
-    )
+    full.sample.data = apply_levels(full.sample.data, facet, facet.levels)
   }
 
   is_valid_facet_row = is_valid_factor(full.sample.data, facet.row) &&
     facet.mode == "grid"
 
   if (is_valid_facet_row) {
-    full.sample.data[[facet.row]] = set_levels(
-      full.sample.data,
-      facet.row,
-      facet.row.levels
-    )
+    full.sample.data = apply_levels(full.sample.data, facet.row, facet.row.levels)
   }
 
   is_valid_facet_col = is_valid_factor(full.sample.data, facet.col) &&
     facet.mode == "grid"
 
   if (is_valid_facet_col) {
-    full.sample.data[[facet.col]] = set_levels(
-      full.sample.data,
-      facet.col,
-      facet.col.levels
-    )
+    full.sample.data = apply_levels(full.sample.data, facet.col, facet.col.levels)
   }
 
   # Check whether depth is present

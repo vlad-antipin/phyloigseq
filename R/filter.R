@@ -345,13 +345,13 @@ plot_phylo_tree = function(
       !is.null(label.levels) &&
       !is.numeric(sample_data(physeq)[[label]])
   ) {
-    sample_data(physeq)[[label]] = factor(
-      sample_data(physeq)[[label]],
-      levels = label.levels
+    keep = keep_levels(sample_data(physeq)[[label]], label.levels)
+    samples.wo.na.global <<- keep
+    physeq = prune_samples(keep, physeq)
+    sample_data(physeq)[[label]] = factorize_levels(
+      sample_data(physeq)[[label]], label.levels
     )
-  }
-
-  if (
+  } else if (
     remove.na.from.plot &&
       !is.null(label) &&
       !is.null(sample_data(physeq)[[label]])

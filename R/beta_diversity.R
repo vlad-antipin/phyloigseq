@@ -1241,10 +1241,10 @@ ggplot_beta_dispersion = function(
       !is.null(label.levels) &&
       !is.numeric(sample.data[[label.name]])
   ) {
-    sample.data[[label.name]] = factor(
-      sample.data[[label.name]],
-      levels = label.levels
-    )
+    keep = keep_levels(sample.data[[label.name]], label.levels)
+    sample.data = sample.data[keep, , drop = FALSE]
+    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+    sample.data[[label.name]] = factorize_levels(sample.data[[label.name]], label.levels)
   }
 
   if (
@@ -1252,15 +1252,18 @@ ggplot_beta_dispersion = function(
       !is.null(shape.levels) &&
       !is.numeric(sample.data[[shape.name]])
   ) {
-    sample.data[[shape.name]] = factor(
-      sample.data[[shape.name]],
-      levels = shape.levels
-    )
+    keep = keep_levels(sample.data[[shape.name]], shape.levels)
+    sample.data = sample.data[keep, , drop = FALSE]
+    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+    sample.data[[shape.name]] = factorize_levels(sample.data[[shape.name]], shape.levels)
   }
 
   if (!is.null(facet) && !is.numeric(sample.data[[facet]])) {
     if (!is.null(facet.levels)) {
-      sample.data[[facet]] = factor(sample.data[[facet]], levels = facet.levels)
+      keep = keep_levels(sample.data[[facet]], facet.levels)
+      sample.data = sample.data[keep, , drop = FALSE]
+      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+      sample.data[[facet]] = factorize_levels(sample.data[[facet]], facet.levels)
     } else {
       sample.data[[facet]] = as.factor(sample.data[[facet]])
     }
@@ -1270,10 +1273,10 @@ ggplot_beta_dispersion = function(
     grid.mode && !is.null(facet.row) && !is.numeric(sample.data[[facet.row]])
   ) {
     if (!is.null(facet.row.levels)) {
-      sample.data[[facet.row]] = factor(
-        sample.data[[facet.row]],
-        levels = facet.row.levels
-      )
+      keep = keep_levels(sample.data[[facet.row]], facet.row.levels)
+      sample.data = sample.data[keep, , drop = FALSE]
+      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+      sample.data[[facet.row]] = factorize_levels(sample.data[[facet.row]], facet.row.levels)
     } else {
       sample.data[[facet.row]] = as.factor(sample.data[[facet.row]])
     }
@@ -1283,10 +1286,10 @@ ggplot_beta_dispersion = function(
     grid.mode && !is.null(facet.col) && !is.numeric(sample.data[[facet.col]])
   ) {
     if (!is.null(facet.col.levels)) {
-      sample.data[[facet.col]] = factor(
-        sample.data[[facet.col]],
-        levels = facet.col.levels
-      )
+      keep = keep_levels(sample.data[[facet.col]], facet.col.levels)
+      sample.data = sample.data[keep, , drop = FALSE]
+      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+      sample.data[[facet.col]] = factorize_levels(sample.data[[facet.col]], facet.col.levels)
     } else {
       sample.data[[facet.col]] = as.factor(sample.data[[facet.col]])
     }
@@ -1297,9 +1300,11 @@ ggplot_beta_dispersion = function(
       !is.null(animation.variable.levels) &&
       !is.numeric(sample.data[[animation.variable.name]])
   ) {
-    sample.data[[animation.variable.name]] = factor(
-      sample.data[[animation.variable.name]],
-      levels = animation.variable.levels
+    keep = keep_levels(sample.data[[animation.variable.name]], animation.variable.levels)
+    sample.data = sample.data[keep, , drop = FALSE]
+    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+    sample.data[[animation.variable.name]] = factorize_levels(
+      sample.data[[animation.variable.name]], animation.variable.levels
     )
   }
   # (split by newline character to get one line of text for the subtitle)
@@ -1496,7 +1501,7 @@ ggplot_beta_dispersion = function(
   ]
 
   hover.text.all = rep(NA, nrow(sample.data))
-  for (i in 1:nrow(sample.data)) {
+  for (i in seq_len(nrow(sample.data))) {
     sample = rownames(sample.data)[i]
     hover.text = ""
     values = sample.data[sample, , drop = FALSE] %>% as("data.frame")
