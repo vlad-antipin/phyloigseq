@@ -556,6 +556,11 @@ plot_ig_score = function(
         panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
       )
   } else if (plot_type %in% c("boxplot", "violin")) {
+    plot_data$point_color = ifelse(
+      plot_data$agglom_score > right_lim, "high",
+      ifelse(plot_data$agglom_score < left_lim, "low", "ns")
+    )
+
     plt =
       ggplot(
         data = plot_data,
@@ -577,18 +582,17 @@ plot_ig_score = function(
           p.adjust.method = "BH"
         )
     }
+
     plt = plt +
       geom_jitter(
         alpha = 0.5,
-        aes(size = abs(agglom_score - mean(left_lim, right_lim))),
-        color = sapply(plot_data$agglom_score, function(score) {
-          ifelse(
-            score > right_lim,
-            signif_colors[1],
-            ifelse(score < left_lim, signif_colors[2], "darkgrey")
-          )
-        })
+        aes(size = abs(agglom_score - mean(left_lim, right_lim)), color = point_color)
       ) +
+      scale_color_manual(values = c(
+        "high" = signif_colors[1],
+        "low"  = signif_colors[2],
+        "ns"   = "darkgrey"
+      )) +
       guides(size = "none", color = "none") +
       scale_size_continuous(range = c(1, 2))
 
