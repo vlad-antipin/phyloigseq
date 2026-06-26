@@ -1,10 +1,12 @@
 #' Get Beta-Diversity from Phyloseq Object
 #' @export
-get_beta_dispersion = function(
+get_beta_dispersion <- function(
   physeq,
   taxrank = NULL, # taxrank to agglomerate by (e.g."Phylum")
   fraction_id_name = NULL,
   fraction_ids = NULL,
+  fit.filter.name = NULL, # column in sample_data used to select samples for fitting
+  fit.filter.values = NULL, # values of that column to include in the fit subset
   transform.abundances = "identity",
   dist = "bray", # for PCoA, NMDS or dbRDA
   method = "PCoA",
@@ -26,27 +28,27 @@ get_beta_dispersion = function(
   nb.neighbors = 15,
   min.dist = 0.1
 ) {
-  method.orig = method # keep method name with the original case (used later for plot title)
-  method = tolower(method)
+  method.orig <- method # keep method name with the original case (used later for plot title)
+  method <- tolower(method)
   # Lists by scaling: [[1]] - vegan's scaling 1 -> interpretable distances between samples,
   #                   [[2]] - interpretable angles between arrows (as correlations)
   # Initiate species coordinates (arrows) to NULL still sometimes they're not availible
-  loadings = list() # = species scores
+  loadings <- list() # = species scores
   # NOTE: term loadings is not really appropriate for all models,
   # but it's used here for convenience
 
-  covariates = list() # = covariate scores for biplot in case of constrained models
+  covariates <- list() # = covariate scores for biplot in case of constrained models
 
-  coords = list()
+  coords <- list()
 
-  eigen.values = NULL # eventually for scree plots and % of explained variance
+  eigen.values <- NULL # eventually for scree plots and % of explained variance
 
   if (class(physeq) != "phyloseq") {
     stop("Need a phyloseq or PhyloIgSeq object")
   }
 
   if (!is.null(fraction_id_name) & !is.null(fraction_ids)) {
-    physeq = prune_samples(
+    physeq <- prune_samples(
       sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
       physeq
     )
@@ -61,12 +63,12 @@ get_beta_dispersion = function(
 
   # Agglomerate taxa by taxrank
   if (!is.null(taxrank)) {
-    physeq = tax_glom(physeq = physeq, taxrank = taxrank)
-    taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank]) # NOTE: names of taxons are not necesserily unique!
+    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
+    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank]) # NOTE: names of taxons are not necesserily unique!
   }
 
   if (!is.null(transform.abundances) && transform.abundances != "identity") {
-    physeq = microbiome::transform(
+    physeq <- microbiome::transform(
       physeq,
       transform = transform.abundances,
       target = "OTU", # TODO: and still, clr will scale over samples
@@ -77,20 +79,32 @@ get_beta_dispersion = function(
     )
   }
 
+  # Determine samples used to fit the ordination model (after all preprocessing)
+  fit.sample.names <- NULL
+  if (!is.null(fit.filter.name) && !is.null(fit.filter.values)) {
+    fit.mask <- sample_data(physeq)[[fit.filter.name]] %in% fit.filter.values
+    physeq.fit <- prune_samples(fit.mask, physeq)
+    fit.sample.names <- sample_names(physeq.fit)
+  } else {
+    physeq.fit <- physeq
+  }
+
   # Unconstrained ordination models
 
   if (method %in% c("pcoa", "tsne", "umap")) {
-    # Compute distance matrix myself
+    # Compute distance matrix for ALL samples first (needed for projection)
     # NOTE: tSNE and UMAP can take as well a precomputed distance metric
     if (class(dist) == "dist") {
       # if distance matrix furnished directly (not recommended)
-      dist.matrix = dist
+      dist.matrix <- dist
     } else {
-      if (is.null(access(physeq, "phy_tree")) & dist %in% c("unifrac", "wunifrac")) {
+      if (
+        is.null(access(physeq, "phy_tree")) & dist %in% c("unifrac", "wunifrac")
+      ) {
         print(
           "No phylogenetic tree in this phyloseq object, bray-curtis distance selected."
         )
-        dist.matrix = phyloseq::distance(physeq, method = "bray")
+        dist.matrix <- phyloseq::distance(physeq, method = "bray")
       } else {
         # NOTE: euclidean and manhattan use z-score standardization (decostand "standardize")
         # so that high-abundance taxa don't dominate the distance in ordination.
@@ -104,8 +118,8 @@ get_beta_dispersion = function(
         # TODO: consider routing through sparse_distance once standardization can be
         # done sparsely, to avoid materializing the full dense OTU matrix here.
         if (!is.null(dist) && dist %in% c("euclidean", "manhattan")) {
-          otu.mat = as(otu_table(physeq), "matrix")
-          dist.matrix = vegdist(
+          otu.mat <- as(otu_table(physeq), "matrix")
+          dist.matrix <- vegdist(
             decostand(
               otu.mat[, apply(otu.mat, 2, var, na.rm = TRUE) > 0],
               method = "standardize"
@@ -113,28 +127,48 @@ get_beta_dispersion = function(
             method = dist
           )
         } else {
-          dist.matrix = sparse_distance(physeq, method = dist)
+          dist.matrix <- sparse_distance(physeq, method = dist)
         }
       }
     }
-    dist.matrix = as.matrix(dist.matrix)
-    if (method == "pcoa") {
-      fit = vegan::wcmdscale(dist.matrix, eig = TRUE)
-      eigen.values = vegan::eigenvals(fit)
-      n.axes = min(ndims, length(eigen.values))
+    dist.matrix <- as.matrix(dist.matrix)
 
-      coords[[1]] = scores(
-        fit,
-        display = "sites",
-        choices = 1:n.axes,
-        scaling = 1
-      )
-      coords[[2]] = scores(
-        fit,
-        display = "sites",
-        choices = 1:n.axes,
-        scaling = 2
-      )
+    # Subset distance matrix to fitting samples only
+    dist.matrix.fit <- if (!is.null(fit.sample.names)) {
+      dist.matrix[fit.sample.names, fit.sample.names]
+    } else {
+      dist.matrix
+    }
+
+    if (method == "pcoa") {
+      fit <- vegan::wcmdscale(dist.matrix.fit, eig = TRUE)
+
+      eigen.values <- vegan::eigenvals(fit)
+      n.axes <- min(ndims, length(eigen.values), ncol(fit$points))
+
+      # Project all samples using Gower's formula; falls back to scores() when no filter.
+      # Implemented directly (instead of predict.wcmdscale) to avoid vegan version issues
+      # and because we already have the distance matrices in scope.
+      # Derivation: score_i = B[i,] %*% V / sqrt(lambda)
+      #           = -0.5 * (d^2_i - delta_plus) %*% fit$points / lambda
+      # where delta_plus = colMeans(D^2_fit). Row-centering terms vanish when projected
+      # onto eigenvectors of the centered B matrix (they are orthogonal to the
+      # all-ones vector).
+      site.scores <- if (!is.null(fit.sample.names)) {
+        d_fit_sq <- dist.matrix.fit^2
+        delta <- colMeans(d_fit_sq)
+        d_all <- dist.matrix[, fit.sample.names, drop = FALSE]
+        f <- -0.5 * sweep(d_all^2, 2, delta, "-")
+        eig_k <- fit$eig[1:n.axes]
+        sc <- sweep(f %*% fit$points[, 1:n.axes, drop = FALSE], 2, eig_k, "/")
+        rownames(sc) <- rownames(dist.matrix)
+        colnames(sc) <- colnames(fit$points)[1:n.axes]
+        sc
+      } else {
+        scores(fit, display = "sites", choices = 1:n.axes, scaling = 1)
+      }
+      coords[[1]] <- site.scores
+      coords[[2]] <- site.scores # PCoA site scores are identical across scalings
 
       # NOTE: we don't get loadings from the model but we can nevertheless
       #       correlate abundances against axes - be careful when interpreting.
@@ -143,96 +177,155 @@ get_beta_dispersion = function(
       # that multiple regression reduces to a plain per-axis correlation -
       # envfit's QR-based implementation doesn't exploit this and becomes very
       # slow as the number of axes/taxa grows, so just correlate directly.
-      loadings[[1]] = suppressWarnings(cor(
+      loadings[[1]] <- suppressWarnings(cor(
         as(otu_table(physeq), "matrix"),
         coords[[1]]
       ))
       # TODO:for now same thing for both "scalings"
       # loadings[[2]] = wascores(fit$points, otu_table(physeq)) ≈ scaling 2 ?
     } else if (method == "tsne") {
-      max.perplexity = floor((nsamples(physeq) - 1) / 3)
+      max.perplexity <- floor((nrow(dist.matrix.fit) - 1) / 3)
 
       if (is.null(perplexity)) {
-        perplexity = 30
+        perplexity <- 30
       }
 
       if (perplexity > max.perplexity) {
         warning(
           "Perplexity must not exceed 3 * perplexity < nrow(X) - 1, set to this value"
         )
-        perplexity = max.perplexity
+        perplexity <- max.perplexity
       }
 
-      fit = Rtsne(
-        dist.matrix,
+      fit <- Rtsne(
+        dist.matrix.fit,
         pca = pca,
         perplexity = perplexity,
         is_distance = TRUE
       )
-      coords[[1]] = fit$Y
-      coords[[2]] = fit$Y
+      if (!is.null(fit.sample.names)) {
+        warning(
+          "Projection of non-fit samples is not supported for tSNE; coordinates will be NA."
+        )
+        all.coords <- matrix(
+          NA,
+          nrow = nrow(dist.matrix),
+          ncol = ncol(fit$Y),
+          dimnames = list(rownames(dist.matrix), NULL)
+        )
+        all.coords[fit.sample.names, ] <- fit$Y
+        coords[[1]] <- all.coords
+        coords[[2]] <- all.coords
+      } else {
+        coords[[1]] <- fit$Y
+        coords[[2]] <- fit$Y
+      }
     } else if (method == "umap") {
-      umap.config = umap::umap.defaults
+      umap.config <- umap::umap.defaults
       if (!is.null(nb.neighbors)) {
-        umap.config$n_neighbors = nb.neighbors
+        umap.config$n_neighbors <- nb.neighbors
       }
 
       if (!is.null(min.dist)) {
-        umap.config$min_dist = min.dist
+        umap.config$min_dist <- min.dist
       }
 
-      umap.config$input = "dist" # distance matrix as input
+      umap.config$input <- "dist" # distance matrix as input
 
-      fit = umap::umap(dist.matrix, config = umap.config)
+      fit <- umap::umap(dist.matrix.fit, config = umap.config)
 
-      coords[[1]] = fit$layout
-      coords[[2]] = fit$layout
+      if (!is.null(fit.sample.names)) {
+        warning(
+          "Projection of non-fit samples is not supported for UMAP; coordinates will be NA."
+        )
+        all.coords <- matrix(
+          NA,
+          nrow = nrow(dist.matrix),
+          ncol = ncol(fit$layout),
+          dimnames = list(rownames(dist.matrix), NULL)
+        )
+        all.coords[fit.sample.names, ] <- fit$layout
+        coords[[1]] <- all.coords
+        coords[[2]] <- all.coords
+      } else {
+        coords[[1]] <- fit$layout
+        coords[[2]] <- fit$layout
+      }
     }
   } else if (method %in% c("nmds", "pca", "ca", "dca")) {
-    otu = as(otu_table(reverseASV(physeq)), 'matrix')
+    otu.fit <- as(otu_table(reverseASV(physeq.fit)), 'matrix')
 
     if (method == "nmds") {
-      fit = vegan::metaMDS(otu, distance = dist)
+      fit <- vegan::metaMDS(otu.fit, distance = dist)
     } else if (method == "pca") {
       # RDA without constraint = PCA
-      fit = vegan::rda(otu, scale = TRUE)
+      fit <- vegan::rda(otu.fit, scale = TRUE)
     } else if (method == "ca") {
-      fit = vegan::cca(otu)
+      fit <- vegan::cca(otu.fit)
     } else if (method == "dca") {
-      fit = vegan::decorana(otu)
+      fit <- vegan::decorana(otu.fit)
     }
-    eigen.values = vegan::eigenvals(fit)
-    n.axes = min(ndims, length(eigen.values))
+    # NMDS has no eigenvalues; its dimension count comes from fit$points directly
+    if (method == "nmds") {
+      eigen.values <- NULL
+      n.axes <- ncol(fit$points)
+    } else {
+      eigen.values <- vegan::eigenvals(fit)
+      n.axes <- min(ndims, length(eigen.values))
+    }
 
-    coords[[1]] = scores(
-      fit,
-      display = "sites",
-      choices = 1:n.axes,
-      scaling = 1
-    )
-    coords[[2]] = scores(
-      fit,
-      display = "sites",
-      choices = 1:n.axes,
-      scaling = 2
-    )
-    loadings[[1]] = scores(
-      fit,
-      display = "species",
-      choices = 1:n.axes,
-      scaling = 1
-    )
-    loadings[[2]] = scores(
-      fit,
-      display = "species",
-      choices = 1:n.axes,
-      scaling = 2
-    )
+    # Project all samples onto the fitted model if fit.filter is active.
+    # RDA (PCA) and CCA support predict(); NMDS and DCA do not.
+    get_site_coords <- function(scaling) {
+      fit.scores <- scores(
+        fit,
+        display = "sites",
+        choices = 1:n.axes,
+        scaling = scaling
+      )
+      if (is.null(fit.sample.names)) {
+        return(fit.scores)
+      }
+      if (inherits(fit, c("rda", "cca"))) {
+        otu.all <- as(otu_table(reverseASV(physeq)), 'matrix')
+        wa <- predict(fit, newdata = otu.all, type = "wa")
+        return(wa[, 1:min(n.axes, ncol(wa)), drop = FALSE])
+      }
+      warning(paste0(
+        "Projection of non-fit samples is not supported for ",
+        method,
+        "; coordinates will be NA."
+      ))
+      all.sc <- matrix(
+        NA,
+        nrow = nsamples(physeq),
+        ncol = ncol(fit.scores),
+        dimnames = list(sample_names(physeq), colnames(fit.scores))
+      )
+      all.sc[fit.sample.names, ] <- fit.scores
+      all.sc
+    }
+
+    coords[[1]] <- get_site_coords(1)
+    coords[[2]] <- get_site_coords(2)
+    # NMDS/DCA may have no species scores; vegan 2.7.5 returns list() instead of
+    # NULL/error when scores are unavailable — validate result is a matrix.
+    valid_scores <- function(sc) {
+      if (is.matrix(sc) || is.data.frame(sc)) sc else NULL
+    }
+    loadings[[1]] <- valid_scores(tryCatch(
+      scores(fit, display = "species", choices = 1:n.axes, scaling = 1),
+      error = function(e) NULL
+    ))
+    loadings[[2]] <- valid_scores(tryCatch(
+      scores(fit, display = "species", choices = 1:n.axes, scaling = 2),
+      error = function(e) NULL
+    ))
   } else if (!is.null(model)) {
     # Constrained ordination models
 
     if (!is.null(confounders)) {
-      model = paste0(
+      model <- paste0(
         model,
         " + ",
         "Condition(",
@@ -241,21 +334,21 @@ get_beta_dispersion = function(
       )
     }
 
-    formula = as.formula(paste(
-      "as(otu_table(reverseASV(physeq)), 'matrix')",
+    formula <- as.formula(paste(
+      "as(otu_table(reverseASV(physeq.fit)), 'matrix')",
       "~",
       model
     ))
-    df = as(sample_data(physeq), "data.frame")
+    df.fit <- as(sample_data(physeq.fit), "data.frame")
 
     if (method == "cca") {
-      fit = vegan::cca(formula, data = df, na.action = na.exclude)
+      fit <- vegan::cca(formula, data = df.fit, na.action = na.exclude)
     } else if (method == "rda") {
-      fit = vegan::rda(formula, data = df, na.action = na.exclude)
+      fit <- vegan::rda(formula, data = df.fit, na.action = na.exclude)
     } else if (method == "dbrda") {
-      fit = vegan::capscale(
+      fit <- vegan::capscale(
         formula,
-        data = df,
+        data = df.fit,
         na.action = na.exclude,
         dist = dist
       )
@@ -263,40 +356,69 @@ get_beta_dispersion = function(
       stop("Invalid method")
     }
 
-    eigen.values = vegan::eigenvals(fit)
-    n.axes = min(ndims, length(eigen.values))
+    eigen.values <- vegan::eigenvals(fit)
+    n.axes <- min(ndims, length(eigen.values))
 
-    coords[[1]] = scores(
-      fit,
-      display = "sites",
-      choices = 1:n.axes,
-      scaling = 1
-    )
-    coords[[2]] = scores(
-      fit,
-      display = "sites",
-      choices = 1:n.axes,
-      scaling = 2
-    )
-    loadings[[1]] = scores(
+    # For RDA/CCA project all samples using WA scores; dbRDA has no standard projection.
+    # capscale (dbRDA) inherits from "rda"/"cca" so check method name, not class.
+    get_constrained_coords <- function(scaling) {
+      if (!is.null(fit.sample.names) && method %in% c("rda", "cca")) {
+        otu.all <- as(otu_table(reverseASV(physeq)), 'matrix')
+        # predict(type="wa") defaults to model="CCA" — constrained axes only.
+        # Explicitly fetch residual (CA) axes too and combine up to n.axes.
+        wa_cca <- predict(fit, newdata = otu.all, type = "wa", model = "CCA")
+        n_cca <- ncol(wa_cca)
+        n_ca_need <- max(0, n.axes - n_cca)
+        if (n_ca_need > 0 && !is.null(fit$CA) && fit$CA$rank > 0) {
+          wa_ca <- predict(fit, newdata = otu.all, type = "wa", model = "CA")
+          wa_ca <- wa_ca[, 1:min(n_ca_need, ncol(wa_ca)), drop = FALSE]
+          return(cbind(wa_cca, wa_ca))
+        }
+        return(wa_cca[, 1:min(n.axes, n_cca), drop = FALSE])
+      }
+      if (!is.null(fit.sample.names)) {
+        warning(
+          "Projection of non-fit samples is not supported for dbRDA; coordinates will be NA."
+        )
+        sc <- scores(
+          fit,
+          display = "sites",
+          choices = 1:n.axes,
+          scaling = scaling
+        )
+        all.sc <- matrix(
+          NA,
+          nrow = nsamples(physeq),
+          ncol = ncol(sc),
+          dimnames = list(sample_names(physeq), colnames(sc))
+        )
+        all.sc[fit.sample.names, ] <- sc
+        return(all.sc)
+      }
+      scores(fit, display = "sites", choices = 1:n.axes, scaling = scaling)
+    }
+
+    coords[[1]] <- get_constrained_coords(1)
+    coords[[2]] <- get_constrained_coords(2)
+    loadings[[1]] <- scores(
       fit,
       display = "species",
       choices = 1:n.axes,
       scaling = 1
     )
-    loadings[[2]] = scores(
+    loadings[[2]] <- scores(
       fit,
       display = "species",
       choices = 1:n.axes,
       scaling = 2
     )
-    covariates[[1]] = scores(
+    covariates[[1]] <- scores(
       fit,
       display = "bp",
       choices = 1:n.axes,
       scaling = 1
     )
-    covariates[[2]] = scores(
+    covariates[[2]] <- scores(
       fit,
       display = "bp",
       choices = 1:n.axes,
@@ -311,14 +433,19 @@ get_beta_dispersion = function(
   }
 
   if (length(eigen.values) == 1 && is.na(eigen.values)) {
-    eigen.values = NULL
+    eigen.values <- NULL
+  }
+
+  sample.data <- sample_data(physeq) %>% as("data.frame")
+  if (!is.null(fit.sample.names)) {
+    sample.data$.is.fit.sample <- rownames(sample.data) %in% fit.sample.names
   }
 
   return(list(
     fit = fit,
     taxrank = taxrank,
 
-    # lists: [[1]] - scaling 1, [[2]] - sclaing 2 (see vegan's scaling)
+    # lists: [[1]] - scaling 1, [[2]] - scaling 2 (see vegan's scaling)
     coords = coords, # = sample (site) scores
     loadings = loadings, # = variable (species) scores
     covariates = covariates, # = covariate scores (if constrained model)
@@ -332,14 +459,20 @@ get_beta_dispersion = function(
     } else {
       NULL
     }, # formula with covariates
-    sample.data = sample_data(physeq) %>% as("data.frame"),
+    fit.filter = if (!is.null(fit.filter.name)) {
+      list(name = fit.filter.name, values = fit.filter.values)
+    } else {
+      NULL
+    },
+    fit.sample.names = fit.sample.names,
+    sample.data = sample.data,
     tax.table = tax_table(physeq) %>% as.data.frame()
   ))
 }
 
 #' Permutation Test for Beta-Diversity Ordination
 #' @export
-stat_beta_dispersion = function(
+stat_beta_dispersion <- function(
   beta.dispersion.fit,
   facet.name = NULL, # backward compat: treated as facet in wrap mode
   facet.mode = "wrap", # "grid", "wrap"
@@ -352,16 +485,16 @@ stat_beta_dispersion = function(
   pairwise = FALSE
 ) {
   if (!is.null(facet.name) && is.null(facet)) {
-    facet = facet.name
+    facet <- facet.name
   }
   if (is.null(facet.mode)) {
-    facet.mode = "wrap"
+    facet.mode <- "wrap"
   }
 
-  full.grid.mode = facet.mode == "grid" &&
+  full.grid.mode <- facet.mode == "grid" &&
     !is.null(facet.row) &&
     !is.null(facet.col)
-  active.facet = if (facet.mode == "wrap") {
+  active.facet <- if (facet.mode == "wrap") {
     facet
   } else if (!is.null(facet.row) && is.null(facet.col)) {
     facet.row
@@ -377,20 +510,20 @@ stat_beta_dispersion = function(
   }
 
   if (!is.null(comp)) {
-    stat.data.full = data.frame(
+    stat.data.full <- data.frame(
       Comp1 = beta.dispersion.fit$coords[[1]][, comp[1]],
       Comp2 = beta.dispersion.fit$coords[[1]][, comp[2]],
       Label = beta.dispersion.fit$sample.data[[label.name]]
     )
   } else {
-    stat.data.full = data.frame(
+    stat.data.full <- data.frame(
       beta.dispersion.fit$coords[[1]],
       Label = beta.dispersion.fit$sample.data[[label.name]]
     )
   }
 
   if (!is.null(strata.name)) {
-    stat.data.full[[strata.name]] = beta.dispersion.fit$sample.data[[
+    stat.data.full[[strata.name]] <- beta.dispersion.fit$sample.data[[
       strata.name
     ]]
   }
@@ -401,7 +534,7 @@ stat_beta_dispersion = function(
       !is.null(facet.row) &&
       facet.row %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample.data[[
       facet.row
     ]]
   }
@@ -410,7 +543,7 @@ stat_beta_dispersion = function(
       !is.null(facet.col) &&
       facet.col %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.col"]] = beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.col"]] <- beta.dispersion.fit$sample.data[[
       facet.col
     ]]
   }
@@ -419,34 +552,34 @@ stat_beta_dispersion = function(
       !is.null(active.facet) &&
       active.facet %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample.data[[
       active.facet
     ]]
   }
 
-  stat.data.full = na.omit(stat.data.full)
+  stat.data.full <- na.omit(stat.data.full)
 
   # Shared helper: run PERMANOVA or envfit on a single data slice
-  run_test = function(stat.data) {
-    stat.data[[".facet.row"]] = NULL
-    stat.data[[".facet.col"]] = NULL
+  run_test <- function(stat.data) {
+    stat.data[[".facet.row"]] <- NULL
+    stat.data[[".facet.col"]] <- NULL
     if (is.factor(stat.data$Label) || is.character(stat.data$Label)) {
-      stat.data = na.omit(stat.data)
+      stat.data <- na.omit(stat.data)
       if (!is.null(strata.name)) {
-        strata = stat.data[[strata.name]]
-        stat.data[[strata.name]] = NULL
+        strata <- stat.data[[strata.name]]
+        stat.data[[strata.name]] <- NULL
       } else {
-        strata = NULL
+        strata <- NULL
       }
-      test.result = vegan::adonis2(
+      test.result <- vegan::adonis2(
         stat.data[, colnames(stat.data) != "Label"] ~ Label,
         data = stat.data,
         strata = strata,
         permutations = 999,
         method = "euclidean"
       )
-      p.raw = test.result$`Pr(>F)`[1]
-      p.text = if (!is.null(strata)) {
+      p.raw <- test.result$`Pr(>F)`[1]
+      p.text <- if (!is.null(strata)) {
         paste0(
           "restricted by ",
           strata.name,
@@ -466,13 +599,13 @@ stat_beta_dispersion = function(
         stat = "permanova"
       )
     } else {
-      test.result = vegan::envfit(
+      test.result <- vegan::envfit(
         stat.data[, colnames(stat.data) != "Label"] ~ Label,
         data = stat.data,
         permutations = 999
       )
-      p.raw = test.result$vectors$pvals[1]
-      p.text = paste0(
+      p.raw <- test.result$vectors$pvals[1]
+      p.text <- paste0(
         "Correlation p = ",
         format(signif(p.raw, digits = 2), scientific = TRUE)
       )
@@ -485,29 +618,29 @@ stat_beta_dispersion = function(
     }
   }
 
-  run_pairwise = function(stat.data) {
-    stat.data[[".facet.row"]] = NULL
-    stat.data[[".facet.col"]] = NULL
+  run_pairwise <- function(stat.data) {
+    stat.data[[".facet.row"]] <- NULL
+    stat.data[[".facet.col"]] <- NULL
     if (!is.factor(stat.data$Label) && !is.character(stat.data$Label)) {
       return(NULL)
     }
-    labels = unique(na.omit(as.character(stat.data$Label)))
+    labels <- unique(na.omit(as.character(stat.data$Label)))
     if (length(labels) < 2) {
       return(NULL)
     }
-    pairs = combn(labels, 2, simplify = FALSE)
-    pair_results = lapply(pairs, function(pair) {
-      sub = stat.data[as.character(stat.data$Label) %in% pair, ]
-      sub = na.omit(sub)
+    pairs <- combn(labels, 2, simplify = FALSE)
+    pair_results <- lapply(pairs, function(pair) {
+      sub <- stat.data[as.character(stat.data$Label) %in% pair, ]
+      sub <- na.omit(sub)
       if (length(unique(as.character(sub$Label))) < 2) {
         return(NULL)
       }
-      sub_strata = NULL
+      sub_strata <- NULL
       if (!is.null(strata.name) && strata.name %in% colnames(sub)) {
-        sub_strata = sub[[strata.name]]
-        sub[[strata.name]] = NULL
+        sub_strata <- sub[[strata.name]]
+        sub[[strata.name]] <- NULL
       }
-      res = tryCatch(
+      res <- tryCatch(
         vegan::adonis2(
           sub[, colnames(sub) != "Label"] ~ Label,
           data = sub,
@@ -528,44 +661,44 @@ stat_beta_dispersion = function(
         stringsAsFactors = FALSE
       )
     })
-    pair_results = do.call(rbind, Filter(Negate(is.null), pair_results))
+    pair_results <- do.call(rbind, Filter(Negate(is.null), pair_results))
     if (is.null(pair_results) || nrow(pair_results) == 0) {
       return(NULL)
     }
-    pair_results$p.adj = p.adjust(pair_results$p.raw, method = "BH")
+    pair_results$p.adj <- p.adjust(pair_results$p.raw, method = "BH")
     pair_results
   }
 
-  dim_used = if (!is.null(comp)) {
+  dim_used <- if (!is.null(comp)) {
     comp
   } else {
     paste("all", ncol(beta.dispersion.fit$coords))
   }
 
   if (full.grid.mode) {
-    row.vals = unique(stat.data.full[[".facet.row"]])
-    col.vals = unique(stat.data.full[[".facet.col"]])
-    combinations = expand.grid(
+    row.vals <- unique(stat.data.full[[".facet.row"]])
+    col.vals <- unique(stat.data.full[[".facet.col"]])
+    combinations <- expand.grid(
       row = row.vals,
       col = col.vals,
       stringsAsFactors = FALSE
     )
 
-    test.result.all = list()
-    p.value.df = data.frame(
+    test.result.all <- list()
+    p.value.df <- data.frame(
       facet.row = character(0),
       facet.col = character(0),
       p.label = character(0),
       p.raw = numeric(0),
       stringsAsFactors = FALSE
     )
-    stat.type = NULL
-    pairwise.list = list()
+    stat.type <- NULL
+    pairwise.list <- list()
 
     for (i in seq_len(nrow(combinations))) {
-      row.val = combinations$row[i]
-      col.val = combinations$col[i]
-      stat.data = stat.data.full[
+      row.val <- combinations$row[i]
+      col.val <- combinations$col[i]
+      stat.data <- stat.data.full[
         stat.data.full[[".facet.row"]] == row.val &
           stat.data.full[[".facet.col"]] == col.val,
       ]
@@ -579,11 +712,11 @@ stat_beta_dispersion = function(
         ))
         next
       }
-      res = run_test(stat.data)
-      key = paste(row.val, col.val, sep = "//")
-      test.result.all[[key]] = res$test.result
-      stat.type = res$stat
-      p.value.df = rbind(
+      res <- run_test(stat.data)
+      key <- paste(row.val, col.val, sep = "//")
+      test.result.all[[key]] <- res$test.result
+      stat.type <- res$stat
+      p.value.df <- rbind(
         p.value.df,
         data.frame(
           facet.row = as.character(row.val),
@@ -594,15 +727,15 @@ stat_beta_dispersion = function(
         )
       )
       if (pairwise && res$stat == "permanova") {
-        pw = run_pairwise(stat.data)
+        pw <- run_pairwise(stat.data)
         if (!is.null(pw)) {
           if (!is.null(facet.row)) {
-            pw[[facet.row]] = as.character(row.val)
+            pw[[facet.row]] <- as.character(row.val)
           }
           if (!is.null(facet.col)) {
-            pw[[facet.col]] = as.character(col.val)
+            pw[[facet.col]] <- as.character(col.val)
           }
-          pairwise.list[[length(pairwise.list) + 1]] = pw
+          pairwise.list[[length(pairwise.list) + 1]] <- pw
         }
       }
     }
@@ -629,25 +762,25 @@ stat_beta_dispersion = function(
   }
 
   # Single-facet or no-facet mode
-  facet.levels.iter = if (".facet.row" %in% colnames(stat.data.full)) {
+  facet.levels.iter <- if (".facet.row" %in% colnames(stat.data.full)) {
     unique(stat.data.full[[".facet.row"]])
   } else {
     NA
   }
 
-  test.result.all = list()
-  p.value.all = c()
-  p.value.raw = c()
-  stat.type = NULL
-  pairwise.list = list()
+  test.result.all <- list()
+  p.value.all <- c()
+  p.value.raw <- c()
+  stat.type <- NULL
+  pairwise.list <- list()
 
   for (facet.val in facet.levels.iter) {
     if (is.na(facet.val)) {
-      stat.data = stat.data.full
-      idx = 1
+      stat.data <- stat.data.full
+      idx <- 1
     } else {
-      stat.data = stat.data.full[stat.data.full[[".facet.row"]] == facet.val, ]
-      idx = facet.val
+      stat.data <- stat.data.full[stat.data.full[[".facet.row"]] == facet.val, ]
+      idx <- facet.val
     }
 
     if (length(unique(stat.data$Label)) == 1) {
@@ -655,18 +788,18 @@ stat_beta_dispersion = function(
       return(NULL)
     }
 
-    res = run_test(stat.data)
-    test.result.all[[idx]] = res$test.result
-    stat.type = res$stat
-    p.value.raw[idx] = res$p.raw
-    p.value.all[idx] = res$p.text
+    res <- run_test(stat.data)
+    test.result.all[[idx]] <- res$test.result
+    stat.type <- res$stat
+    p.value.raw[idx] <- res$p.raw
+    p.value.all[idx] <- res$p.text
     if (pairwise && res$stat == "permanova") {
-      pw = run_pairwise(stat.data)
+      pw <- run_pairwise(stat.data)
       if (!is.null(pw)) {
         if (!is.na(facet.val) && !is.null(active.facet)) {
-          pw[[active.facet]] = as.character(facet.val)
+          pw[[active.facet]] <- as.character(facet.val)
         }
-        pairwise.list[[length(pairwise.list) + 1]] = pw
+        pairwise.list[[length(pairwise.list) + 1]] <- pw
       }
     }
   }
@@ -694,7 +827,7 @@ stat_beta_dispersion = function(
 
 #' Plot Beta-Diversity
 #' @export
-plot_beta_dispersion = function(
+plot_beta_dispersion <- function(
   fraction_id_name = NULL,
   fraction_ids = NULL,
   scaling = 1, # see vegan's scalings 1 and 2
@@ -733,42 +866,42 @@ plot_beta_dispersion = function(
   # by assembling it with other function in full_beta_dispersion()
   # It will not be used in the PhyloIgSeq app
 
-  fit = beta.dispersion.fit$fit
+  fit <- beta.dispersion.fit$fit
 
   if (length(beta.dispersion.fit$coords) != 0) {
-    coords = beta.dispersion.fit$coords[[scaling]]
+    coords <- beta.dispersion.fit$coords[[scaling]]
   } else {
-    coords = NULL
+    coords <- NULL
   }
 
   if (length(beta.dispersion.fit$loadings) != 0) {
-    loadings = beta.dispersion.fit$loadings[[scaling]]
+    loadings <- beta.dispersion.fit$loadings[[scaling]]
   } else {
-    loadings = NULL
+    loadings <- NULL
   }
 
-  species.coords.x = loadings[, 1]
-  species.coords.y = loadings[, 2]
-  dist = beta.dispersion.fit$dist
-  method = beta.dispersion.fit$method
+  species.coords.x <- loadings[, 1]
+  species.coords.y <- loadings[, 2]
+  dist <- beta.dispersion.fit$dist
+  method <- beta.dispersion.fit$method
 
-  label = as.factor(beta.dispersion.fit$sample.data[[group]])
+  label <- as.factor(beta.dispersion.fit$sample.data[[group]])
 
   if (!is.null(stat.beta.dispersion$label.name)) {
-    stat = stat.beta.dispersion$stat
-    group = stat.beta.dispersion$label.name
+    stat <- stat.beta.dispersion$stat
+    group <- stat.beta.dispersion$label.name
   } else {
-    stat = NULL
-    group = NULL
+    stat <- NULL
+    group <- NULL
   }
 
   if (!is.null(stat.beta.dispersion$test.result)) {
-    test.result = stat.beta.dispersion$test.result[[1]]
+    test.result <- stat.beta.dispersion$test.result[[1]]
   } else {
-    test.result = NULL
+    test.result <- NULL
   }
 
-  p.value = stat.beta.dispersion$p.value
+  p.value <- stat.beta.dispersion$p.value
 
   if (is.null(group)) {
     # TODO: account for when the group=NULL
@@ -778,18 +911,18 @@ plot_beta_dispersion = function(
   # Set up the plot itself
 
   if (xlimits == "auto") {
-    xlimits = c(coords[, axis_x] %>% max / 0.9, coords[, 1] %>% min / 0.9)
+    xlimits <- c(coords[, axis_x] %>% max / 0.9, coords[, 1] %>% min / 0.9)
   }
 
   if (ylimits == "auto") {
-    ylimits = c(coords[, axis_y] %>% max / 0.9, coords[, 2] %>% min / 0.9)
+    ylimits <- c(coords[, axis_y] %>% max / 0.9, coords[, 2] %>% min / 0.9)
   } else {
-    ylimits = ylim
-    xlimits = ylim
+    ylimits <- ylim
+    xlimits <- ylim
   }
 
-  col1 = color_vector[unique(label)]
-  col2 = color_vector[label]
+  col1 <- color_vector[unique(label)]
+  col2 <- color_vector[label]
 
   if (type == "boxplot") {
     # prepare the layout matrix to display boxplots on the margins
@@ -822,7 +955,7 @@ plot_beta_dispersion = function(
       ...
     )
     # display groups
-    disp.groups = ordispider(
+    disp.groups <- ordispider(
       coords,
       groups = label,
       col = adjustcolor(color_vector, alpha = 0.3),
@@ -967,7 +1100,7 @@ plot_beta_dispersion = function(
       ...
     )
 
-    disp.groups = ordispider(
+    disp.groups <- ordispider(
       coords,
       groups = label,
       col = adjustcolor(color_vector, alpha = 0.3),
@@ -1025,7 +1158,7 @@ plot_beta_dispersion = function(
     plot(fit, type = "n", axes = FALSE, xlab = "", ylab = "", bty = "n")
     abline(h = 0, v = 0, col = "white", lwd = 3)
 
-    disp.groups = ordiellipse(
+    disp.groups <- ordiellipse(
       fit,
       groups = label,
       conf = conf,
@@ -1035,7 +1168,7 @@ plot_beta_dispersion = function(
       ylim = ylimits,
       xlim = xlimits
     )
-    disp.groups = ordispider(
+    disp.groups <- ordispider(
       fit,
       groups = label,
       col = adjustcolor(color_vector, alpha = 0.3),
@@ -1095,7 +1228,7 @@ plot_beta_dispersion = function(
 
 #' Get and Plot Beta-Diversity from Phyloseq Object
 #' @export
-full_beta_dispersion = function(
+full_beta_dispersion <- function(
   physeq,
   taxrank = NULL,
   fraction_id_name = NULL,
@@ -1134,7 +1267,7 @@ full_beta_dispersion = function(
   # margins= c(1,1,1,1),
   ...
 ) {
-  beta.dispersion.fit = get_beta_dispersion(
+  beta.dispersion.fit <- get_beta_dispersion(
     physeq = physeq,
     taxrank = taxrank,
     fraction_id_name = fraction_id_name,
@@ -1145,13 +1278,13 @@ full_beta_dispersion = function(
     species = species
   )
   if (!is.null(stat) && stat != FALSE && stat != "none") {
-    stat.beta.dispersion = stat_beta_dispersion(
+    stat.beta.dispersion <- stat_beta_dispersion(
       beta.dispersion.fit,
       comp = c(axis_x, axis_y),
       label.name = group
     )
   } else {
-    stat.beta.dispersion = NULL
+    stat.beta.dispersion <- NULL
   }
 
   plot_beta_dispersion(
@@ -1170,14 +1303,14 @@ full_beta_dispersion = function(
 
 #' Scree Plot from Eigenvalues
 #' @export
-scree_plot = function(eigen.values, max.nb.comp = 10) {
+scree_plot <- function(eigen.values, max.nb.comp = 10) {
   if (is.null(eigen.values)) {
     warning("No eigen values are furnished")
     return(NULL)
   }
-  total_var = sum(eigen.values[eigen.values > 0])
-  eigen.values = eigen.values[1:min(max.nb.comp, length(eigen.values))]
-  plot.data = data.frame(
+  total_var <- sum(eigen.values[eigen.values > 0])
+  eigen.values <- eigen.values[1:min(max.nb.comp, length(eigen.values))]
+  plot.data <- data.frame(
     prop_var = eigen.values / total_var * 100,
     dim = if (!is.null(names(eigen.values))) {
       names(eigen.values)
@@ -1185,9 +1318,9 @@ scree_plot = function(eigen.values, max.nb.comp = 10) {
       1:length(eigen.values)
     }
   )
-  plot.data$dim = factor(plot.data$dim, levels = plot.data$dim)
+  plot.data$dim <- factor(plot.data$dim, levels = plot.data$dim)
 
-  plot =
+  plot <-
     ggplot(plot.data, aes(x = dim, y = prop_var)) +
     geom_bar(stat = "identity", fill = "skyblue", color = "black") +
     xlab("Dimension") +
@@ -1205,7 +1338,7 @@ scree_plot = function(eigen.values, max.nb.comp = 10) {
 
 #' Ggplot Beta-Diversity Ordination
 #' @export
-ggplot_beta_dispersion = function(
+ggplot_beta_dispersion <- function(
   beta.dispersion.fit, # output of get_beta_dispersion()
   hover.variables = NULL, # all columns of sample data if NULL
   scaling = 1, # see vegan's scalings 1 and 2
@@ -1246,19 +1379,20 @@ ggplot_beta_dispersion = function(
   # NOTE: marginal plot is incompatible with plotly!
   raw.loadings = TRUE, # TODO: think if you should implement correlations here as an alternative
   point.alpha = 1,
+  projected.alpha = 0.4, # alpha for samples not in the fit subset (when fit.filter is used)
   reverse.dim1 = FALSE,
   reverse.dim2 = FALSE
 ) {
-  sample.data = beta.dispersion.fit$sample.data
+  sample.data <- beta.dispersion.fit$sample.data
 
-  grid.mode = facet.mode == "grid"
+  grid.mode <- facet.mode == "grid"
 
   # for the hover info only:
-  tax.table = beta.dispersion.fit$tax.table
-  taxrank = beta.dispersion.fit$taxrank
+  tax.table <- beta.dispersion.fit$tax.table
+  taxrank <- beta.dispersion.fit$taxrank
 
   if (is.null(ellipses)) {
-    ellipses = FALSE
+    ellipses <- FALSE
   }
 
   # NOTE: species scores indicated by `vegan` = loadings here
@@ -1267,79 +1401,79 @@ ggplot_beta_dispersion = function(
 
   # NOTE: Comp (component) and Dim (dimension) are used interchangeably here
   if (is.null(biplot.loadings)) {
-    biplot.loadings = FALSE
+    biplot.loadings <- FALSE
   }
   if (is.null(biplot.covariates)) {
-    biplot.covariates = FALSE
+    biplot.covariates <- FALSE
   }
-  biplot = biplot.loadings | biplot.covariates
+  biplot <- biplot.loadings | biplot.covariates
 
   # If no coordinates provided
   if (length(beta.dispersion.fit$coords) == 0) {
-    coords = NULL
+    coords <- NULL
     # If only one scaling provided
   } else if (length(beta.dispersion.fit$coords) == 1) {
-    coords = beta.dispersion.fit$coords[[1]]
+    coords <- beta.dispersion.fit$coords[[1]]
     # Select the scaling
   } else if (0 < scaling & scaling <= length(beta.dispersion.fit$coords)) {
-    coords = beta.dispersion.fit$coords[[scaling]]
+    coords <- beta.dispersion.fit$coords[[scaling]]
   } else {
     warning("Wrong scaling, scaling 1 is used")
-    coords = beta.dispersion.fit$coords[[1]]
-    scaling = 1
+    coords <- beta.dispersion.fit$coords[[1]]
+    scaling <- 1
   }
 
   # Same as for coords
   if (length(beta.dispersion.fit$loadings) == 0) {
-    loadings = NULL
+    loadings <- NULL
   } else if (length(beta.dispersion.fit$loadings) == 1) {
-    loadings = beta.dispersion.fit$loadings[[1]]
+    loadings <- beta.dispersion.fit$loadings[[1]]
   } else if (0 < scaling & scaling <= length(beta.dispersion.fit$loadings)) {
-    loadings = beta.dispersion.fit$loadings[[scaling]]
+    loadings <- beta.dispersion.fit$loadings[[scaling]]
   } else {
     warning("Wrong scaling, scaling 1 is used")
-    loadings = beta.dispersion.fit$loadings[[1]]
-    scaling = 1
+    loadings <- beta.dispersion.fit$loadings[[1]]
+    scaling <- 1
   }
 
   # Same as for coords
   if (length(beta.dispersion.fit$covariates) == 0) {
-    covariates = NULL
+    covariates <- NULL
   } else if (length(beta.dispersion.fit$covariates) == 1) {
-    covariates = beta.dispersion.fit$covariates[[1]]
+    covariates <- beta.dispersion.fit$covariates[[1]]
   } else if (0 < scaling & scaling <= length(beta.dispersion.fit$covariates)) {
-    covariates = beta.dispersion.fit$covariates[[scaling]]
+    covariates <- beta.dispersion.fit$covariates[[scaling]]
   } else {
     warning("Wrong scaling, scaling 1 is used")
-    covariates = beta.dispersion.fit$covariates[[1]]
-    scaling = 1
+    covariates <- beta.dispersion.fit$covariates[[1]]
+    scaling <- 1
   }
 
   if (!is.null(beta.dispersion.fit$eigen.values)) {
-    prop.var.explained = beta.dispersion.fit$eigen.values /
+    prop.var.explained <- beta.dispersion.fit$eigen.values /
       sum(beta.dispersion.fit$eigen.values[
         beta.dispersion.fit$eigen.values > 0
       ]) *
       100
   } else {
-    prop.var.explained = NULL
+    prop.var.explained <- NULL
   }
 
-  dist = beta.dispersion.fit$dist
-  method = beta.dispersion.fit$method
-  model = beta.dispersion.fit$model
+  dist <- beta.dispersion.fit$dist
+  method <- beta.dispersion.fit$method
+  model <- beta.dispersion.fit$model
 
   if (
     !is.null(label.name) &&
       !is.null(label.levels) &&
       !is.numeric(sample.data[[label.name]])
   ) {
-    keep = keep_levels(sample.data[[label.name]], label.levels)
-    sample.data = sample.data[keep, , drop = FALSE]
+    keep <- keep_levels(sample.data[[label.name]], label.levels)
+    sample.data <- sample.data[keep, , drop = FALSE]
     if (!is.null(coords)) {
-      coords = coords[keep, , drop = FALSE]
+      coords <- coords[keep, , drop = FALSE]
     }
-    sample.data[[label.name]] = factorize_levels(
+    sample.data[[label.name]] <- factorize_levels(
       sample.data[[label.name]],
       label.levels
     )
@@ -1350,12 +1484,12 @@ ggplot_beta_dispersion = function(
       !is.null(shape.levels) &&
       !is.numeric(sample.data[[shape.name]])
   ) {
-    keep = keep_levels(sample.data[[shape.name]], shape.levels)
-    sample.data = sample.data[keep, , drop = FALSE]
+    keep <- keep_levels(sample.data[[shape.name]], shape.levels)
+    sample.data <- sample.data[keep, , drop = FALSE]
     if (!is.null(coords)) {
-      coords = coords[keep, , drop = FALSE]
+      coords <- coords[keep, , drop = FALSE]
     }
-    sample.data[[shape.name]] = factorize_levels(
+    sample.data[[shape.name]] <- factorize_levels(
       sample.data[[shape.name]],
       shape.levels
     )
@@ -1363,17 +1497,17 @@ ggplot_beta_dispersion = function(
 
   if (!is.null(facet) && !is.numeric(sample.data[[facet]])) {
     if (!is.null(facet.levels)) {
-      keep = keep_levels(sample.data[[facet]], facet.levels)
-      sample.data = sample.data[keep, , drop = FALSE]
+      keep <- keep_levels(sample.data[[facet]], facet.levels)
+      sample.data <- sample.data[keep, , drop = FALSE]
       if (!is.null(coords)) {
-        coords = coords[keep, , drop = FALSE]
+        coords <- coords[keep, , drop = FALSE]
       }
-      sample.data[[facet]] = factorize_levels(
+      sample.data[[facet]] <- factorize_levels(
         sample.data[[facet]],
         facet.levels
       )
     } else {
-      sample.data[[facet]] = as.factor(sample.data[[facet]])
+      sample.data[[facet]] <- as.factor(sample.data[[facet]])
     }
   }
 
@@ -1381,17 +1515,17 @@ ggplot_beta_dispersion = function(
     grid.mode && !is.null(facet.row) && !is.numeric(sample.data[[facet.row]])
   ) {
     if (!is.null(facet.row.levels)) {
-      keep = keep_levels(sample.data[[facet.row]], facet.row.levels)
-      sample.data = sample.data[keep, , drop = FALSE]
+      keep <- keep_levels(sample.data[[facet.row]], facet.row.levels)
+      sample.data <- sample.data[keep, , drop = FALSE]
       if (!is.null(coords)) {
-        coords = coords[keep, , drop = FALSE]
+        coords <- coords[keep, , drop = FALSE]
       }
-      sample.data[[facet.row]] = factorize_levels(
+      sample.data[[facet.row]] <- factorize_levels(
         sample.data[[facet.row]],
         facet.row.levels
       )
     } else {
-      sample.data[[facet.row]] = as.factor(sample.data[[facet.row]])
+      sample.data[[facet.row]] <- as.factor(sample.data[[facet.row]])
     }
   }
 
@@ -1399,17 +1533,17 @@ ggplot_beta_dispersion = function(
     grid.mode && !is.null(facet.col) && !is.numeric(sample.data[[facet.col]])
   ) {
     if (!is.null(facet.col.levels)) {
-      keep = keep_levels(sample.data[[facet.col]], facet.col.levels)
-      sample.data = sample.data[keep, , drop = FALSE]
+      keep <- keep_levels(sample.data[[facet.col]], facet.col.levels)
+      sample.data <- sample.data[keep, , drop = FALSE]
       if (!is.null(coords)) {
-        coords = coords[keep, , drop = FALSE]
+        coords <- coords[keep, , drop = FALSE]
       }
-      sample.data[[facet.col]] = factorize_levels(
+      sample.data[[facet.col]] <- factorize_levels(
         sample.data[[facet.col]],
         facet.col.levels
       )
     } else {
-      sample.data[[facet.col]] = as.factor(sample.data[[facet.col]])
+      sample.data[[facet.col]] <- as.factor(sample.data[[facet.col]])
     }
   }
 
@@ -1418,23 +1552,23 @@ ggplot_beta_dispersion = function(
       !is.null(animation.variable.levels) &&
       !is.numeric(sample.data[[animation.variable.name]])
   ) {
-    keep = keep_levels(
+    keep <- keep_levels(
       sample.data[[animation.variable.name]],
       animation.variable.levels
     )
-    sample.data = sample.data[keep, , drop = FALSE]
+    sample.data <- sample.data[keep, , drop = FALSE]
     if (!is.null(coords)) {
-      coords = coords[keep, , drop = FALSE]
+      coords <- coords[keep, , drop = FALSE]
     }
-    sample.data[[animation.variable.name]] = factorize_levels(
+    sample.data[[animation.variable.name]] <- factorize_levels(
       sample.data[[animation.variable.name]],
       animation.variable.levels
     )
   }
   # (split by newline character to get one line of text for the subtitle)
   # if no label name is provided, stats are ignored
-  p.value = NULL
-  p.value.df = NULL
+  p.value <- NULL
+  p.value.df <- NULL
 
   if (!is.null(stat.beta.dispersion$label.name)) {
     if (
@@ -1444,14 +1578,14 @@ ggplot_beta_dispersion = function(
         !is.null(stat.beta.dispersion$p.value.df)
     ) {
       # Full grid mode: p-values as data frame, rendered as geom_text annotations
-      p.value.df = stat.beta.dispersion$p.value.df
+      p.value.df <- stat.beta.dispersion$p.value.df
     } else if (!is.null(stat.beta.dispersion$p.value)) {
-      active.facet = if (grid.mode) facet.row %||% facet.col else facet
+      active.facet <- if (grid.mode) facet.row %||% facet.col else facet
       if (
         is.null(active.facet) && is.null(names(stat.beta.dispersion$p.value))
       ) {
         # No facets: embed single p-value in subtitle
-        p.value = paste(
+        p.value <- paste(
           strsplit(stat.beta.dispersion$p.value[[1]], "\n")[[1]],
           collapse = " "
         )
@@ -1464,7 +1598,7 @@ ggplot_beta_dispersion = function(
           )
       ) {
         # Single-facet: embed per-facet p-value into facet strip labels
-        p.value = stat.beta.dispersion$p.value[levels(sample.data[[
+        p.value <- stat.beta.dispersion$p.value[levels(sample.data[[
           active.facet
         ]])]
       }
@@ -1475,7 +1609,7 @@ ggplot_beta_dispersion = function(
   # having NA for at least one of graphical parameters (label, shape, facet, animation)
   # remove these samples from sample data AND from corresponding coordinates!
   if (remove.na.from.plot) {
-    samples.wo.na = rep(TRUE, nrow(sample.data))
+    samples.wo.na <- rep(TRUE, nrow(sample.data))
     for (var.name in c(
       label.name,
       shape.name,
@@ -1486,86 +1620,98 @@ ggplot_beta_dispersion = function(
       animation.variable.name
     )) {
       if (!is.null(sample.data[[var.name]])) {
-        samples.wo.na = samples.wo.na & !is.na(sample.data[[var.name]])
+        samples.wo.na <- samples.wo.na & !is.na(sample.data[[var.name]])
       }
     }
-    sample.data = sample.data[samples.wo.na, ]
-    coords = coords[samples.wo.na, ]
+    sample.data <- sample.data[samples.wo.na, ]
+    coords <- coords[samples.wo.na, ]
   }
 
   # If stats on group are provided, overwrite the label.name by the one of this group
   if (!is.null(stat.beta.dispersion$label.name)) {
-    label.name = stat.beta.dispersion$label.name
+    label.name <- stat.beta.dispersion$label.name
   }
 
   if (!is.null(label.name)) {
-    label = sample.data[[label.name]]
+    label <- sample.data[[label.name]]
   } else {
-    label = NULL
+    label <- NULL
   }
 
   if (!is.null(animation.variable.name)) {
-    animation.variable = sample.data[[animation.variable.name]]
+    animation.variable <- sample.data[[animation.variable.name]]
   } else {
-    animation.variable = NULL
+    animation.variable <- NULL
   }
 
   if (is.character(label)) {
-    label = factor(label, levels = unique(label))
+    label <- factor(label, levels = unique(label))
   }
 
   if (!is.null(colnames(coords))) {
-    dim.names = colnames(coords)
+    dim.names <- colnames(coords)
   } else {
-    dim.names = paste0("Dim ", 1:ncol(coords))
+    dim.names <- paste0("Dim ", 1:ncol(coords))
   }
 
   # Check if components are valid
   if (!is.numeric(comp) | length(comp) != 2 | !all(comp %in% 1:ncol(coords))) {
     warning("Wrong components, forced to first two components")
-    comp = c(1, 2)
+    comp <- c(1, 2)
   }
 
   # Check if there are loadings and covariates for given components
   if (!is.null(loadings)) {
     if (!all(comp %in% 1:ncol(loadings))) {
       warning("No species score provided for these components")
-      loadings = NULL
+      loadings <- NULL
     }
   }
 
   if (!is.null(covariates)) {
     if (!all(comp %in% 1:ncol(covariates))) {
       warning("No species score provided for these components")
-      covariates = NULL
+      covariates <- NULL
     }
   }
 
-  if (reverse.dim1 && !is.null(coords)) coords[, comp[1]] = -coords[, comp[1]]
-  if (reverse.dim2 && !is.null(coords)) coords[, comp[2]] = -coords[, comp[2]]
-  if (reverse.dim1 && !is.null(loadings)) loadings[, comp[1]] = -loadings[, comp[1]]
-  if (reverse.dim2 && !is.null(loadings)) loadings[, comp[2]] = -loadings[, comp[2]]
-  if (reverse.dim1 && !is.null(covariates)) covariates[, comp[1]] = -covariates[, comp[1]]
-  if (reverse.dim2 && !is.null(covariates)) covariates[, comp[2]] = -covariates[, comp[2]]
+  if (reverse.dim1 && !is.null(coords)) {
+    coords[, comp[1]] <- -coords[, comp[1]]
+  }
+  if (reverse.dim2 && !is.null(coords)) {
+    coords[, comp[2]] <- -coords[, comp[2]]
+  }
+  if (reverse.dim1 && !is.null(loadings)) {
+    loadings[, comp[1]] <- -loadings[, comp[1]]
+  }
+  if (reverse.dim2 && !is.null(loadings)) {
+    loadings[, comp[2]] <- -loadings[, comp[2]]
+  }
+  if (reverse.dim1 && !is.null(covariates)) {
+    covariates[, comp[1]] <- -covariates[, comp[1]]
+  }
+  if (reverse.dim2 && !is.null(covariates)) {
+    covariates[, comp[2]] <- -covariates[, comp[2]]
+  }
 
-  plot.df = data.frame(Comp1 = coords[, comp[1]], Comp2 = coords[, comp[2]])
+  plot.df <- data.frame(Comp1 = coords[, comp[1]], Comp2 = coords[, comp[2]])
 
   if (!is.null(label)) {
-    plot.df$label = label
+    plot.df$label <- label
   }
 
   if (!is.null(animation.variable)) {
-    plot.df[[animation.variable.name]] = animation.variable
+    plot.df[[animation.variable.name]] <- animation.variable
   }
 
   if (grid.mode) {
     if (!is.null(facet.row)) {
-      facet.row.data = sample.data[[facet.row]]
+      facet.row.data <- sample.data[[facet.row]]
       if (!is.factor(facet.row.data)) {
-        facet.row.data = factor(facet.row.data)
+        facet.row.data <- factor(facet.row.data)
       }
       if (is.null(facet.col) && length(p.value) > 1) {
-        plot.df$facet.row = factor(
+        plot.df$facet.row <- factor(
           paste0(
             facet.row,
             " = ",
@@ -1582,7 +1728,7 @@ ggplot_beta_dispersion = function(
           )
         )
       } else {
-        plot.df$facet.row = factor(
+        plot.df$facet.row <- factor(
           paste0(facet.row, " = ", as.character(facet.row.data)),
           levels = paste0(
             facet.row,
@@ -1593,12 +1739,12 @@ ggplot_beta_dispersion = function(
       }
     }
     if (!is.null(facet.col)) {
-      facet.col.data = sample.data[[facet.col]]
+      facet.col.data <- sample.data[[facet.col]]
       if (!is.factor(facet.col.data)) {
-        facet.col.data = factor(facet.col.data)
+        facet.col.data <- factor(facet.col.data)
       }
       if (is.null(facet.row) && length(p.value) > 1) {
-        plot.df$facet.col = factor(
+        plot.df$facet.col <- factor(
           paste0(
             facet.col,
             " = ",
@@ -1615,7 +1761,7 @@ ggplot_beta_dispersion = function(
           )
         )
       } else {
-        plot.df$facet.col = factor(
+        plot.df$facet.col <- factor(
           paste0(facet.col, " = ", as.character(facet.col.data)),
           levels = paste0(
             facet.col,
@@ -1626,12 +1772,12 @@ ggplot_beta_dispersion = function(
       }
     }
   } else if (!is.null(facet)) {
-    facet.data = sample.data[[facet]]
+    facet.data <- sample.data[[facet]]
     if (is.character(facet.data) | is.factor(facet.data)) {
       if (!is.factor(facet.data)) {
-        facet.data = as.factor(facet.data)
+        facet.data <- as.factor(facet.data)
       }
-      plot.df$facet = factor(
+      plot.df$facet <- factor(
         paste0(
           facet,
           " = ",
@@ -1653,61 +1799,78 @@ ggplot_beta_dispersion = function(
   }
 
   if (!is.null(shape.name)) {
-    shape = sample.data[[shape.name]]
+    shape <- sample.data[[shape.name]]
     if (is.character(shape) | is.factor(shape)) {
       if (!is.factor(shape)) {
-        shape = as.factor(shape)
+        shape <- as.factor(shape)
       }
-      plot.df$shape = shape
+      plot.df$shape <- shape
     } else {
-      shape = NULL
+      shape <- NULL
     }
   } else {
-    shape = NULL
+    shape <- NULL
   }
 
   if (!is.null(size.name)) {
-    size = sample.data[[size.name]]
+    size <- sample.data[[size.name]]
   } else {
-    size = NULL
+    size <- NULL
   }
 
-  hover.variables = colnames(sample.data)[
+  hover.variables <- colnames(sample.data)[
     colnames(sample.data) %in% hover.variables
   ]
 
-  hover.text.all = rep(NA, nrow(sample.data))
+  hover.text.all <- rep(NA, nrow(sample.data))
   for (i in seq_len(nrow(sample.data))) {
-    sample = rownames(sample.data)[i]
-    hover.text = ""
-    values = sample.data[sample, , drop = FALSE] %>% as("data.frame")
+    sample <- rownames(sample.data)[i]
+    hover.text <- ""
+    values <- sample.data[sample, , drop = FALSE] %>% as("data.frame")
     for (variable in hover.variables) {
-      value = values[[variable]]
-      hover.text = paste0(hover.text, variable, ": ", value, "<br>")
+      value <- values[[variable]]
+      hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
     }
-    hover.text.all[i] = hover.text
+    hover.text.all[i] <- hover.text
   }
 
-  plot.df$hover.text = hover.text.all
+  plot.df$hover.text <- hover.text.all
 
-  plt = ggplot() +
-    geom_point(
-      aes(
-        x = Comp1,
-        y = Comp2,
-        color = label, # OK if NULL
-        text = hover.text,
-        shape = shape, # OK if NULL
-        size = size # OK if NULL
-      ),
-      plot.df,
-      alpha = point.alpha
-    ) +
-    labs(color = label.name, shape = shape.name, size = size.name)
+  if (".is.fit.sample" %in% colnames(sample.data)) {
+    plot.df$.is.fit.sample <- sample.data$.is.fit.sample
+  }
+
+  point_aes <- aes(
+    x = Comp1,
+    y = Comp2,
+    color = label, # OK if NULL
+    text = hover.text,
+    shape = shape, # OK if NULL
+    size = size # OK if NULL
+  )
+
+  if (".is.fit.sample" %in% colnames(plot.df)) {
+    plt <- ggplot() +
+      geom_point(
+        point_aes,
+        plot.df[!plot.df$.is.fit.sample, ],
+        alpha = projected.alpha
+      ) +
+      geom_point(
+        point_aes,
+        plot.df[plot.df$.is.fit.sample, ],
+        alpha = point.alpha
+      ) +
+      labs(color = label.name, shape = shape.name, size = size.name)
+  } else {
+    plt <- ggplot() +
+      geom_point(point_aes, plot.df, alpha = point.alpha) +
+      labs(color = label.name, shape = shape.name, size = size.name)
+  }
 
   if (ellipses & is.factor(label)) {
     if (fill.ellipses) {
-      plt = plt +
+      plt <- plt +
         stat_ellipse(
           aes(x = Comp1, y = Comp2, color = label, fill = label),
           plot.df,
@@ -1715,12 +1878,12 @@ ggplot_beta_dispersion = function(
           alpha = 0.2
         )
     } else {
-      plt = plt +
+      plt <- plt +
         stat_ellipse(aes(x = Comp1, y = Comp2, color = label), plot.df)
     }
   }
 
-  plt = plt +
+  plt <- plt +
     labs(
       x = paste0(
         dim.names[comp[1]],
@@ -1757,6 +1920,15 @@ ggplot_beta_dispersion = function(
           taxrank
         } else {
           "none"
+        },
+        if (!is.null(beta.dispersion.fit$fit.filter)) {
+          paste0(
+            "  fit subset: ",
+            beta.dispersion.fit$fit.filter$name,
+            " in {",
+            paste(beta.dispersion.fit$fit.filter$values, collapse = ", "),
+            "}"
+          )
         },
         if (remove.na.from.plot) {
           "  NA's removed  "
@@ -1803,19 +1975,19 @@ ggplot_beta_dispersion = function(
     ggsci::scale_fill_npg()
 
   if (biplot & (!is.null(loadings) | !is.null(covariates))) {
-    scale.factor.load = NULL
-    scale.factor.covar = NULL
+    scale.factor.load <- NULL
+    scale.factor.covar <- NULL
 
-    arrow.df = data.frame()
+    arrow.df <- data.frame()
 
     # Plot species arrows = loadings here
     if (!is.null(loadings) & biplot.loadings) {
       # Account for absent loadings
-      filtered.loadings = na.omit(loadings[, comp, drop = FALSE]) # TODO: how come that some loadings are NaN?
+      filtered.loadings <- na.omit(loadings[, comp, drop = FALSE]) # TODO: how come that some loadings are NaN?
       #       is it for all models?
       # Filter arrows by length (get rid of smaller arrows)
-      arrow.lengths = apply(filtered.loadings, 1, function(x) sqrt(sum(x^2)))
-      filtered.loadings = filtered.loadings[
+      arrow.lengths <- apply(filtered.loadings, 1, function(x) sqrt(sum(x^2)))
+      filtered.loadings <- filtered.loadings[
         arrow.lengths / max(arrow.lengths) > arrow.cutoff.load,
         ,
         drop = FALSE
@@ -1823,46 +1995,46 @@ ggplot_beta_dispersion = function(
 
       # If there are loadings left...
       if (nrow(filtered.loadings) > 0) {
-        arrow.load = data.frame(
+        arrow.load <- data.frame(
           Comp1 = filtered.loadings[, 1],
           Comp2 = filtered.loadings[, 2],
           type = "load"
         )
 
-        rownames(arrow.load) = row.names(filtered.loadings)
+        rownames(arrow.load) <- row.names(filtered.loadings)
 
         # Scale the secondary axes for loadings so that loadings and scores are on
         # comparable scale
         # NOTE: both components are scaled by the same factor, so arrows point
         # in the same direction as before, only their size changes!
-        lim.load = max(abs(arrow.load$Comp1), abs(arrow.load$Comp2))
-        scale.factor.load = max(abs(coords)) / lim.load
-        arrow.load$Comp1 = arrow.load$Comp1 * scale.factor.load
-        arrow.load$Comp2 = arrow.load$Comp2 * scale.factor.load
+        lim.load <- max(abs(arrow.load$Comp1), abs(arrow.load$Comp2))
+        scale.factor.load <- max(abs(coords)) / lim.load
+        arrow.load$Comp1 <- arrow.load$Comp1 * scale.factor.load
+        arrow.load$Comp2 <- arrow.load$Comp2 * scale.factor.load
 
         # If phyloseq object provided, get hover info from it - taxonomy for each species (arrow)
         if (!is.null(tax.table)) {
-          hover.text.all = rep(NA, nrow(arrow.load))
+          hover.text.all <- rep(NA, nrow(arrow.load))
           for (i in 1:nrow(arrow.load)) {
             # it makes sure that taxa names match
-            taxon = rownames(arrow.load)[i]
-            hover.text = ""
-            values = tax.table[taxon, , drop = FALSE]
+            taxon <- rownames(arrow.load)[i]
+            hover.text <- ""
+            values <- tax.table[taxon, , drop = FALSE]
             for (variable in colnames(values)) {
-              value = values[[variable]]
-              hover.text = paste0(hover.text, variable, ": ", value, "<br>")
+              value <- values[[variable]]
+              hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
             }
-            hover.text.all[i] = hover.text
+            hover.text.all[i] <- hover.text
           }
 
-          arrow.load$hover.text = hover.text.all
+          arrow.load$hover.text <- hover.text.all
         } else {
-          arrow.load$hover.text = rownames(arrow.load)
+          arrow.load$hover.text <- rownames(arrow.load)
         }
 
         if (!is.null(arrow.taxonomy.labels)) {
           # use taxonomy as label instead of taxa names
-          arrow.load$Names = apply(
+          arrow.load$Names <- apply(
             tax.table[rownames(arrow.load), ],
             1,
             function(row) {
@@ -1870,46 +2042,46 @@ ggplot_beta_dispersion = function(
             }
           )
         } else {
-          arrow.load$Names = rownames(arrow.load)
+          arrow.load$Names <- rownames(arrow.load)
         }
-        arrow.df = rbind(arrow.df, arrow.load)
+        arrow.df <- rbind(arrow.df, arrow.load)
       }
     }
     # Similar for covariates (predictors in case of constrained model)
     if (!is.null(covariates) & biplot.covariates) {
       # Filter out absent data or short arrows
-      filtered.covariates = na.omit(covariates[, comp, drop = FALSE])
-      arrow.lengths = apply(filtered.covariates, 1, function(x) sqrt(sum(x^2)))
-      filtered.covariates = filtered.covariates[
+      filtered.covariates <- na.omit(covariates[, comp, drop = FALSE])
+      arrow.lengths <- apply(filtered.covariates, 1, function(x) sqrt(sum(x^2)))
+      filtered.covariates <- filtered.covariates[
         arrow.lengths / max(arrow.lengths) > arrow.cutoff.covar,
         ,
         drop = FALSE
       ]
       # If some are left...
       if (nrow(filtered.covariates) > 0) {
-        arrow.covar = data.frame(
+        arrow.covar <- data.frame(
           Comp1 = filtered.covariates[, 1],
           Comp2 = filtered.covariates[, 2],
           type = "covar"
         )
-        rownames(arrow.covar) = row.names(filtered.covariates)
+        rownames(arrow.covar) <- row.names(filtered.covariates)
 
         # Scale in the same manner as for loading but notice that they are scaled
         # by a different factor, so that all are of comparable size on plot
-        lim.covar = max(abs(arrow.covar$Comp1), abs(arrow.covar$Comp2))
-        scale.factor.covar = max(abs(coords)) / lim.covar
-        arrow.covar$Comp1 = arrow.covar$Comp1 * scale.factor.covar
-        arrow.covar$Comp2 = arrow.covar$Comp2 * scale.factor.covar
+        lim.covar <- max(abs(arrow.covar$Comp1), abs(arrow.covar$Comp2))
+        scale.factor.covar <- max(abs(coords)) / lim.covar
+        arrow.covar$Comp1 <- arrow.covar$Comp1 * scale.factor.covar
+        arrow.covar$Comp2 <- arrow.covar$Comp2 * scale.factor.covar
         # Hover text is just the name of covariate
-        arrow.covar$hover.text = rownames(arrow.covar)
-        arrow.covar$Names = gsub("`", "", rownames(arrow.covar))
-        arrow.df = rbind(arrow.df, arrow.covar)
+        arrow.covar$hover.text <- rownames(arrow.covar)
+        arrow.covar$Names <- gsub("`", "", rownames(arrow.covar))
+        arrow.df <- rbind(arrow.df, arrow.covar)
       }
     }
 
     # If there are loadings and/or covariates, plot arrows
     if (nrow(arrow.df) > 0) {
-      arrow.params = arrow(
+      arrow.params <- arrow(
         type = "closed",
         angle = 20,
         length = unit(0.1, "inches")
@@ -1917,7 +2089,7 @@ ggplot_beta_dispersion = function(
 
       if ("load" %in% arrow.df$type) {
         if (color.arrows.by.taxa) {
-          plt = plt +
+          plt <- plt +
             geom_segment(
               data = arrow.df[arrow.df$type == "load", ],
               aes(
@@ -1933,7 +2105,7 @@ ggplot_beta_dispersion = function(
               alpha = 0.7 # Transparency of the arrows
             )
         } else {
-          plt = plt +
+          plt <- plt +
             geom_segment(
               data = arrow.df[arrow.df$type == "load", ],
               aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover.text), # Arrow from (0,0) to each point
@@ -1946,7 +2118,7 @@ ggplot_beta_dispersion = function(
       }
 
       if ("covar" %in% arrow.df$type) {
-        plt = plt +
+        plt <- plt +
           geom_segment(
             data = arrow.df[arrow.df$type == "covar", ],
             aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover.text), # Arrow from (0,0) to each point
@@ -1958,7 +2130,7 @@ ggplot_beta_dispersion = function(
       }
       if (arrow.labels) {
         if (repel) {
-          plt = plt +
+          plt <- plt +
             ggrepel::geom_text_repel(
               data = arrow.df,
               aes(x = Comp1, y = Comp2, label = Names),
@@ -1966,7 +2138,7 @@ ggplot_beta_dispersion = function(
               show.legend = FALSE
             )
         } else {
-          plt = plt +
+          plt <- plt +
             geom_text(
               data = arrow.df,
               aes(x = Comp1, y = Comp2, label = Names, text = hover.text)
@@ -1981,8 +2153,8 @@ ggplot_beta_dispersion = function(
         is.null(marginal.plot) &
           xor(is.null(scale.factor.load), is.null(scale.factor.covar)) # <=> only loadings or covariates, not both
       ) {
-        scale.factor = c(scale.factor.load, scale.factor.covar) # = the one which is not NULL
-        plt = plt +
+        scale.factor <- c(scale.factor.load, scale.factor.covar) # = the one which is not NULL
+        plt <- plt +
           scale_x_continuous(
             sec.axis = sec_axis(
               trans = ~ . / scale.factor,
@@ -2006,9 +2178,9 @@ ggplot_beta_dispersion = function(
   }
   if (grid.mode) {
     if (!is.null(facet.row) && !is.null(facet.col)) {
-      plt = plt + facet_grid(facet.row ~ facet.col, scales = "fixed")
+      plt <- plt + facet_grid(facet.row ~ facet.col, scales = "fixed")
       if (!is.null(p.value.df) && nrow(p.value.df) > 0) {
-        annot.df = data.frame(
+        annot.df <- data.frame(
           facet.row = factor(
             paste0(facet.row, " = ", p.value.df$facet.row),
             levels = levels(plot.df$facet.row)
@@ -2021,7 +2193,7 @@ ggplot_beta_dispersion = function(
           x = Inf,
           y = Inf
         )
-        plt = plt +
+        plt <- plt +
           geom_text(
             data = annot.df,
             aes(x = x, y = y, label = p.label),
@@ -2032,12 +2204,12 @@ ggplot_beta_dispersion = function(
           )
       }
     } else if (!is.null(facet.row)) {
-      plt = plt + facet_grid(rows = vars(facet.row), scales = "fixed")
+      plt <- plt + facet_grid(rows = vars(facet.row), scales = "fixed")
     } else if (!is.null(facet.col)) {
-      plt = plt + facet_grid(cols = vars(facet.col), scales = "fixed")
+      plt <- plt + facet_grid(cols = vars(facet.col), scales = "fixed")
     }
   } else if (!is.null(facet) && "facet" %in% colnames(plot.df)) {
-    plt = plt +
+    plt <- plt +
       facet_wrap(
         . ~ facet,
         scales = "fixed",
@@ -2049,19 +2221,19 @@ ggplot_beta_dispersion = function(
   if (
     !is.null(marginal.plot) & is.factor(label) & is.null(facet) & !grid.mode
   ) {
-    plt = plt +
+    plt <- plt +
       theme(
         legend.title = element_text(face = "bold", hjust = 0.5),
         legend.position = "left"
       ) # place legend to the left so that it doesn't interfere with the marginal plot
-    plt = ggExtra::ggMarginal(
+    plt <- ggExtra::ggMarginal(
       plt,
       type = marginal.plot,
       groupColour = TRUE,
       groupFill = TRUE
     )
   } else if (!is.null(label)) {
-    plt = plt +
+    plt <- plt +
       theme(legend.title = element_text(face = "bold", hjust = 0.5))
   }
 
@@ -2074,15 +2246,15 @@ ggplot_beta_dispersion = function(
 # implement it in feature selector
 #' Animate a Ggplot Object by a Variable
 #' @export
-animate_by_variable = function(
+animate_by_variable <- function(
   ggplot.obj, # ggplot2 object
   animation.variable.name,
   return.anim = TRUE,
   save.path = NULL # gif file name
 ) {
-  plt = ggplot.obj
+  plt <- ggplot.obj
 
-  plt =
+  plt <-
     plt +
     gganimate::transition_states(
       get(animation.variable.name),
@@ -2091,7 +2263,7 @@ animate_by_variable = function(
     ) +
     labs(subtitle = paste0(animation.variable.name, " = {closest_state}")) +
     ease_aes('linear')
-  anim =
+  anim <-
     animate(
       plt,
       nframes = 150, # More frames for better smoothness
