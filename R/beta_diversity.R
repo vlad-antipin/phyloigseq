@@ -86,8 +86,7 @@ get_beta_dispersion = function(
       # if distance matrix furnished directly (not recommended)
       dist.matrix = dist
     } else {
-      if (is.null(access(physeq, "phy_tree")) & dist == "unifrac") {
-        # FIXME: it was Unifrac before - check the spelling
+      if (is.null(access(physeq, "phy_tree")) & dist %in% c("unifrac", "wunifrac")) {
         print(
           "No phylogenetic tree in this phyloseq object, bray-curtis distance selected."
         )

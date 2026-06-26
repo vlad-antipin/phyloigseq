@@ -39,7 +39,7 @@ get_phylo_heatmap = function(
   ) {
     # TODO: check the spelling for unifrac
     print(paste0(
-      "Uning ",
+      "Using ",
       distance,
       "distance requires phylogenetic tree in phyloseq object, bray-curtis distance selected instead."
     ))
