@@ -355,9 +355,13 @@ stat_beta_dispersion = function(
   if (!is.null(facet.name) && is.null(facet)) {
     facet = facet.name
   }
-  if (is.null(facet.mode)) facet.mode = "wrap"
+  if (is.null(facet.mode)) {
+    facet.mode = "wrap"
+  }
 
-  full.grid.mode = facet.mode == "grid" && !is.null(facet.row) && !is.null(facet.col)
+  full.grid.mode = facet.mode == "grid" &&
+    !is.null(facet.row) &&
+    !is.null(facet.col)
   active.facet = if (facet.mode == "wrap") {
     facet
   } else if (!is.null(facet.row) && is.null(facet.col)) {
@@ -398,21 +402,27 @@ stat_beta_dispersion = function(
       !is.null(facet.row) &&
       facet.row %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[facet.row]]
+    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[
+      facet.row
+    ]]
   }
   if (
     full.grid.mode &&
       !is.null(facet.col) &&
       facet.col %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.col"]] = beta.dispersion.fit$sample.data[[facet.col]]
+    stat.data.full[[".facet.col"]] = beta.dispersion.fit$sample.data[[
+      facet.col
+    ]]
   }
   if (
     !full.grid.mode &&
       !is.null(active.facet) &&
       active.facet %in% colnames(beta.dispersion.fit$sample.data)
   ) {
-    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[active.facet]]
+    stat.data.full[[".facet.row"]] = beta.dispersion.fit$sample.data[[
+      active.facet
+    ]]
   }
 
   stat.data.full = na.omit(stat.data.full)
@@ -483,12 +493,16 @@ stat_beta_dispersion = function(
       return(NULL)
     }
     labels = unique(na.omit(as.character(stat.data$Label)))
-    if (length(labels) < 2) return(NULL)
+    if (length(labels) < 2) {
+      return(NULL)
+    }
     pairs = combn(labels, 2, simplify = FALSE)
     pair_results = lapply(pairs, function(pair) {
       sub = stat.data[as.character(stat.data$Label) %in% pair, ]
       sub = na.omit(sub)
-      if (length(unique(as.character(sub$Label))) < 2) return(NULL)
+      if (length(unique(as.character(sub$Label))) < 2) {
+        return(NULL)
+      }
       sub_strata = NULL
       if (!is.null(strata.name) && strata.name %in% colnames(sub)) {
         sub_strata = sub[[strata.name]]
@@ -504,7 +518,9 @@ stat_beta_dispersion = function(
         ),
         error = function(e) NULL
       )
-      if (is.null(res)) return(NULL)
+      if (is.null(res)) {
+        return(NULL)
+      }
       data.frame(
         group1 = pair[1],
         group2 = pair[2],
@@ -514,7 +530,9 @@ stat_beta_dispersion = function(
       )
     })
     pair_results = do.call(rbind, Filter(Negate(is.null), pair_results))
-    if (is.null(pair_results) || nrow(pair_results) == 0) return(NULL)
+    if (is.null(pair_results) || nrow(pair_results) == 0) {
+      return(NULL)
+    }
     pair_results$p.adj = p.adjust(pair_results$p.raw, method = "BH")
     pair_results
   }
@@ -579,8 +597,12 @@ stat_beta_dispersion = function(
       if (pairwise && res$stat == "permanova") {
         pw = run_pairwise(stat.data)
         if (!is.null(pw)) {
-          if (!is.null(facet.row)) pw[[facet.row]] = as.character(row.val)
-          if (!is.null(facet.col)) pw[[facet.col]] = as.character(col.val)
+          if (!is.null(facet.row)) {
+            pw[[facet.row]] = as.character(row.val)
+          }
+          if (!is.null(facet.col)) {
+            pw[[facet.col]] = as.character(col.val)
+          }
           pairwise.list[[length(pairwise.list) + 1]] = pw
         }
       }
@@ -599,7 +621,11 @@ stat_beta_dispersion = function(
       p.value = NULL,
       p.value.df = p.value.df,
       p.value.raw = p.value.df$p.raw,
-      pairwise.df = if (pairwise && length(pairwise.list) > 0) do.call(rbind, pairwise.list) else NULL
+      pairwise.df = if (pairwise && length(pairwise.list) > 0) {
+        do.call(rbind, pairwise.list)
+      } else {
+        NULL
+      }
     ))
   }
 
@@ -659,7 +685,11 @@ stat_beta_dispersion = function(
     p.value = p.value.all,
     p.value.df = NULL,
     p.value.raw = p.value.raw,
-    pairwise.df = if (pairwise && length(pairwise.list) > 0) do.call(rbind, pairwise.list) else NULL
+    pairwise.df = if (pairwise && length(pairwise.list) > 0) {
+      do.call(rbind, pairwise.list)
+    } else {
+      NULL
+    }
   ))
 }
 
@@ -1220,7 +1250,6 @@ ggplot_beta_dispersion = function(
   reverse.dim1 = FALSE,
   reverse.dim2 = FALSE
 ) {
-  fit = beta.dispersion.fit$fit
   sample.data = beta.dispersion.fit$sample.data
 
   grid.mode = facet.mode == "grid"
@@ -1308,8 +1337,13 @@ ggplot_beta_dispersion = function(
   ) {
     keep = keep_levels(sample.data[[label.name]], label.levels)
     sample.data = sample.data[keep, , drop = FALSE]
-    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
-    sample.data[[label.name]] = factorize_levels(sample.data[[label.name]], label.levels)
+    if (!is.null(coords)) {
+      coords = coords[keep, , drop = FALSE]
+    }
+    sample.data[[label.name]] = factorize_levels(
+      sample.data[[label.name]],
+      label.levels
+    )
   }
 
   if (
@@ -1319,16 +1353,26 @@ ggplot_beta_dispersion = function(
   ) {
     keep = keep_levels(sample.data[[shape.name]], shape.levels)
     sample.data = sample.data[keep, , drop = FALSE]
-    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
-    sample.data[[shape.name]] = factorize_levels(sample.data[[shape.name]], shape.levels)
+    if (!is.null(coords)) {
+      coords = coords[keep, , drop = FALSE]
+    }
+    sample.data[[shape.name]] = factorize_levels(
+      sample.data[[shape.name]],
+      shape.levels
+    )
   }
 
   if (!is.null(facet) && !is.numeric(sample.data[[facet]])) {
     if (!is.null(facet.levels)) {
       keep = keep_levels(sample.data[[facet]], facet.levels)
       sample.data = sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
-      sample.data[[facet]] = factorize_levels(sample.data[[facet]], facet.levels)
+      if (!is.null(coords)) {
+        coords = coords[keep, , drop = FALSE]
+      }
+      sample.data[[facet]] = factorize_levels(
+        sample.data[[facet]],
+        facet.levels
+      )
     } else {
       sample.data[[facet]] = as.factor(sample.data[[facet]])
     }
@@ -1340,8 +1384,13 @@ ggplot_beta_dispersion = function(
     if (!is.null(facet.row.levels)) {
       keep = keep_levels(sample.data[[facet.row]], facet.row.levels)
       sample.data = sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
-      sample.data[[facet.row]] = factorize_levels(sample.data[[facet.row]], facet.row.levels)
+      if (!is.null(coords)) {
+        coords = coords[keep, , drop = FALSE]
+      }
+      sample.data[[facet.row]] = factorize_levels(
+        sample.data[[facet.row]],
+        facet.row.levels
+      )
     } else {
       sample.data[[facet.row]] = as.factor(sample.data[[facet.row]])
     }
@@ -1353,8 +1402,13 @@ ggplot_beta_dispersion = function(
     if (!is.null(facet.col.levels)) {
       keep = keep_levels(sample.data[[facet.col]], facet.col.levels)
       sample.data = sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
-      sample.data[[facet.col]] = factorize_levels(sample.data[[facet.col]], facet.col.levels)
+      if (!is.null(coords)) {
+        coords = coords[keep, , drop = FALSE]
+      }
+      sample.data[[facet.col]] = factorize_levels(
+        sample.data[[facet.col]],
+        facet.col.levels
+      )
     } else {
       sample.data[[facet.col]] = as.factor(sample.data[[facet.col]])
     }
@@ -1365,11 +1419,17 @@ ggplot_beta_dispersion = function(
       !is.null(animation.variable.levels) &&
       !is.numeric(sample.data[[animation.variable.name]])
   ) {
-    keep = keep_levels(sample.data[[animation.variable.name]], animation.variable.levels)
+    keep = keep_levels(
+      sample.data[[animation.variable.name]],
+      animation.variable.levels
+    )
     sample.data = sample.data[keep, , drop = FALSE]
-    if (!is.null(coords)) coords = coords[keep, , drop = FALSE]
+    if (!is.null(coords)) {
+      coords = coords[keep, , drop = FALSE]
+    }
     sample.data[[animation.variable.name]] = factorize_levels(
-      sample.data[[animation.variable.name]], animation.variable.levels
+      sample.data[[animation.variable.name]],
+      animation.variable.levels
     )
   }
   # (split by newline character to get one line of text for the subtitle)
@@ -1380,14 +1440,17 @@ ggplot_beta_dispersion = function(
   if (!is.null(stat.beta.dispersion$label.name)) {
     if (
       grid.mode &&
-        !is.null(facet.row) && !is.null(facet.col) &&
+        !is.null(facet.row) &&
+        !is.null(facet.col) &&
         !is.null(stat.beta.dispersion$p.value.df)
     ) {
       # Full grid mode: p-values as data frame, rendered as geom_text annotations
       p.value.df = stat.beta.dispersion$p.value.df
     } else if (!is.null(stat.beta.dispersion$p.value)) {
       active.facet = if (grid.mode) facet.row %||% facet.col else facet
-      if (is.null(active.facet) && is.null(names(stat.beta.dispersion$p.value))) {
+      if (
+        is.null(active.facet) && is.null(names(stat.beta.dispersion$p.value))
+      ) {
         # No facets: embed single p-value in subtitle
         p.value = paste(
           strsplit(stat.beta.dispersion$p.value[[1]], "\n")[[1]],
@@ -1402,7 +1465,9 @@ ggplot_beta_dispersion = function(
           )
       ) {
         # Single-facet: embed per-facet p-value into facet strip labels
-        p.value = stat.beta.dispersion$p.value[levels(sample.data[[active.facet]])]
+        p.value = stat.beta.dispersion$p.value[levels(sample.data[[
+          active.facet
+        ]])]
       }
     }
   }
@@ -1477,6 +1542,13 @@ ggplot_beta_dispersion = function(
     }
   }
 
+  if (reverse.dim1 && !is.null(coords)) coords[, comp[1]] = -coords[, comp[1]]
+  if (reverse.dim2 && !is.null(coords)) coords[, comp[2]] = -coords[, comp[2]]
+  if (reverse.dim1 && !is.null(loadings)) loadings[, comp[1]] = -loadings[, comp[1]]
+  if (reverse.dim2 && !is.null(loadings)) loadings[, comp[2]] = -loadings[, comp[2]]
+  if (reverse.dim1 && !is.null(covariates)) covariates[, comp[1]] = -covariates[, comp[1]]
+  if (reverse.dim2 && !is.null(covariates)) covariates[, comp[2]] = -covariates[, comp[2]]
+
   plot.df = data.frame(Comp1 = coords[, comp[1]], Comp2 = coords[, comp[2]])
 
   if (!is.null(label)) {
@@ -1490,52 +1562,92 @@ ggplot_beta_dispersion = function(
   if (grid.mode) {
     if (!is.null(facet.row)) {
       facet.row.data = sample.data[[facet.row]]
-      if (!is.factor(facet.row.data)) facet.row.data = factor(facet.row.data)
+      if (!is.factor(facet.row.data)) {
+        facet.row.data = factor(facet.row.data)
+      }
       if (is.null(facet.col) && length(p.value) > 1) {
         plot.df$facet.row = factor(
-          paste0(facet.row, " = ", as.character(facet.row.data),
-                 "\n", p.value[as.character(facet.row.data)]),
-          levels = paste0(facet.row, " = ", as.character(levels(facet.row.data)),
-                          "\n", p.value[as.character(levels(facet.row.data))])
+          paste0(
+            facet.row,
+            " = ",
+            as.character(facet.row.data),
+            "\n",
+            p.value[as.character(facet.row.data)]
+          ),
+          levels = paste0(
+            facet.row,
+            " = ",
+            as.character(levels(facet.row.data)),
+            "\n",
+            p.value[as.character(levels(facet.row.data))]
+          )
         )
       } else {
         plot.df$facet.row = factor(
           paste0(facet.row, " = ", as.character(facet.row.data)),
-          levels = paste0(facet.row, " = ", as.character(levels(facet.row.data)))
+          levels = paste0(
+            facet.row,
+            " = ",
+            as.character(levels(facet.row.data))
+          )
         )
       }
     }
     if (!is.null(facet.col)) {
       facet.col.data = sample.data[[facet.col]]
-      if (!is.factor(facet.col.data)) facet.col.data = factor(facet.col.data)
+      if (!is.factor(facet.col.data)) {
+        facet.col.data = factor(facet.col.data)
+      }
       if (is.null(facet.row) && length(p.value) > 1) {
         plot.df$facet.col = factor(
-          paste0(facet.col, " = ", as.character(facet.col.data),
-                 "\n", p.value[as.character(facet.col.data)]),
-          levels = paste0(facet.col, " = ", as.character(levels(facet.col.data)),
-                          "\n", p.value[as.character(levels(facet.col.data))])
+          paste0(
+            facet.col,
+            " = ",
+            as.character(facet.col.data),
+            "\n",
+            p.value[as.character(facet.col.data)]
+          ),
+          levels = paste0(
+            facet.col,
+            " = ",
+            as.character(levels(facet.col.data)),
+            "\n",
+            p.value[as.character(levels(facet.col.data))]
+          )
         )
       } else {
         plot.df$facet.col = factor(
           paste0(facet.col, " = ", as.character(facet.col.data)),
-          levels = paste0(facet.col, " = ", as.character(levels(facet.col.data)))
+          levels = paste0(
+            facet.col,
+            " = ",
+            as.character(levels(facet.col.data))
+          )
         )
       }
     }
   } else if (!is.null(facet)) {
     facet.data = sample.data[[facet]]
     if (is.character(facet.data) | is.factor(facet.data)) {
-      if (!is.factor(facet.data)) facet.data = as.factor(facet.data)
+      if (!is.factor(facet.data)) {
+        facet.data = as.factor(facet.data)
+      }
       plot.df$facet = factor(
         paste0(
-          facet, " = ",
+          facet,
+          " = ",
           as.character(facet.data),
-          if (length(p.value) > 1) paste0("\n", p.value[as.character(facet.data)])
+          if (length(p.value) > 1) {
+            paste0("\n", p.value[as.character(facet.data)])
+          }
         ),
         levels = paste0(
-          facet, " = ",
+          facet,
+          " = ",
           as.character(levels(facet.data)),
-          if (length(p.value) > 1) paste0("\n", p.value[as.character(levels(facet.data))])
+          if (length(p.value) > 1) {
+            paste0("\n", p.value[as.character(levels(facet.data))])
+          }
         )
       )
     }
@@ -1935,7 +2047,9 @@ ggplot_beta_dispersion = function(
   }
 
   # Marginal plot in case of factor variable - boxplot, density...
-  if (!is.null(marginal.plot) & is.factor(label) & is.null(facet) & !grid.mode) {
+  if (
+    !is.null(marginal.plot) & is.factor(label) & is.null(facet) & !grid.mode
+  ) {
     plt = plt +
       theme(
         legend.title = element_text(face = "bold", hjust = 0.5),
@@ -1950,14 +2064,6 @@ ggplot_beta_dispersion = function(
   } else if (!is.null(label)) {
     plt = plt +
       theme(legend.title = element_text(face = "bold", hjust = 0.5))
-  }
-
-  if (reverse.dim1) {
-    plt = plt + scale_x_reverse()
-  }
-
-  if (reverse.dim2) {
-    plt = plt + scale_y_reverse()
   }
 
   return(plt)
