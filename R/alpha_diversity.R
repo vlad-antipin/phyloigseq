@@ -101,7 +101,8 @@ get_alpha_diversity = function(
       as(sample_data(physeq), "data.frame")
     )
 
-    full.sample.data$depth = sample_sums(physeq) # nreads for each sample
+    full.sample.data$depth <- sample_sums(physeq) # nreads for each sample
+    rownames(full.sample.data) <- phyloseq::sample_names(physeq)
   } else {
     full.sample.data =
       get_igseq_richness(
