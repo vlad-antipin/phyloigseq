@@ -198,6 +198,7 @@ plot_alpha_diversity <- function(
   shape = NULL,
   shape.levels = NULL,
   size = NULL,
+  point.size = 1.5,
   remove.na.from.plot = FALSE,
   plot_type = NULL, # automatic if NULL
   color_vector = c("brown", "darkgreen", "orange", "violet"),
@@ -320,16 +321,19 @@ plot_alpha_diversity <- function(
     )
   }
 
+  has_size_aes <- FALSE
   if (check_depth) {
     point_mapping <- modifyList(
       point_mapping,
       aes(size = .data[["depth"]])
     )
+    has_size_aes <- TRUE
   } else if (!is.null(size)) {
     point_mapping <- modifyList(
       point_mapping,
       aes(size = .data[[size]])
     )
+    has_size_aes <- TRUE
   }
 
   if (plot_type == "boxplot") {
@@ -341,8 +345,17 @@ plot_alpha_diversity <- function(
   }
 
   if (plot_type == "scatter") {
-    plot_layer_fn <- function() {
-      ggplot2::geom_point((point_mapping))
+    plot_layer_fn <- if (has_size_aes) {
+      function() {
+        list(
+          ggplot2::geom_point(point_mapping),
+          ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3))
+        )
+      }
+    } else {
+      function() {
+        ggplot2::geom_point(point_mapping, size = point.size)
+      }
     }
   }
 
@@ -355,7 +368,13 @@ plot_alpha_diversity <- function(
   }
 
   if (plot_type != "scatter") {
-    plt <- plt + ggplot2::geom_jitter(point_mapping, alpha = alpha)
+    if (has_size_aes) {
+      plt <- plt +
+        ggplot2::geom_jitter(point_mapping, alpha = alpha) +
+        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3))
+    } else {
+      plt <- plt + ggplot2::geom_jitter(point_mapping, alpha = alpha, size = point.size)
+    }
   } else {
     plt <- plt +
       stat_smooth(aes_string(color = group), method = "lm", alpha = 0.1)

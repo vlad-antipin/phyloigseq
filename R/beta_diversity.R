@@ -1379,6 +1379,7 @@ ggplot_beta_dispersion <- function(
   # NOTE: marginal plot is incompatible with plotly!
   raw.loadings = TRUE, # TODO: think if you should implement correlations here as an alternative
   point.alpha = 1,
+  point.size = 3,
   projected.alpha = 0.4, # alpha for samples not in the fit subset (when fit.filter is used)
   reverse.dim1 = FALSE,
   reverse.dim2 = FALSE
@@ -1850,22 +1851,29 @@ ggplot_beta_dispersion <- function(
   )
 
   if (".is.fit.sample" %in% colnames(plot.df)) {
-    plt <- ggplot() +
-      geom_point(
-        point_aes,
-        plot.df[!plot.df$.is.fit.sample, ],
-        alpha = projected.alpha
-      ) +
-      geom_point(
-        point_aes,
-        plot.df[plot.df$.is.fit.sample, ],
-        alpha = point.alpha
-      ) +
-      labs(color = label.name, shape = shape.name, size = size.name)
+    if (!is.null(size.name)) {
+      plt <- ggplot() +
+        geom_point(point_aes, plot.df[!plot.df$.is.fit.sample, ], alpha = projected.alpha) +
+        geom_point(point_aes, plot.df[plot.df$.is.fit.sample, ], alpha = point.alpha) +
+        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
+        labs(color = label.name, shape = shape.name, size = size.name)
+    } else {
+      plt <- ggplot() +
+        geom_point(point_aes, plot.df[!plot.df$.is.fit.sample, ], alpha = projected.alpha, size = point.size) +
+        geom_point(point_aes, plot.df[plot.df$.is.fit.sample, ], alpha = point.alpha, size = point.size) +
+        labs(color = label.name, shape = shape.name, size = size.name)
+    }
   } else {
-    plt <- ggplot() +
-      geom_point(point_aes, plot.df, alpha = point.alpha) +
-      labs(color = label.name, shape = shape.name, size = size.name)
+    if (!is.null(size.name)) {
+      plt <- ggplot() +
+        geom_point(point_aes, plot.df, alpha = point.alpha) +
+        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
+        labs(color = label.name, shape = shape.name, size = size.name)
+    } else {
+      plt <- ggplot() +
+        geom_point(point_aes, plot.df, alpha = point.alpha, size = point.size) +
+        labs(color = label.name, shape = shape.name, size = size.name)
+    }
   }
 
   if (ellipses & is.factor(label)) {
