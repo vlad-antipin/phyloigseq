@@ -11,11 +11,12 @@ ggplot_beta_dispersion(
   comp = c(1, 2),
   label.name = NULL,
   label.levels = NULL,
-  facet.name = NULL,
+  facet.mode = "wrap",
+  facet = NULL,
   facet.levels = NULL,
-  facet.row.name = NULL,
+  facet.row = NULL,
   facet.row.levels = NULL,
-  facet.col.name = NULL,
+  facet.col = NULL,
   facet.col.levels = NULL,
   shape.name = NULL,
   shape.levels = NULL,
@@ -37,7 +38,11 @@ ggplot_beta_dispersion(
   max.overlaps = 10,
   marginal.plot = NULL,
   raw.loadings = TRUE,
-  point.alpha = 1
+  point.alpha = 1,
+  point.size = 3,
+  projected.alpha = 0.4,
+  reverse.dim1 = FALSE,
+  reverse.dim2 = FALSE
 )
 }
 \description{

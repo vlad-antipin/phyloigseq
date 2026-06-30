@@ -9,6 +9,8 @@ get_beta_dispersion(
   taxrank = NULL,
   fraction_id_name = NULL,
   fraction_ids = NULL,
+  fit.filter.name = NULL,
+  fit.filter.values = NULL,
   transform.abundances = "identity",
   dist = "bray",
   method = "PCoA",
