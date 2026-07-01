@@ -28,6 +28,7 @@ Imports:
     magrittr,
     Matrix,
     methods,
+    softImpute,
     microbiome,
     openxlsx,
     phyloseq,

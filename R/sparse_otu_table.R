@@ -191,7 +191,14 @@ NULL
 #' @export
 taxa_sums <- function(physeq, ...) {
   ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
-  if (is(ot, "sparse_otu_table")) {
+  if (is(ot, "incomplete_otu_table")) {
+    warning(
+      "taxa_sums on an incomplete_otu_table sums only observed Ig score ",
+      "entries; unobserved taxon-sample pairs are excluded."
+    )
+    sp <- ot@sparse_data
+    if (phyloseq::taxa_are_rows(ot)) Matrix::rowSums(sp) else Matrix::colSums(sp)
+  } else if (is(ot, "sparse_otu_table")) {
     sp <- ot@sparse_data
     if (phyloseq::taxa_are_rows(ot)) {
       Matrix::rowSums(sp)
@@ -206,7 +213,14 @@ taxa_sums <- function(physeq, ...) {
 #' @export
 sample_sums <- function(physeq, ...) {
   ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
-  if (is(ot, "sparse_otu_table")) {
+  if (is(ot, "incomplete_otu_table")) {
+    warning(
+      "sample_sums on an incomplete_otu_table sums only observed Ig score ",
+      "entries; unobserved taxon-sample pairs are excluded."
+    )
+    sp <- ot@sparse_data
+    if (phyloseq::taxa_are_rows(ot)) Matrix::colSums(sp) else Matrix::rowSums(sp)
+  } else if (is(ot, "sparse_otu_table")) {
     sp <- ot@sparse_data
     if (phyloseq::taxa_are_rows(ot)) {
       Matrix::colSums(sp)
@@ -221,7 +235,13 @@ sample_sums <- function(physeq, ...) {
 # rowSums / colSums: plain .GlobalEnv functions shadow base:: for all user-level
 # calls (base::rowSums reads .Data stub directly, returning wrong 0x0 results).
 rowSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
-  if (is(x, "sparse_otu_table")) {
+  if (is(x, "incomplete_otu_table")) {
+    warning(
+      "rowSums on an incomplete_otu_table sums only observed Ig score ",
+      "entries; unobserved taxon-sample pairs are excluded."
+    )
+    Matrix::rowSums(x@sparse_data, na.rm = na.rm)
+  } else if (is(x, "sparse_otu_table")) {
     Matrix::rowSums(x@sparse_data, na.rm = na.rm)
   } else {
     base::rowSums(x, na.rm = na.rm, dims = dims, ...)
@@ -229,7 +249,13 @@ rowSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
 }
 
 colSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
-  if (is(x, "sparse_otu_table")) {
+  if (is(x, "incomplete_otu_table")) {
+    warning(
+      "colSums on an incomplete_otu_table sums only observed Ig score ",
+      "entries; unobserved taxon-sample pairs are excluded."
+    )
+    Matrix::colSums(x@sparse_data, na.rm = na.rm)
+  } else if (is(x, "sparse_otu_table")) {
     Matrix::colSums(x@sparse_data, na.rm = na.rm)
   } else {
     base::colSums(x, na.rm = na.rm, dims = dims, ...)
@@ -264,6 +290,174 @@ as_sparse_phyloseq <- function(ps) {
   ps@otu_table <- sparse_otu_table(ot)
   ps
 }
+
+# ── incomplete_otu_table ───────────────────────────────────────────────────────
+
+# Clean up stale incomplete_otu_table method definitions before (re-)loading
+suppressMessages({
+  for (.m in c("initialize", "is.na", "[")) {
+    if (existsMethod(.m, "incomplete_otu_table")) {
+      removeMethod(.m, "incomplete_otu_table")
+    }
+  }
+  for (.to in c("matrix", "data.frame")) {
+    if (existsMethod("coerce", c("incomplete_otu_table", .to))) {
+      removeMethod("coerce", c("incomplete_otu_table", .to))
+    }
+  }
+  if (isClass("incomplete_otu_table")) {
+    removeClass("incomplete_otu_table")
+  }
+})
+
+#' Incomplete OTU table backed by a softImpute matrix factorization
+#'
+#' An S4 class extending \code{\link{sparse_otu_table-class}} for IgA-Seq Ig
+#' score matrices where most entries are \code{NA} (taxon not observed in that
+#' sample — genuinely missing, not zero). Observed entries are stored as an
+#' \code{Incomplete} object (from the \code{softImpute} package, which extends
+#' \code{dgCMatrix}), and a low-rank SVD factorization is fitted eagerly so
+#' that sample-to-sample distances and taxon loadings can be computed without
+#' reconstructing the full dense matrix.
+#'
+#' @slot svd_fit A named list with elements \code{$u} (n_samples × r),
+#'   \code{$d} (length-r singular values), and \code{$v} (n_taxa × r) from
+#'   \code{\link[softImpute]{softImpute}}.
+#' @slot col_means Named numeric vector (length n_taxa) of per-taxon means
+#'   computed from observed entries before centering. \code{numeric(0)} when
+#'   centering was skipped.
+#'
+#' @name incomplete_otu_table-class
+#' @aliases incomplete_otu_table-class
+#' @exportClass incomplete_otu_table
+setClass(
+  "incomplete_otu_table",
+  contains = "sparse_otu_table",
+  representation(svd_fit = "list", col_means = "numeric")
+)
+
+setMethod(
+  "initialize",
+  "incomplete_otu_table",
+  function(.Object, .Data, taxa_are_rows, sparse_data, svd_fit, col_means) {
+    .Object@.Data <- .Data
+    .Object@taxa_are_rows <- taxa_are_rows
+    .Object@sparse_data <- sparse_data
+    .Object@svd_fit <- svd_fit
+    .Object@col_means <- col_means
+    .Object
+  }
+)
+
+#' Create an incomplete OTU table with an embedded SVD factorization
+#'
+#' Wraps a \code{softImpute::Incomplete} object and a fitted SVD factorization
+#' into an \code{\link{incomplete_otu_table-class}}. In normal use this is
+#' called from \code{PhyloIgSeq_to_phyloseq(imputation_method = "SVD")} rather
+#' than directly.
+#'
+#' @param X_inc An \code{Incomplete} object (from
+#'   \code{\link[softImpute]{Incomplete}}) with \code{dimnames} set to
+#'   \code{list(sample_names, taxa_names)}.
+#' @param svd_fit A list with elements \code{$u}, \code{$d}, \code{$v} as
+#'   returned by \code{\link[softImpute]{softImpute}}.
+#' @param col_means Named numeric vector of per-taxon column means used for
+#'   centering before fitting; \code{numeric(0)} if centering was not applied.
+#' @param taxa_are_rows Logical; \code{FALSE} (default) means rows = samples,
+#'   columns = taxa, which matches the layout of the \code{Incomplete} object
+#'   built from \code{ig_coating} triplets.
+#'
+#' @return An \code{\link{incomplete_otu_table-class}} object.
+#' @export
+incomplete_otu_table <- function(
+  X_inc,
+  svd_fit,
+  col_means = numeric(0),
+  taxa_are_rows = FALSE
+) {
+  new(
+    "incomplete_otu_table",
+    .Data       = matrix(integer(0), 0L, 0L),
+    taxa_are_rows = taxa_are_rows,
+    sparse_data = X_inc,
+    svd_fit     = svd_fit,
+    col_means   = col_means
+  )
+}
+
+# as.matrix: NA-filled dense matrix where only the positions in the
+# dgCMatrix sparsity pattern (the observed entries) are filled in.
+# This differs from the parent's setAs which converts structural zeros
+# (= unobserved positions in Incomplete) to 0.
+setAs("incomplete_otu_table", "matrix", function(from) {
+  sp   <- from@sparse_data
+  dims <- dim(sp)
+  mat  <- matrix(NA_real_, nrow = dims[1L], ncol = dims[2L], dimnames = dimnames(sp))
+  if (length(sp@x) > 0L) {
+    col_idx <- rep(seq_len(dims[2L]), diff(sp@p))
+    row_idx <- sp@i + 1L   # 0-based → 1-based
+    mat[cbind(row_idx, col_idx)] <- sp@x
+  }
+  mat
+})
+
+setAs("incomplete_otu_table", "data.frame", function(from) {
+  as.data.frame(as(from, "matrix"))
+})
+
+#' @rdname incomplete_otu_table-class
+#' @exportS3Method base::as.matrix
+as.matrix.incomplete_otu_table <- function(x, ...) as(x, "matrix")
+
+#' @rdname incomplete_otu_table-class
+#' @exportS3Method base::as.data.frame
+as.data.frame.incomplete_otu_table <- function(x, ...) {
+  as.data.frame(as(x, "matrix"), ...)
+}
+
+# is.na: TRUE for every unobserved position (structural zero in the dgCMatrix),
+# FALSE for every observed position — the inverse of standard dgCMatrix
+# semantics where stored zeros are "non-missing".
+setMethod("is.na", "incomplete_otu_table", function(x) {
+  sp   <- x@sparse_data
+  dims <- dim(sp)
+  mat  <- matrix(TRUE, nrow = dims[1L], ncol = dims[2L], dimnames = dimnames(sp))
+  if (length(sp@x) > 0L) {
+    col_idx <- rep(seq_len(dims[2L]), diff(sp@p))
+    row_idx <- sp@i + 1L
+    mat[cbind(row_idx, col_idx)] <- FALSE
+  }
+  mat
+})
+
+# [ subset: materialise to NA-filled dense matrix, then return a standard
+# otu_table.  The SVD fit is not meaningful after arbitrary subsetting, so
+# it is not carried over.
+setMethod("[", "incomplete_otu_table", function(x, i, j, ..., drop = FALSE) {
+  if (!missing(i) && is.character(i)) {
+    i <- match(i, rownames(x@sparse_data))
+  }
+  if (!missing(j) && is.character(j)) {
+    j <- match(j, colnames(x@sparse_data))
+  }
+  if (!missing(i) && missing(j)) {
+    nr <- nrow(x@sparse_data)
+    if (is.matrix(i) || (is.logical(i) && length(i) != nr)) {
+      return(as(x, "matrix")[i])
+    }
+  }
+  mat <- as(x, "matrix")
+  sub <- if (missing(i) && missing(j)) {
+    mat
+  } else if (missing(i)) {
+    mat[, j, drop = FALSE]
+  } else if (missing(j)) {
+    mat[i, , drop = FALSE]
+  } else {
+    mat[i, j, drop = FALSE]
+  }
+  phyloseq::otu_table(sub, taxa_are_rows = x@taxa_are_rows)
+})
 
 # speedyseq::merge_taxa_vec calls phyloseq::taxa_sums(otu_table(x)) internally,
 # which falls through to base::rowSums — a C routine that reads .Data directly
