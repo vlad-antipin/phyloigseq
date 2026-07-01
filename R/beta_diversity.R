@@ -94,7 +94,12 @@ get_beta_dispersion <- function(
   if (method %in% c("pcoa", "tsne", "umap")) {
     # Compute distance matrix for ALL samples first (needed for projection)
     # NOTE: tSNE and UMAP can take as well a precomputed distance metric
-    if (class(dist) == "dist") {
+    if (is(otu_table(physeq), "incomplete_otu_table")) {
+      svd_emb <- otu_table(physeq)@svd_fit
+      emb     <- svd_emb$u %*% diag(svd_emb$d)
+      rownames(emb) <- sample_names(physeq)
+      dist.matrix <- as.matrix(dist(emb))
+    } else if (class(dist) == "dist") {
       # if distance matrix furnished directly (not recommended)
       dist.matrix <- dist
     } else {
@@ -177,10 +182,22 @@ get_beta_dispersion <- function(
       # that multiple regression reduces to a plain per-axis correlation -
       # envfit's QR-based implementation doesn't exploit this and becomes very
       # slow as the number of axes/taxa grows, so just correlate directly.
-      loadings[[1]] <- suppressWarnings(cor(
-        as(otu_table(physeq), "matrix"),
-        coords[[1]]
-      ))
+      if (is(otu_table(physeq), "incomplete_otu_table")) {
+        svd_ld <- otu_table(physeq)@svd_fit
+        U  <- svd_ld$u
+        V  <- svd_ld$v
+        S  <- coords[[1]]
+        B  <- solve(crossprod(U), crossprod(U, S))
+        ld <- V %*% B
+        rownames(ld) <- taxa_names(physeq)
+        colnames(ld) <- colnames(S)
+        loadings[[1]] <- ld
+      } else {
+        loadings[[1]] <- suppressWarnings(cor(
+          as(otu_table(physeq), "matrix"),
+          coords[[1]]
+        ))
+      }
       # TODO:for now same thing for both "scalings"
       # loadings[[2]] = wascores(fit$points, otu_table(physeq)) ≈ scaling 2 ?
     } else if (method == "tsne") {
