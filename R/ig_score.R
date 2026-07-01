@@ -907,8 +907,90 @@ PhyloIgSeq_to_phyloseq =
     shared_by = NULL, # what fraction of samples has this taxon
     imputation_method = NULL,
     central_tendency = NULL, # "mean", "median" or "mode"
-    nb_neighbors = 5
+    nb_neighbors = 5,
+    svd_rank = 50L,  # rank.max for softImpute (SVD path only)
+    svd_lambda = 1   # regularization lambda for softImpute (SVD path only)
   ) {
+    # --- SVD path: build incomplete_otu_table without materialising a dense matrix ---
+    if (identical(imputation_method, "SVD")) {
+      eff_shared_by <- if (is.null(shared_by)) 0 else shared_by
+
+      ig_obs <- stats::na.omit(
+        phyloigseq_obj@ig_coating[, c("sample_id", "taxon_id", score_name)]
+      )
+
+      samp_lvls <- phyloigseq_obj@sample_data$sample_id
+      taxa_lvls <- unique(ig_obs$taxon_id)
+
+      if (eff_shared_by > 0) {
+        n_samp   <- length(samp_lvls)
+        obs_frac <- tapply(ig_obs$sample_id, ig_obs$taxon_id,
+                           function(s) length(unique(s)) / n_samp)
+        taxa_lvls <- names(obs_frac[obs_frac >= eff_shared_by])
+        ig_obs    <- ig_obs[ig_obs$taxon_id %in% taxa_lvls, , drop = FALSE]
+      }
+
+      i_idx <- match(ig_obs$sample_id, samp_lvls)
+      j_idx <- match(ig_obs$taxon_id,  taxa_lvls)
+
+      X_inc <- softImpute::Incomplete(i_idx, j_idx, ig_obs[[score_name]])
+      dimnames(X_inc) <- list(samp_lvls, taxa_lvls)
+
+      # Dense NA matrix for softImpute (passing Incomplete directly is slower)
+      n_s     <- length(samp_lvls)
+      n_t     <- length(taxa_lvls)
+      X_dense <- matrix(NA_real_, nrow = n_s, ncol = n_t,
+                        dimnames = list(samp_lvls, taxa_lvls))
+      if (length(X_inc@x) > 0L) {
+        col_idx <- rep(seq_len(n_t), diff(X_inc@p))
+        row_idx <- X_inc@i + 1L
+        X_dense[cbind(row_idx, col_idx)] <- X_inc@x
+      }
+
+      col_means             <- colMeans(X_dense, na.rm = TRUE)
+      col_means[is.nan(col_means)] <- 0
+      X_centered            <- sweep(X_dense, 2, col_means, "-")
+
+      fit <- softImpute::softImpute(
+        X_centered,
+        rank.max = svd_rank,
+        lambda   = svd_lambda,
+        type     = "svd"
+      )
+
+      ot_ig <- incomplete_otu_table(
+        X_inc     = X_inc,
+        svd_fit   = list(u = fit$u, d = fit$d, v = fit$v),
+        col_means = col_means
+      )
+
+      # Sample data
+      sample_data_ig_score <- phyloigseq_obj@sample_data[,
+        !colnames(phyloigseq_obj@sample_data) %in% "sample_id",
+        drop = FALSE
+      ]
+      rownames(sample_data_ig_score) <- phyloigseq_obj@sample_data$sample_id
+
+      # Taxonomy table
+      tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
+      tax_table_ig_score <- tax_table_ig_score[
+        !is.na(tax_table_ig_score[, "taxon_id"]),
+        , drop = FALSE
+      ]
+      rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
+      tax_table_ig_score <- tax_table_ig_score[,
+        colnames(tax_table_ig_score) != "taxon_id",
+        drop = FALSE
+      ]
+
+      return(phyloseq(
+        ot_ig,
+        phyloseq::sample_data(sample_data_ig_score),
+        phyloseq::tax_table(tax_table_ig_score)
+      ))
+    }
+
+    # --- Legacy path (NULL / "KNN" / "Central Tendency" / "Replace NA with 0") ---
     igseq_df =
       PhyloIgSeq::to_wider_ig_score(
         ig_coating_agglom = phyloigseq_obj@ig_coating,
@@ -933,7 +1015,8 @@ PhyloIgSeq_to_phyloseq =
 
     # Sample data
     sample_data_ig_score = phyloigseq_obj@sample_data[,
-      !colnames(phyloigseq_obj@sample_data) %in% c("sample_id")
+      !colnames(phyloigseq_obj@sample_data) %in% c("sample_id"),
+      drop = FALSE
     ]
     rownames(sample_data_ig_score) = phyloigseq_obj@sample_data$sample_id
 
