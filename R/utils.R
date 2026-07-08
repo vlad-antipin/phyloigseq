@@ -485,10 +485,10 @@ make_unique_taxa_table <- function(taxa_table) {
       next
     }
 
-    # replace "bad duplications"
-    for (j in 1:length(unique_names)) {
-      taxonomies[taxonomies == unique_taxonomies[j]] <- unique_names[j]
-    }
+    # replace "bad duplications" (vectorized: a loop doing
+    # `taxonomies == unique_taxonomies[j]` per name is O(n * length(unique_names))
+    # and can take a minute-plus on large tables)
+    taxonomies <- unique_names[match(taxonomies, unique_taxonomies)]
 
     taxa_table[, i] <- taxonomies
   }
