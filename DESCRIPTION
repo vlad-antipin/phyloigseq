@@ -21,6 +21,7 @@ Imports:
     ggplot2,
     ggpubr,
     ggrepel,
+    ggtree,
     ggsci,
     gifski,
     gtools,

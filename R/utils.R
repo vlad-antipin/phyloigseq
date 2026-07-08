@@ -564,3 +564,70 @@ dataImpute <- function(
 
   return(data.imputed)
 }
+
+#' Plot Phylogenetic Tree from Phyloseq Object
+#' @export
+plot_phylo_tree <- function(
+  physeq,
+  taxrank = NULL,
+  fraction_id_name = NULL,
+  fraction_ids = NULL,
+  layout = "rectangular",
+  tip_color = NULL,
+  label.tips = NULL,
+  label_size = 2.5,
+  ladderize = "left",
+  ...
+) {
+  if (is.null(physeq) || class(physeq) != "phyloseq") {
+    stop("Need a phyloseq object")
+  }
+  if (is.null(access(physeq, "phy_tree"))) {
+    stop("Phyloseq object has to contain a tree")
+  }
+
+  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
+    physeq <- prune_samples(
+      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
+      physeq
+    )
+  }
+
+  if (!is.null(taxrank)) {
+    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
+    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
+  }
+
+  # Truncate tip labels so long ASV hashes don't clutter the plot;
+  # make.unique() prevents duplicate names after truncation
+  if (!is.null(label.tips)) {
+    taxa_names(physeq) <- make.unique(substr(taxa_names(physeq), 1, 25))
+  }
+
+  tree_obj <- phy_tree(physeq)
+  if (!is.null(ladderize)) {
+    tree_obj <- ape::ladderize(tree_obj, right = (ladderize != "left"))
+  }
+
+  p <- ggtree::ggtree(tree_obj, layout = layout)
+
+  if (!is.null(label.tips)) {
+    p <- p + ggtree::geom_tiplab(size = label_size, align = FALSE)
+  }
+
+  if (!is.null(tip_color) && tip_color %in% colnames(tax_table(physeq))) {
+    tax_df <- as.data.frame(tax_table(physeq))
+    tax_df$.join_label <- taxa_names(physeq)
+    # %<+% can fail when p$data has a duplicate "label" column in some ggtree
+    # versions; merge directly into p$data to avoid the conflict
+    p$data <- dplyr::left_join(p$data, tax_df, by = c("label" = ".join_label"))
+    p <- p +
+      ggtree::geom_tippoint(
+        ggplot2::aes(color = .data[[tip_color]]),
+        size = 2
+      ) +
+      ggsci::scale_color_igv(na.value = "grey50", name = tip_color)
+  }
+
+  p
+}
