@@ -8,61 +8,79 @@ make_inc_data <- function(n_samples = 12, n_taxa = 25, seed = 42) {
   set.seed(seed)
   n_obs <- 35L
   i <- sample(n_samples, n_obs, replace = TRUE)
-  j <- sample(n_taxa,   n_obs, replace = TRUE)
+  j <- sample(n_taxa, n_obs, replace = TRUE)
   # deduplicate: keep first occurrence of each (i,j) pair
   ij_key <- paste(i, j, sep = "_")
-  keep   <- !duplicated(ij_key)
-  i      <- i[keep]; j <- j[keep]; n_obs <- sum(keep)
-  vals   <- rnorm(n_obs, sd = 2)
+  keep <- !duplicated(ij_key)
+  i <- i[keep]
+  j <- j[keep]
+  n_obs <- sum(keep)
+  vals <- rnorm(n_obs, sd = 2)
 
   # Anchor (n_samples, n_taxa) so Incomplete() infers the full dimensions.
   # Remove any existing entry at that position first to avoid a duplicate.
   anchor_ij <- paste(n_samples, n_taxa, sep = "_")
-  drop       <- paste(i, j, sep = "_") == anchor_ij
+  drop <- paste(i, j, sep = "_") == anchor_ij
   i <- c(i[!drop], n_samples)
   j <- c(j[!drop], n_taxa)
   vals <- c(vals[!drop], rnorm(1L, sd = 2))
   n_obs <- length(i)
 
   samp_names <- paste0("S", seq_len(n_samples))
-  tax_names  <- paste0("T", seq_len(n_taxa))
+  tax_names <- paste0("T", seq_len(n_taxa))
 
   X_inc <- softImpute::Incomplete(i, j, vals)
   dimnames(X_inc) <- list(samp_names, tax_names)
 
   # Dense matrix with NA for unobserved positions
-  X_dense <- matrix(NA_real_, n_samples, n_taxa,
-                    dimnames = list(samp_names, tax_names))
-  for (k in seq_len(n_obs)) X_dense[i[k], j[k]] <- vals[k]
+  X_dense <- matrix(
+    NA_real_,
+    n_samples,
+    n_taxa,
+    dimnames = list(samp_names, tax_names)
+  )
+  for (k in seq_len(n_obs)) {
+    X_dense[i[k], j[k]] <- vals[k]
+  }
 
-  col_means            <- colMeans(X_dense, na.rm = TRUE)
+  col_means <- colMeans(X_dense, na.rm = TRUE)
   col_means[is.nan(col_means)] <- 0
-  X_centered           <- sweep(X_dense, 2, col_means, "-")
+  X_centered <- sweep(X_dense, 2, col_means, "-")
 
-  r   <- 3L
-  fit <- softImpute::softImpute(X_centered, rank.max = r, lambda = 1,
-                                type = "svd", maxit = 200L)
+  r <- 3L
+  fit <- softImpute::softImpute(
+    X_centered,
+    rank.max = r,
+    lambda = 1,
+    type = "svd",
+    maxit = 200L
+  )
 
   list(
-    X_inc      = X_inc,
-    svd_fit    = list(u = fit$u, d = fit$d, v = fit$v),
-    col_means  = col_means,
-    i          = i, j = j, vals = vals,
-    n_samples  = n_samples, n_taxa = n_taxa, r = r,
-    samp_names = samp_names, tax_names = tax_names
+    X_inc = X_inc,
+    svd_fit = list(u = fit$u, d = fit$d, v = fit$v),
+    col_means = col_means,
+    i = i,
+    j = j,
+    vals = vals,
+    n_samples = n_samples,
+    n_taxa = n_taxa,
+    r = r,
+    samp_names = samp_names,
+    tax_names = tax_names
   )
 }
 
 make_ot <- function(d = make_inc_data()) {
   incomplete_otu_table(
-    X_inc     = d$X_inc,
-    svd_fit   = d$svd_fit,
+    X_inc = d$X_inc,
+    svd_fit = d$svd_fit,
     col_means = d$col_means
   )
 }
 
 # Canonical objects for most tests
-d  <- make_inc_data()
+d <- make_inc_data()
 ot <- make_ot(d)
 
 # ---- Test 1: Class hierarchy ----
@@ -83,9 +101,9 @@ test_that("dim returns (n_samples, n_taxa) for taxa_are_rows = FALSE", {
 })
 
 test_that("taxa_names and sample_names are correct for taxa_are_rows = FALSE", {
-  expect_identical(taxa_names(ot),   d$tax_names)
+  expect_identical(taxa_names(ot), d$tax_names)
   expect_identical(sample_names(ot), d$samp_names)
-  expect_equal(ntaxa(ot),    d$n_taxa)
+  expect_equal(ntaxa(ot), d$n_taxa)
   expect_equal(nsamples(ot), d$n_samples)
 })
 
@@ -137,7 +155,7 @@ test_that("as(x, 'matrix') produces correct dimensions and dimnames", {
 })
 
 test_that("as(x, 'matrix') has NA at every unobserved position", {
-  mat    <- as(ot, "matrix")
+  mat <- as(ot, "matrix")
   na_mat <- is.na(ot)
   expect_true(all(is.na(mat[na_mat])))
 })
@@ -152,15 +170,22 @@ test_that("as(x, 'matrix') has the original value at every observed position", {
 test_that("explicit observed zero is not NA in as(x, 'matrix')", {
   # Build a tiny object with an explicit zero as an observed score
   X_inc0 <- softImpute::Incomplete(c(1L, 2L), c(1L, 2L), c(0.0, 1.0))
-  dimnames(X_inc0) <- list(c("S1","S2"), c("T1","T2"))
-  X_d0 <- matrix(NA_real_, 2L, 2L); X_d0[1,1] <- 0; X_d0[2,2] <- 1
-  fit0 <- softImpute::softImpute(X_d0, rank.max = 1L, lambda = 0.1, type = "svd")
-  ot0  <- incomplete_otu_table(X_inc0, list(u=fit0$u, d=fit0$d, v=fit0$v))
+  dimnames(X_inc0) <- list(c("S1", "S2"), c("T1", "T2"))
+  X_d0 <- matrix(NA_real_, 2L, 2L)
+  X_d0[1, 1] <- 0
+  X_d0[2, 2] <- 1
+  fit0 <- softImpute::softImpute(
+    X_d0,
+    rank.max = 1L,
+    lambda = 0.1,
+    type = "svd"
+  )
+  ot0 <- incomplete_otu_table(X_inc0, list(u = fit0$u, d = fit0$d, v = fit0$v))
   mat0 <- as(ot0, "matrix")
-  expect_false(is.na(mat0[1L, 1L]))   # observed 0.0 → not NA
+  expect_false(is.na(mat0[1L, 1L])) # observed 0.0 → not NA
   expect_equal(mat0[1L, 1L], 0.0)
-  expect_true(is.na(mat0[1L, 2L]))    # unobserved → NA
-  expect_true(is.na(mat0[2L, 1L]))    # unobserved → NA
+  expect_true(is.na(mat0[1L, 2L])) # unobserved → NA
+  expect_true(is.na(mat0[2L, 1L])) # unobserved → NA
 })
 
 test_that("as.matrix() (S3) is identical to as(x, 'matrix')", {
@@ -178,13 +203,13 @@ test_that("svd_fit slots have correct shapes", {
 })
 
 test_that("svd_fit reconstruction is close at observed positions", {
-  svd     <- ot@svd_fit
-  X_hat   <- svd$u %*% diag(svd$d) %*% t(svd$v)            # centered approx
-  X_hat_orig <- sweep(X_hat, 2L, ot@col_means, "+")          # de-center
-  mat     <- as(ot, "matrix")
-  obs     <- !is.na(mat)
-  mse     <- mean((mat[obs] - X_hat_orig[obs])^2)
-  expect_lt(mse, 20)   # generous bound; real data RMSE ~ 1-2
+  svd <- ot@svd_fit
+  X_hat <- svd$u %*% diag(svd$d) %*% t(svd$v) # centered approx
+  X_hat_orig <- sweep(X_hat, 2L, ot@col_means, "+") # de-center
+  mat <- as(ot, "matrix")
+  obs <- !is.na(mat)
+  mse <- mean((mat[obs] - X_hat_orig[obs])^2)
+  expect_lt(mse, 20) # generous bound; real data RMSE ~ 1-2
 })
 
 test_that("col_means slot has correct length and names", {
@@ -230,7 +255,7 @@ test_that("taxa_sums emits a warning and returns named vector", {
 
 # rowSums / colSums on sparse_otu_table (non-incomplete) must still NOT warn
 test_that("rowSums on sparse_otu_table does not warn", {
-  m <- matrix(c(1,0,0,2), 2, 2)
+  m <- matrix(c(1, 0, 0, 2), 2, 2)
   sp <- sparse_otu_table(phyloseq::otu_table(m, taxa_are_rows = TRUE))
   expect_no_warning(rowSums(sp))
 })
@@ -257,7 +282,7 @@ test_that("[ column-subset returns standard otu_table with NAs preserved", {
 
 test_that("[ flat extraction via logical index returns plain vector", {
   na_mat <- is.na(ot)
-  vals   <- ot[!na_mat]
+  vals <- ot[!na_mat]
   expect_true(is.numeric(vals))
   expect_false(is.matrix(vals))
   expect_equal(sort(vals), sort(d$vals))

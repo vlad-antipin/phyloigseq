@@ -95,7 +95,11 @@ sparse_unifrac <- function(physeq, method = c("unifrac", "wunifrac")) {
   # by edge would be. `index.only = TRUE` returns just the row-permutation
   # of `tree$edge` needed to visit edges child-before-parent, without
   # touching `tree` itself.
-  postorder_edge_idx <- ape::reorder.phylo(tree, order = "postorder", index.only = TRUE)
+  postorder_edge_idx <- ape::reorder.phylo(
+    tree,
+    order = "postorder",
+    index.only = TRUE
+  )
   descendant_tips <- vector("list", n_nodes)
   for (tip in seq_len(n_tips)) {
     descendant_tips[[tip]] <- tip
@@ -212,7 +216,10 @@ sparse_unifrac <- function(physeq, method = c("unifrac", "wunifrac")) {
       }
       numerator_mat <- numerator_mat - 2 * min_sum
     }
-    dimnames(numerator_mat) <- list(colnames(weighted_edge), colnames(weighted_edge))
+    dimnames(numerator_mat) <- list(
+      colnames(weighted_edge),
+      colnames(weighted_edge)
+    )
     numerator <- stats::as.dist(numerator_mat)
 
     # Denominator for every pair at once: sum_t tip_root_distance_t *

@@ -39,10 +39,11 @@ make_pair <- function(
 ref_distance <- function(ps, method) {
   if (method %in% c("chord", "hellinger")) {
     # vegan expects samples x taxa; respect the otu_table orientation
-    m  <- as(otu_table(ps), "matrix")
+    m <- as(otu_table(ps), "matrix")
     ot <- if (taxa_are_rows(otu_table(ps))) t(m) else m
-    tr <- switch(method,
-      chord     = vegan::decostand(ot, method = "normalize"),
+    tr <- switch(
+      method,
+      chord = vegan::decostand(ot, method = "normalize"),
       hellinger = vegan::decostand(ot, method = "hellinger")
     )
     vegan::vegdist(tr, method = "euclidean")
@@ -51,7 +52,7 @@ ref_distance <- function(ps, method) {
   }
 }
 
-pair   <- make_pair()
+pair <- make_pair()
 pair_t <- make_pair(taxa_are_rows = FALSE)
 
 # UniFrac methods need a phy_tree, which make_pair() doesn't attach. Reuse a
@@ -80,9 +81,19 @@ test_that("SPARSE_DISTANCE_METHODS contains 'bray'", {
 })
 
 test_that("SPARSE_DISTANCE_METHODS contains all expected methods", {
-  expected <- c("bray", "jaccard", "kulczynski", "manhattan",
-                "euclidean", "canberra", "horn", "chord", "hellinger",
-                "unifrac", "wunifrac")
+  expected <- c(
+    "bray",
+    "jaccard",
+    "kulczynski",
+    "manhattan",
+    "euclidean",
+    "canberra",
+    "horn",
+    "chord",
+    "hellinger",
+    "unifrac",
+    "wunifrac"
+  )
   expect_true(all(expected %in% SPARSE_DISTANCE_METHODS))
 })
 
@@ -459,12 +470,15 @@ for (method in TREE_METHODS) {
       )
     })
 
-    test_that(paste0("[", m, "] sparse_distance warns and returns NULL without a tree"), {
-      expect_warning(
-        result <- sparse_distance(pair$dense, method = m),
-        "phy_tree slot is empty"
-      )
-      expect_null(result)
-    })
+    test_that(
+      paste0("[", m, "] sparse_distance warns and returns NULL without a tree"),
+      {
+        expect_warning(
+          result <- sparse_distance(pair$dense, method = m),
+          "phy_tree slot is empty"
+        )
+        expect_null(result)
+      }
+    )
   })
 }

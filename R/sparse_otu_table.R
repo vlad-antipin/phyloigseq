@@ -197,7 +197,11 @@ taxa_sums <- function(physeq, ...) {
       "entries; unobserved taxon-sample pairs are excluded."
     )
     sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) Matrix::rowSums(sp) else Matrix::colSums(sp)
+    if (phyloseq::taxa_are_rows(ot)) {
+      Matrix::rowSums(sp)
+    } else {
+      Matrix::colSums(sp)
+    }
   } else if (is(ot, "sparse_otu_table")) {
     sp <- ot@sparse_data
     if (phyloseq::taxa_are_rows(ot)) {
@@ -219,7 +223,11 @@ sample_sums <- function(physeq, ...) {
       "entries; unobserved taxon-sample pairs are excluded."
     )
     sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) Matrix::colSums(sp) else Matrix::rowSums(sp)
+    if (phyloseq::taxa_are_rows(ot)) {
+      Matrix::colSums(sp)
+    } else {
+      Matrix::rowSums(sp)
+    }
   } else if (is(ot, "sparse_otu_table")) {
     sp <- ot@sparse_data
     if (phyloseq::taxa_are_rows(ot)) {
@@ -377,11 +385,11 @@ incomplete_otu_table <- function(
 ) {
   new(
     "incomplete_otu_table",
-    .Data       = matrix(integer(0), 0L, 0L),
+    .Data = matrix(integer(0), 0L, 0L),
     taxa_are_rows = taxa_are_rows,
     sparse_data = X_inc,
-    svd_fit     = svd_fit,
-    col_means   = col_means
+    svd_fit = svd_fit,
+    col_means = col_means
   )
 }
 
@@ -390,12 +398,17 @@ incomplete_otu_table <- function(
 # This differs from the parent's setAs which converts structural zeros
 # (= unobserved positions in Incomplete) to 0.
 setAs("incomplete_otu_table", "matrix", function(from) {
-  sp   <- from@sparse_data
+  sp <- from@sparse_data
   dims <- dim(sp)
-  mat  <- matrix(NA_real_, nrow = dims[1L], ncol = dims[2L], dimnames = dimnames(sp))
+  mat <- matrix(
+    NA_real_,
+    nrow = dims[1L],
+    ncol = dims[2L],
+    dimnames = dimnames(sp)
+  )
   if (length(sp@x) > 0L) {
     col_idx <- rep(seq_len(dims[2L]), diff(sp@p))
-    row_idx <- sp@i + 1L   # 0-based → 1-based
+    row_idx <- sp@i + 1L # 0-based → 1-based
     mat[cbind(row_idx, col_idx)] <- sp@x
   }
   mat
@@ -419,9 +432,9 @@ as.data.frame.incomplete_otu_table <- function(x, ...) {
 # FALSE for every observed position — the inverse of standard dgCMatrix
 # semantics where stored zeros are "non-missing".
 setMethod("is.na", "incomplete_otu_table", function(x) {
-  sp   <- x@sparse_data
+  sp <- x@sparse_data
   dims <- dim(sp)
-  mat  <- matrix(TRUE, nrow = dims[1L], ncol = dims[2L], dimnames = dimnames(sp))
+  mat <- matrix(TRUE, nrow = dims[1L], ncol = dims[2L], dimnames = dimnames(sp))
   if (length(sp@x) > 0L) {
     col_idx <- rep(seq_len(dims[2L]), diff(sp@p))
     row_idx <- sp@i + 1L

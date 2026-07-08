@@ -42,18 +42,18 @@ setClass(
 
 #' Collapse a List of PhyloIgSeq objects
 #' @export
-collapsePhyloIgSeq = function(phyloigseq_list) {
-  ig_coating = data.frame()
-  sample_data = data.frame()
-  ellipse_coords = data.frame()
-  imputed_taxa = list()
+collapsePhyloIgSeq <- function(phyloigseq_list) {
+  ig_coating <- data.frame()
+  sample_data <- data.frame()
+  ellipse_coords <- data.frame()
+  imputed_taxa <- list()
   for (phyloigseq_obj in phyloigseq_list) {
     if (class(phyloigseq_obj) == "PhyloIgSeq") {
       # bind_rows() matches columns by name, fills in NA for missing columns
-      ig_coating = bind_rows(ig_coating, phyloigseq_obj@ig_coating)
-      ellipse_coords = bind_rows(ellipse_coords, phyloigseq_obj@ellipse_coords)
-      sample_data = bind_rows(sample_data, phyloigseq_obj@sample_data)
-      imputed_taxa = c(imputed_taxa, phyloigseq_obj@imputed_taxa)
+      ig_coating <- bind_rows(ig_coating, phyloigseq_obj@ig_coating)
+      ellipse_coords <- bind_rows(ellipse_coords, phyloigseq_obj@ellipse_coords)
+      sample_data <- bind_rows(sample_data, phyloigseq_obj@sample_data)
+      imputed_taxa <- c(imputed_taxa, phyloigseq_obj@imputed_taxa)
     }
   }
 
@@ -91,7 +91,7 @@ collapsePhyloIgSeq = function(phyloigseq_list) {
 #'
 #' @return A data frame or list with computed scores per sample.
 #' @export
-getPhyloIgSeq = function(
+getPhyloIgSeq <- function(
   physeq, # containing raw counts
   taxrank = NULL,
   sample_id_name, # name identifying each sample_id (individual for
@@ -118,27 +118,27 @@ getPhyloIgSeq = function(
     warning(
       "No second negative fraction furnished, cannot model empirical null ( Ig-.1 vs Ig-.2) distribution...\n"
     )
-    empirical_null_distribution = FALSE
+    empirical_null_distribution <- FALSE
   }
   if (!is.null(taxrank)) {
-    physeq = tax_glom(physeq = physeq, taxrank = taxrank)
-    taxa_names(physeq) = make.unique(tax_table(physeq)[, taxrank])
+    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
+    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
   }
 
-  original_taxa_names = taxa_names(physeq)
+  original_taxa_names <- taxa_names(physeq)
   # To make matching and computation easier, don't carry long strings as taxa names
-  taxon_ids = seq_along(original_taxa_names)
-  names(original_taxa_names) = taxon_ids # keep the mapping
-  taxa_names(physeq) = taxon_ids
+  taxon_ids <- seq_along(original_taxa_names)
+  names(original_taxa_names) <- taxon_ids # keep the mapping
+  taxa_names(physeq) <- taxon_ids
 
-  all_fraction_names = c(
+  all_fraction_names <- c(
     positive_fraction_name,
     first_negative_fraction_name,
     second_negative_fraction_name,
     presorting_fraction_name
   )
 
-  grouped_data =
+  grouped_data <-
     group_sorted_samples(
       physeq = physeq,
       taxrank = NULL, # already done above
@@ -157,9 +157,9 @@ getPhyloIgSeq = function(
     )
 
   if (is.null(sample_ids)) {
-    sample_ids = names(grouped_data)
+    sample_ids <- names(grouped_data)
   } else {
-    sample_ids = sample_ids[sample_ids %in% names(grouped_data)]
+    sample_ids <- sample_ids[sample_ids %in% names(grouped_data)]
   }
 
   if (length(sample_ids) == 0) {
@@ -167,12 +167,12 @@ getPhyloIgSeq = function(
     return(NULL)
   }
 
-  metadata = phyloseq::sample_data(physeq) %>% as("data.frame")
+  metadata <- phyloseq::sample_data(physeq) %>% as("data.frame")
   # to avoid potential problems if there is already a column called "sample_id"
   # which is not a name of smaple_id column indicated by a user
   names(metadata)[
     names(metadata) != sample_id_name & names(metadata) == "sample_id"
-  ] =
+  ] <-
     paste0(
       "original___",
       names(metadata)[
@@ -180,18 +180,18 @@ getPhyloIgSeq = function(
       ]
     )
 
-  names(metadata)[names(metadata) == sample_id_name] = "sample_id"
+  names(metadata)[names(metadata) == sample_id_name] <- "sample_id"
   # put sample_id on the first place
-  metadata = metadata[, c("sample_id", setdiff(names(metadata), "sample_id"))]
+  metadata <- metadata[, c("sample_id", setdiff(names(metadata), "sample_id"))]
 
-  phyloigseq_list = list()
+  phyloigseq_list <- list()
 
-  total_reads = data.frame()
+  total_reads <- data.frame()
 
   for (sample_id in sample_ids) {
     # Keep track of total presorting read counts for each sample (used to compute relative abundances later)
     if (!is.null(presorting_fraction_name)) {
-      total_reads = rbind(
+      total_reads <- rbind(
         total_reads,
         data.frame(
           sample_id = sample_id,
@@ -209,33 +209,33 @@ getPhyloIgSeq = function(
       )
     }
     # Retrieve sample  metadata
-    sam_metadata_df =
+    sam_metadata_df <-
       metadata[
         metadata[["sample_id"]] == sample_id &
           metadata[[fraction_id_name]] %in% all_fraction_names,
         ,
         drop = FALSE
       ]
-    sam_metadata_row = data.frame(matrix(NA, nrow = 1, ncol = ncol(metadata)))
-    names(sam_metadata_row) = names(metadata)
+    sam_metadata_row <- data.frame(matrix(NA, nrow = 1, ncol = ncol(metadata)))
+    names(sam_metadata_row) <- names(metadata)
 
     for (var_name in names(metadata)) {
-      unique_values = unique(sam_metadata_df[[var_name]])
+      unique_values <- unique(sam_metadata_df[[var_name]])
 
       if (length(unique_values) == 1) {
-        sam_metadata_row[[var_name]] = unique_values
+        sam_metadata_row[[var_name]] <- unique_values
       }
     }
-    sam_metadata_row = sam_metadata_row[,
+    sam_metadata_row <- sam_metadata_row[,
       names(sam_metadata_row) != fraction_id_name
     ]
 
     # Handle zeros
-    present_fraction_names = all_fraction_names[
+    present_fraction_names <- all_fraction_names[
       all_fraction_names %in% colnames(grouped_data[[sample_id]])
     ]
 
-    zero_imputation_result =
+    zero_imputation_result <-
       impute_zeros(
         data = grouped_data[[sample_id]],
         # Don't impute zeros in other fractions!
@@ -250,10 +250,10 @@ getPhyloIgSeq = function(
         method = zero_treatment
       )
 
-    ig_coating = zero_imputation_result$data %>%
+    ig_coating <- zero_imputation_result$data %>%
       select(all_of(unique(c("taxon_id", "sample_id", present_fraction_names))))
 
-    ig_coating$zeros_imputed = ig_coating$taxon_id %in%
+    ig_coating$zeros_imputed <- ig_coating$taxon_id %in%
       zero_imputation_result$imputed_taxa
 
     if (nrow(ig_coating) == 0) {
@@ -266,7 +266,7 @@ getPhyloIgSeq = function(
 
     # Compute scores
     if ("slide_z" %in% scores) {
-      slide_z_result =
+      slide_z_result <-
         get_slide_z(
           sorted_sample_df = ig_coating,
           positive_fraction_name = positive_fraction_name,
@@ -278,10 +278,10 @@ getPhyloIgSeq = function(
           imputed_taxa = zero_imputation_result$imputed_taxa
         )
 
-      ig_coating$slide_z = slide_z_result$slide_z
-      ig_coating$ellipse_level = slide_z_result$ellipse_level
+      ig_coating$slide_z <- slide_z_result$slide_z
+      ig_coating$ellipse_level <- slide_z_result$ellipse_level
       if (prod(dim(slide_z_result$ma_coords)) != 0) {
-        ig_coating = cbind(
+        ig_coating <- cbind(
           ig_coating,
           slide_z_result$ma_coords[, c(
             "obs_change",
@@ -292,14 +292,14 @@ getPhyloIgSeq = function(
           )]
         )
       }
-      ellipse_coords = slide_z_result$ellipse_coords
+      ellipse_coords <- slide_z_result$ellipse_coords
     } else {
-      ellipse_coords = data.frame()
+      ellipse_coords <- data.frame()
     }
 
     # Other Ig scores:
     for (score in scores[scores != "slide_z"]) {
-      ig_coating[[score]] =
+      ig_coating[[score]] <-
         compute_ig_score(
           method = score,
           pos = ig_coating[[positive_fraction_name]],
@@ -318,10 +318,10 @@ getPhyloIgSeq = function(
         )
     }
 
-    imputed_taxa = list()
-    imputed_taxa[[sample_id]] = zero_imputation_result$imputed_taxa
+    imputed_taxa <- list()
+    imputed_taxa[[sample_id]] <- zero_imputation_result$imputed_taxa
 
-    phyloigseq_list[[sample_id]] =
+    phyloigseq_list[[sample_id]] <-
       new(
         Class = "PhyloIgSeq",
         ig_coating = ig_coating,
@@ -335,44 +335,44 @@ getPhyloIgSeq = function(
       )
   }
 
-  phyloigseq_obj = collapsePhyloIgSeq(phyloigseq_list)
+  phyloigseq_obj <- collapsePhyloIgSeq(phyloigseq_list)
 
   if (prod(dim(total_reads)) != 0) {
-    names(total_reads)[2] = presorting_fraction_name
-    phyloigseq_obj@total_reads = total_reads[
+    names(total_reads)[2] <- presorting_fraction_name
+    phyloigseq_obj@total_reads <- total_reads[
       total_reads$sample_id %in% phyloigseq_obj@ig_coating$sample_id,
     ]
   } else {
-    phyloigseq_obj@total_reads = NULL
+    phyloigseq_obj@total_reads <- NULL
   }
 
-  phyloigseq_obj@positive_fraction_name = positive_fraction_name
-  phyloigseq_obj@first_negative_fraction_name = first_negative_fraction_name
-  phyloigseq_obj@second_negative_fraction_name = second_negative_fraction_name
-  phyloigseq_obj@presorting_fraction_name = presorting_fraction_name
-  phyloigseq_obj@ig_freq_name = ig_freq_name
+  phyloigseq_obj@positive_fraction_name <- positive_fraction_name
+  phyloigseq_obj@first_negative_fraction_name <- first_negative_fraction_name
+  phyloigseq_obj@second_negative_fraction_name <- second_negative_fraction_name
+  phyloigseq_obj@presorting_fraction_name <- presorting_fraction_name
+  phyloigseq_obj@ig_freq_name <- ig_freq_name
 
-  taxon_ids_to_keep = unique(phyloigseq_obj@ig_coating$taxon_id)
-  tax_table = as.matrix(phyloseq::tax_table(physeq)@.Data)[
+  taxon_ids_to_keep <- unique(phyloigseq_obj@ig_coating$taxon_id)
+  tax_table <- as.matrix(phyloseq::tax_table(physeq)@.Data)[
     taxon_ids_to_keep,
   ] %>%
     as.data.frame()
 
   # In the hierarchical order
-  tax_table = cbind(
+  tax_table <- cbind(
     tax_table,
     data.frame(
       taxon_name = original_taxa_names[taxon_ids_to_keep],
       taxon_id = taxon_ids_to_keep
     )
   )
-  rownames(tax_table) = NULL
+  rownames(tax_table) <- NULL
   # TODO: keep only taxa that are left
-  phyloigseq_obj@tax_table = tax_table
+  phyloigseq_obj@tax_table <- tax_table
 
   # a mapping (named vector) from "sample id" from otu_table (e.g. sam1_presorting)
   # to sample_id of Igseq (e.g. sam1)
-  phyloigseq_obj@phyloseq_sample_ids = as.matrix(sample_data(physeq))[,
+  phyloigseq_obj@phyloseq_sample_ids <- as.matrix(sample_data(physeq))[,
     sample_id_name
   ]
 

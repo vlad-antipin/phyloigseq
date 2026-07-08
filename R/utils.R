@@ -56,7 +56,7 @@ smart_facet_ncol <- function(n) {
 #' @importFrom utils globalVariables
 #'
 #' @keywords internal
-IG_SCORES = c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
+IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # scores to come:
 #"purity_corrected_prob_index", "purity_corrected_prob_ratio")
 
@@ -66,7 +66,7 @@ utils::globalVariables("IG_SCORES")
 #'Similar to veganifyOTU from phyloseq.
 #'@keywords internal
 #'@export
-reverseASV = function(physeq) {
+reverseASV <- function(physeq) {
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
   }
@@ -74,7 +74,7 @@ reverseASV = function(physeq) {
 }
 
 # Fix vertical jitter issue:
-geom_jitter = function(..., height = 0) {
+geom_jitter <- function(..., height = 0) {
   # avoid conflicts with `position` argument if it was explicitly specified
   if (hasArg(position)) {
     ggplot2::geom_jitter(...)
@@ -87,11 +87,11 @@ geom_jitter = function(..., height = 0) {
 # Custom function, returns TRUE or FALSE depending on whether the number is in the
 # the interval given is a vector, e.g. 3.5 %in_interval% c(3,4) gives TRUE
 `%in_interval%` <- function(x, interval) {
-  interval = range(interval, na.rm = TRUE)
+  interval <- range(interval, na.rm = TRUE)
   x >= interval[1] & x <= interval[2]
 }
 
-transform_abundances =
+transform_abundances <-
   function(
     abundance_table, # matrix
     transform = c("compositional", "hellinger"), #,"clr", "log10", "log10p"),
@@ -99,13 +99,18 @@ transform_abundances =
   ) {
     # assumes taxa are rows
     if (!taxa_are_rows) {
-      abundance_table = t(abundance_table)
+      abundance_table <- t(abundance_table)
     }
 
     if (transform == "compositional") {
-      abundance_table = sweep(abundance_table, 2, colSums(abundance_table), "/")
+      abundance_table <- sweep(
+        abundance_table,
+        2,
+        colSums(abundance_table),
+        "/"
+      )
     } else if (transform == "hellinger") {
-      abundance_table = sqrt(sweep(
+      abundance_table <- sqrt(sweep(
         abundance_table,
         2,
         colSums(abundance_table),
@@ -170,7 +175,7 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
     tidy = TRUE,
     label = FALSE
   )
-  rare_df = rare_df %>%
+  rare_df <- rare_df %>%
     rename(Reads = Sample, Richness = Species, Sample = Site)
 
   # names(rare_list) <- row.names(ps@sam_data)
@@ -294,7 +299,7 @@ plot_seq_depth <- function(
 
 #' Rarefy Abundances to Same Depth by multinomial resampling
 #' @export
-rarefy_abundances =
+rarefy_abundances <-
   function(
     abundance_table,
     taxa_are_rows = TRUE,
@@ -304,37 +309,37 @@ rarefy_abundances =
     silent_warnings = FALSE
   ) {
     if (taxa_are_rows) {
-      sample_margin = 2
-      taxa_margin = 1
-      sampleSums = colSums
-      taxaSums = rowSums
-      nsamples = ncol
+      sample_margin <- 2
+      taxa_margin <- 1
+      sampleSums <- colSums
+      taxaSums <- rowSums
+      nsamples <- ncol
       # assign_to_sample = function(sample, x) abundance_table[,sample ] <<- x
       # sample_slice = function(sample) abundance_table[,sample]
     } else {
-      sample_margin = 1
-      taxa_margin = 2
-      sampleSums = rowSums
-      taxaSums = colSums
-      nsamples = nrow
+      sample_margin <- 1
+      taxa_margin <- 2
+      sampleSums <- rowSums
+      taxaSums <- colSums
+      nsamples <- nrow
       # assign_to_sample = function(sample, x) abundance_table[sample, ] <<- x
       # sample_slice = function(sample) abundance_table[sample,]
     }
 
     if (is.null(common_count_sum)) {
-      common_count_sum = min(setdiff(sampleSums(abundance_table), 0))
+      common_count_sum <- min(setdiff(sampleSums(abundance_table), 0))
     }
 
-    dims_orig = dim(abundance_table)
+    dims_orig <- dim(abundance_table)
 
     if (trim_samples) {
       if (taxa_are_rows) {
-        abundance_table = abundance_table[,
+        abundance_table <- abundance_table[,
           sampleSums(abundance_table) >= common_count_sum,
           drop = FALSE
         ]
       } else {
-        abundance_table = abundance_table[
+        abundance_table <- abundance_table[
           sampleSums(abundance_table) >= common_count_sum,
           ,
           drop = FALSE
@@ -351,7 +356,7 @@ rarefy_abundances =
     #
     # }
 
-    abundance_table =
+    abundance_table <-
       apply(abundance_table, sample_margin, function(sample_counts) {
         if (sum(sample_counts) == 0) {
           return(rep(0, length(sample_counts)))
@@ -366,25 +371,25 @@ rarefy_abundances =
     if (sample_margin == 1) {
       # apply() to rows puts them in columns, so have to transoose the matrix back
 
-      abundance_table = t(abundance_table)
+      abundance_table <- t(abundance_table)
     }
 
     if (trim_taxa) {
       if (taxa_are_rows) {
-        abundance_table = abundance_table[
+        abundance_table <- abundance_table[
           taxaSums(abundance_table) > 0,
           ,
           drop = FALSE
         ]
       } else {
-        abundance_table = abundance_table[,
+        abundance_table <- abundance_table[,
           taxaSums(abundance_table) > 0,
           drop = FALSE
         ]
       }
     }
 
-    dims_rare = dim(abundance_table)
+    dims_rare <- dim(abundance_table)
 
     if (!all(dims_rare == dims_orig) & !silent_warnings) {
       warning(paste0(
@@ -402,7 +407,7 @@ rarefy_abundances =
 
 #' Check whether abundances look like counts
 #' @export
-is.count.like = function(x, allow.na = TRUE, consider.small.part = TRUE) {
+is.count.like <- function(x, allow.na = TRUE, consider.small.part = TRUE) {
   if (!is.numeric(x)) {
     return(FALSE)
   }
@@ -433,8 +438,8 @@ is.count.like = function(x, allow.na = TRUE, consider.small.part = TRUE) {
 
 #' Make taxonomy names unique at all taxonomic rank levels
 #' @export
-make_unique_taxa_table = function(taxa_table) {
-  taxa_table[is.na(taxa_table)] = "NA"
+make_unique_taxa_table <- function(taxa_table) {
+  taxa_table[is.na(taxa_table)] <- "NA"
 
   # "good duplication" example:
   # low level duplications correspond to whole taxonomy duplications
@@ -460,20 +465,20 @@ make_unique_taxa_table = function(taxa_table) {
   for (i in 2:ncol(taxa_table)) {
     # taxonomy if defined by the current level + all higher levels
     # (here, by just one higher level since it's ensured to be unique)
-    taxonomies = apply(taxa_table[, (i - 1):i], 1, function(row) {
+    taxonomies <- apply(taxa_table[, (i - 1):i], 1, function(row) {
       paste(row, collapse = "#")
     })
     # get rid of "good duplications"
-    unique_taxonomies = unique(taxonomies)
+    unique_taxonomies <- unique(taxonomies)
 
     # identify "bad duplications" and make them unique
-    duplicated_names = sapply(
+    duplicated_names <- sapply(
       strsplit(unique_taxonomies, "#"),
       function(taxons) {
         tail(taxons, 1)
       }
     )
-    unique_names = make.unique(duplicated_names)
+    unique_names <- make.unique(duplicated_names)
 
     # skip if no "bad duplications" - most often the case
     if (all(unique_names == duplicated_names)) {
@@ -482,10 +487,10 @@ make_unique_taxa_table = function(taxa_table) {
 
     # replace "bad duplications"
     for (j in 1:length(unique_names)) {
-      taxonomies[taxonomies == unique_taxonomies[j]] = unique_names[j]
+      taxonomies[taxonomies == unique_taxonomies[j]] <- unique_names[j]
     }
 
-    taxa_table[, i] = taxonomies
+    taxa_table[, i] <- taxonomies
   }
 
   return(taxa_table)
@@ -493,12 +498,12 @@ make_unique_taxa_table = function(taxa_table) {
 
 #' Impute with central tendency
 #' @export
-impute_with_central_tendency = function(df, central.tendency = "median") {
-  df = as.data.frame(df)
+impute_with_central_tendency <- function(df, central.tendency = "median") {
+  df <- as.data.frame(df)
   # Function to calculate the mode
-  get.mode = function(v) {
-    v = v[!is.na(v)]
-    uniqv = unique(v)
+  get.mode <- function(v) {
+    v <- v[!is.na(v)]
+    uniqv <- unique(v)
     uniqv[which.max(tabulate(match(v, uniqv)))]
   }
 
@@ -507,17 +512,17 @@ impute_with_central_tendency = function(df, central.tendency = "median") {
     # Impute numeric columns
     if (is.numeric(df[[col]])) {
       if (central.tendency == "mean") {
-        df[[col]][is.na(df[[col]])] = mean(df[[col]], na.rm = TRUE)
+        df[[col]][is.na(df[[col]])] <- mean(df[[col]], na.rm = TRUE)
       } else if (central.tendency == "median") {
-        df[[col]][is.na(df[[col]])] = median(df[[col]], na.rm = TRUE)
+        df[[col]][is.na(df[[col]])] <- median(df[[col]], na.rm = TRUE)
       } else if (central.tendency == "mode") {
-        df[[col]][is.na(df[[col]])] = get.mode(df[[col]])
+        df[[col]][is.na(df[[col]])] <- get.mode(df[[col]])
       } else {
         stop("Invalid method. Choose 'mean', 'median', or 'mode'.")
       }
       # Impute categorical columns, character columns are not affected /!\
     } else if (is.factor(df[[col]])) {
-      df[[col]][is.na(df[[col]])] = get.mode(df[[col]])
+      df[[col]][is.na(df[[col]])] <- get.mode(df[[col]])
     }
   }
   return(df)
@@ -526,7 +531,7 @@ impute_with_central_tendency = function(df, central.tendency = "median") {
 
 #' Impute Data with KNN, Central Tendency or Zero
 #' @export
-dataImpute = function(
+dataImpute <- function(
   data.tmp,
   exceptions = NULL,
   method = "KNN", # "KNN" or "Central Tendency"
@@ -535,24 +540,24 @@ dataImpute = function(
   add.imputation.indicators = FALSE
 ) {
   if (method == "KNN") {
-    data.imputed =
+    data.imputed <-
       VIM::kNN(
         data.tmp[, !colnames(data.tmp) %in% exceptions],
         k = nb.neighbors,
         imp_var = add.imputation.indicators
       )
   } else if (method == "Central Tendency") {
-    data.imputed =
+    data.imputed <-
       impute_with_central_tendency(
         data.tmp[, !colnames(data.tmp) %in% exceptions],
         central.tendency = central.tendency
       )
   } else if (method == "Replace NA with 0") {
-    data.imputed = data.tmp
-    data.imputed[is.na(data.imputed)] = 0
+    data.imputed <- data.tmp
+    data.imputed[is.na(data.imputed)] <- 0
   }
 
-  data.imputed = cbind(
+  data.imputed <- cbind(
     data.tmp[, colnames(data.tmp) %in% exceptions, drop = FALSE],
     data.imputed
   )

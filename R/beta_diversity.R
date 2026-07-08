@@ -96,7 +96,7 @@ get_beta_dispersion <- function(
     # NOTE: tSNE and UMAP can take as well a precomputed distance metric
     if (is(otu_table(physeq), "incomplete_otu_table")) {
       svd_emb <- otu_table(physeq)@svd_fit
-      emb     <- svd_emb$u %*% diag(svd_emb$d)
+      emb <- svd_emb$u %*% diag(svd_emb$d)
       rownames(emb) <- sample_names(physeq)
       dist.matrix <- as.matrix(dist(emb))
     } else if (class(dist) == "dist") {
@@ -184,10 +184,10 @@ get_beta_dispersion <- function(
       # slow as the number of axes/taxa grows, so just correlate directly.
       if (is(otu_table(physeq), "incomplete_otu_table")) {
         svd_ld <- otu_table(physeq)@svd_fit
-        U  <- svd_ld$u
-        V  <- svd_ld$v
-        S  <- coords[[1]]
-        B  <- solve(crossprod(U), crossprod(U, S))
+        U <- svd_ld$u
+        V <- svd_ld$v
+        S <- coords[[1]]
+        B <- solve(crossprod(U), crossprod(U, S))
         ld <- V %*% B
         rownames(ld) <- taxa_names(physeq)
         colnames(ld) <- colnames(S)
@@ -1870,14 +1870,32 @@ ggplot_beta_dispersion <- function(
   if (".is.fit.sample" %in% colnames(plot.df)) {
     if (!is.null(size.name)) {
       plt <- ggplot() +
-        geom_point(point_aes, plot.df[!plot.df$.is.fit.sample, ], alpha = projected.alpha) +
-        geom_point(point_aes, plot.df[plot.df$.is.fit.sample, ], alpha = point.alpha) +
+        geom_point(
+          point_aes,
+          plot.df[!plot.df$.is.fit.sample, ],
+          alpha = projected.alpha
+        ) +
+        geom_point(
+          point_aes,
+          plot.df[plot.df$.is.fit.sample, ],
+          alpha = point.alpha
+        ) +
         ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
         labs(color = label.name, shape = shape.name, size = size.name)
     } else {
       plt <- ggplot() +
-        geom_point(point_aes, plot.df[!plot.df$.is.fit.sample, ], alpha = projected.alpha, size = point.size) +
-        geom_point(point_aes, plot.df[plot.df$.is.fit.sample, ], alpha = point.alpha, size = point.size) +
+        geom_point(
+          point_aes,
+          plot.df[!plot.df$.is.fit.sample, ],
+          alpha = projected.alpha,
+          size = point.size
+        ) +
+        geom_point(
+          point_aes,
+          plot.df[plot.df$.is.fit.sample, ],
+          alpha = point.alpha,
+          size = point.size
+        ) +
         labs(color = label.name, shape = shape.name, size = size.name)
     }
   } else {

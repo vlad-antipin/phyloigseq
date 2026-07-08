@@ -1,6 +1,6 @@
 #' Compute Other Ig Scores
 #' @export
-compute_ig_score = function(
+compute_ig_score <- function(
   method = c(
     "palm",
     "kau",
@@ -24,26 +24,26 @@ compute_ig_score = function(
   # Transform counts to relative abundances
   if (is.numeric(pos)) {
     # P(taxon | Ig+ fraction)
-    pos_abund = pos / sum(pos)
+    pos_abund <- pos / sum(pos)
   } else {
-    pos_abund = NA
+    pos_abund <- NA
   }
 
   if (is.numeric(neg)) {
     # P(taxon | Ig- fraction)
-    neg_abund = neg / sum(neg)
+    neg_abund <- neg / sum(neg)
   } else {
-    neg_abund = NA
+    neg_abund <- NA
   }
   if (is.numeric(pre)) {
     # P(taxon) - presorting
-    pre_abund = pre / sum(pre)
+    pre_abund <- pre / sum(pre)
   } else {
-    pre_abund = NA
+    pre_abund <- NA
   }
 
   if (!is.numeric(ig_freq)) {
-    ig_freq = NA
+    ig_freq <- NA
   }
 
   # TODO: Sequences tend to be sequenced at equal molar ratios, so even without rarefaction the counts are not comparable !
@@ -54,28 +54,28 @@ compute_ig_score = function(
   # if(is.null(pos_fraction)){pos_fraction = pos / (pos + neg)} # P(Ig+ fraction) # or pos / pre?
   # if(is.null(neg_fraction)){neg_fraction = neg / (pos + neg)} # P(Ig- fraction)
   if (is.null(pos_fraction)) {
-    pos_fraction = NA
+    pos_fraction <- NA
   }
   if (is.null(neg_fraction)) {
-    neg_fraction = NA
+    neg_fraction <- NA
   }
 
   if (is.null(pos_purity)) {
-    pos_purity = NA
+    pos_purity <- NA
   }
   if (is.null(neg_impurity)) {
-    neg_impurity = NA
+    neg_impurity <- NA
   }
 
   if (method == "palm") {
-    score = pos_abund / neg_abund
+    score <- pos_abund / neg_abund
   } else if (method == "kau") {
     # minus to negate the fact that log10(pos_abund*neg_abund) is negative
-    score = -log2(pos_abund / neg_abund) / log10(pos_abund * neg_abund)
+    score <- -log2(pos_abund / neg_abund) / log10(pos_abund * neg_abund)
   } else if (method == "prob_index") {
-    score = pos_abund * ig_freq / pre_abund # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
+    score <- pos_abund * ig_freq / pre_abund # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
   } else if (method == "prob_ratio") {
-    score = log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq)))
+    score <- log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq)))
   } else if (method == "purity_corrected_prob_index") {
     # TODO: verify the proof!!!
     # Here, we discriminate `real Ig+` and `Ig+ fraction` events, assuming that
@@ -99,23 +99,23 @@ compute_ig_score = function(
     #   (   P(taxon | Ig+ fraction) * P(real Ig+ | Ig+ fraction) * P(Ig+ fraction)
     #     + P(taxon | Ig- fraction) * P(real Ig+ | Ig- fraction) * P(Ig- fraction)
     #    ) / P(taxon)
-    score = (pos_abund *
+    score <- (pos_abund *
       pos_purity *
       pos_fraction +
       neg_abund * neg_impurity * neg_fraction) /
       pre_abund
   } else if (method == "purity_corrected_prob_ratio") {
     # TODO: verify!
-    prob = pos_abund *
+    prob <- pos_abund *
       pos_purity *
       pos_fraction +
       neg_abund * neg_impurity * neg_fraction
-    score = log2(prob / (1 - prob))
+    score <- log2(prob / (1 - prob))
   } else {
     stop("Wrong score type")
   }
 
-  score[is.nan(score) | is.infinite(score)] = NA
+  score[is.nan(score) | is.infinite(score)] <- NA
 
   return(score)
 }
@@ -123,7 +123,7 @@ compute_ig_score = function(
 
 #' Plot Slide Z Score
 #' @export
-plot_slide_z = function(
+plot_slide_z <- function(
   phyloigseq_obj,
   sample_ids = NULL, # if NULL, all samples are plotted
   empirical_null_distribution = TRUE,
@@ -131,8 +131,8 @@ plot_slide_z = function(
   signif_colors = c(ggsci::pal_npg()(2)[2], ggsci::pal_npg()(2)[1]),
   ellipses = TRUE
 ) {
-  ig_df = phyloigseq_obj@ig_coating
-  ellipse_df = phyloigseq_obj@ellipse_coords
+  ig_df <- phyloigseq_obj@ig_coating
+  ellipse_df <- phyloigseq_obj@ellipse_coords
   if (
     empirical_null_distribution &
       !all(c("null_abundance", "null_change") %in% colnames(ig_df))
@@ -140,60 +140,60 @@ plot_slide_z = function(
     warning(
       "No MA coordinates to plot empirical null distribution are furnished, using observed pos-neg distribution as null distribution...\n"
     )
-    empirical_null_distribution = FALSE
+    empirical_null_distribution <- FALSE
   }
 
   if (!empirical_null_distribution) {
-    ig_df$null_abundance = ig_df$obs_abundance
-    ig_df$null_change = ig_df$obs_change
+    ig_df$null_abundance <- ig_df$obs_abundance
+    ig_df$null_change <- ig_df$obs_change
   }
 
   if (is.null(ellipse_df) || prod(dim(ellipse_df)) == 0) {
     warning("No ellipse coordinates furnished\n")
-    ellipses = FALSE
+    ellipses <- FALSE
   }
 
   if (!is.null(sample_ids)) {
-    ig_df = ig_df[ig_df$sample_id %in% sample_ids, ]
-    ig_df$sample_id = factor(ig_df$sample_id, levels = sample_ids)
-    ellipse_df = ellipse_df[ellipse_df$sample_id %in% sample_ids, ]
-    ellipse_df$sample_id = factor(ellipse_df$sample_id, levels = sample_ids)
+    ig_df <- ig_df[ig_df$sample_id %in% sample_ids, ]
+    ig_df$sample_id <- factor(ig_df$sample_id, levels = sample_ids)
+    ellipse_df <- ellipse_df[ellipse_df$sample_id %in% sample_ids, ]
+    ellipse_df$sample_id <- factor(ellipse_df$sample_id, levels = sample_ids)
   }
 
   if (length(phyloigseq_obj@tax_table) > 0) {
-    hover.text.all = rep(NA, nrow(ig_df))
+    hover.text.all <- rep(NA, nrow(ig_df))
     for (i in 1:nrow(ig_df)) {
       # it makes sure that taxa names match
-      taxon_id = ig_df$taxon_id[i]
-      hover.text = ""
+      taxon_id <- ig_df$taxon_id[i]
+      hover.text <- ""
       # TODO: for now original taxon name is not kept
-      values = phyloigseq_obj@tax_table[
+      values <- phyloigseq_obj@tax_table[
         phyloigseq_obj@tax_table$taxon_id == taxon_id,
         !colnames(phyloigseq_obj@tax_table) %in% c("taxon_id", "taxon_name"),
         drop = FALSE
       ]
       for (variable in colnames(values)) {
-        value = values[[variable]]
-        hover.text = paste0(hover.text, variable, ": ", value, "<br>")
+        value <- values[[variable]]
+        hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
       }
-      hover.text.all[i] = paste0(
+      hover.text.all[i] <- paste0(
         hover.text,
         paste("slide Z: ", round(ig_df$slide_z[i], digits = 3))
       )
     }
-    ig_df$tooltip = hover.text.all
+    ig_df$tooltip <- hover.text.all
   } else {
-    ig_df = mutate(
+    ig_df <- mutate(
       ig_df,
       tooltip = paste("<br>slide_z: ", round(slide_z, digits = 3))
     )
   }
 
-  ig_df_non_imputed = data.frame()
-  ig_df_imputed = data.frame()
+  ig_df_non_imputed <- data.frame()
+  ig_df_imputed <- data.frame()
 
   for (sample_id in unique(ig_df$sample_id)) {
-    ig_df_non_imputed = rbind(
+    ig_df_non_imputed <- rbind(
       ig_df_non_imputed,
       ig_df[
         ig_df$sample_id %in%
@@ -203,7 +203,7 @@ plot_slide_z = function(
         drop = FALSE
       ]
     )
-    ig_df_imputed = rbind(
+    ig_df_imputed <- rbind(
       ig_df_imputed,
       ig_df[
         ig_df$sample_id %in%
@@ -214,25 +214,25 @@ plot_slide_z = function(
       ]
     )
   }
-  stat_imputed = ifelse(
+  stat_imputed <- ifelse(
     ig_df_imputed$slide_z >= z_alpha2 | ig_df_imputed$slide_z <= -z_alpha2,
     "signif",
     "ns"
   )
 
-  ig_df = ig_df_non_imputed
-  stat = ifelse(
+  ig_df <- ig_df_non_imputed
+  stat <- ifelse(
     ig_df$slide_z >= z_alpha2 | ig_df$slide_z <= -z_alpha2,
     "signif",
     "ns"
   )
 
-  plt = ggplot(ig_df)
+  plt <- ggplot(ig_df)
 
-  jitter_width = diff(range(c(ig_df$null_abundance, ig_df$obs_abundance))) / 6
-  jitter_x = min(c(ig_df$null_abundance, ig_df$obs_abundance)) -
+  jitter_width <- diff(range(c(ig_df$null_abundance, ig_df$obs_abundance))) / 6
+  jitter_x <- min(c(ig_df$null_abundance, ig_df$obs_abundance)) -
     jitter_width * 3
-  plt = plt +
+  plt <- plt +
     geom_jitter(
       data = ig_df_imputed,
       aes(x = jitter_x, y = null_change, text = tooltip),
@@ -255,7 +255,7 @@ plot_slide_z = function(
     )
 
   if (empirical_null_distribution) {
-    plt = plt +
+    plt <- plt +
       geom_point(
         aes(x = null_abundance, y = null_change, text = tooltip),
         color = "darkgrey",
@@ -263,7 +263,7 @@ plot_slide_z = function(
       )
   }
 
-  plt = plt +
+  plt <- plt +
     geom_point(
       aes(obs_abundance, obs_change, size = stat, color = stat, text = tooltip),
       alpha = 0.8
@@ -273,7 +273,7 @@ plot_slide_z = function(
     scale_size_discrete(range = c(1.5, 3))
 
   if (length(ellipse_df) != 0 & ellipses) {
-    plt = plt +
+    plt <- plt +
       geom_path(
         data = ellipse_df,
         aes(x = x, y = y, group = ellipse_level),
@@ -283,21 +283,21 @@ plot_slide_z = function(
   }
 
   if (length(unique(ig_df$sample_id)) > 1) {
-    plt = plt +
+    plt <- plt +
       facet_wrap(. ~ sample_id)
   }
 
-  fraction1 = if (!is.null(phyloigseq_obj@positive_fraction_name)) {
+  fraction1 <- if (!is.null(phyloigseq_obj@positive_fraction_name)) {
     phyloigseq_obj@positive_fraction_name
   } else {
     "fraction_{1}"
   }
-  fraction2 = if (!is.null(phyloigseq_obj@first_negative_fraction_name)) {
+  fraction2 <- if (!is.null(phyloigseq_obj@first_negative_fraction_name)) {
     phyloigseq_obj@first_negative_fraction_name
   } else {
     "fraction_{2}"
   }
-  plt = plt +
+  plt <- plt +
     labs(
       x = latex2exp::TeX(paste0(
         "Log-Abundance: $\\log_{10}\\left(\\",
@@ -333,7 +333,7 @@ plot_slide_z = function(
 
 #' Plot Any Ig score
 #' @export
-plot_ig_score = function(
+plot_ig_score <- function(
   phyloigseq_obj,
   plot_type = c("boxplot", "bubbleplot")[1],
   score_name = "slide_z",
@@ -350,7 +350,7 @@ plot_ig_score = function(
   add_stats = TRUE
 ) {
   if (score_name == "slide_z" & is.null(z_alpha2)) {
-    z_alpha2 = 1.96
+    z_alpha2 <- 1.96
   }
 
   # TODO: add a possibility for multiple faceting (e.g. with timepoints)
@@ -364,7 +364,7 @@ plot_ig_score = function(
     stop("`score_agglom_fn` should be either 'mean' or 'median'")
   }
   # Merge score, sample and taxonomic data together
-  plot_data = phyloigseq_obj@ig_coating[, c(
+  plot_data <- phyloigseq_obj@ig_coating[, c(
     "taxon_id",
     "sample_id",
     score_name
@@ -385,7 +385,7 @@ plot_ig_score = function(
     )
 
   if (first_score_agglom_for_each == "both") {
-    plot_data = plot_data %>%
+    plot_data <- plot_data %>%
       # Compute central tendency (mean, median) in a sample group and taxrank
       # - for all values in intersections formed by these groupings
       group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
@@ -403,14 +403,14 @@ plot_ig_score = function(
       ungroup()
   } else if (first_score_agglom_for_each %in% c("sample", "taxon")) {
     if (first_score_agglom_for_each == "sample") {
-      first_id = "sample_id"
-      first_agglom = taxrank_score
+      first_id <- "sample_id"
+      first_agglom <- taxrank_score
     } else if (first_score_agglom_for_each == "taxon") {
-      first_id = "taxon_id"
-      first_agglom = group_score
+      first_id <- "taxon_id"
+      first_agglom <- group_score
     }
 
-    plot_data = plot_data %>%
+    plot_data <- plot_data %>%
       # First, compute central tendency separately for each individual sample (or taxon)
       # grouping by a taxrank (or sample group)
       group_by(.data[[first_id]], .data[[first_agglom]]) %>%
@@ -441,50 +441,50 @@ plot_ig_score = function(
   }
 
   if (exclude_na) {
-    plot_data = na.omit(plot_data)
+    plot_data <- na.omit(plot_data)
   }
 
   if (add_stats) {
     # FIXME: didn't account for group_score
-    group_counts = plot_data %>%
+    group_counts <- plot_data %>%
       count(.data[[taxrank_score]]) %>%
       filter(n >= 2)
-    valid_groups = group_counts[[taxrank_score]]
+    valid_groups <- group_counts[[taxrank_score]]
     if (length(valid_groups) > 1) {
-      valid_comparisons = combn(valid_groups, 2, simplify = FALSE)
+      valid_comparisons <- combn(valid_groups, 2, simplify = FALSE)
     } else {
-      add_stats = FALSE
+      add_stats <- FALSE
     }
   }
 
   if (score_name == "slide_z") {
-    left_lim = -z_alpha2
-    right_lim = z_alpha2
-    midpoint = 0
-    left_boundary = -Inf
-    right_boundary = +Inf
+    left_lim <- -z_alpha2
+    right_lim <- z_alpha2
+    midpoint <- 0
+    left_boundary <- -Inf
+    right_boundary <- +Inf
   } else if (score_name %in% c("kau", "prob_ratio")) {
-    left_lim = 0
-    right_lim = 0
-    midpoint = 0
-    left_boundary = -Inf
-    right_boundary = +Inf
+    left_lim <- 0
+    right_lim <- 0
+    midpoint <- 0
+    left_boundary <- -Inf
+    right_boundary <- +Inf
   } else if (score_name == "palm") {
-    left_lim = 1
-    right_lim = 1
-    midpoint = 1
-    left_boundary = 0
-    right_boundary = +Inf
+    left_lim <- 1
+    right_lim <- 1
+    midpoint <- 1
+    left_boundary <- 0
+    right_boundary <- +Inf
   } else if (score_name == "prob_index") {
-    left_lim = 0.5
-    right_lim = 0.5
-    midpoint = 0.5
-    left_boundary = 0
-    right_boundary = 1
+    left_lim <- 0.5
+    right_lim <- 0.5
+    midpoint <- 0.5
+    left_boundary <- 0
+    right_boundary <- 1
   }
 
   if (plot_type == "bubbleplot") {
-    plt =
+    plt <-
       ggplot(
         plot_data,
         aes(
@@ -496,7 +496,7 @@ plot_ig_score = function(
       ) +
       geom_point(pch = 21)
 
-    plt = plt +
+    plt <- plt +
       scale_fill_gradient2(
         high = signif_colors[1],
         low = signif_colors[2],
@@ -514,11 +514,11 @@ plot_ig_score = function(
         guide = guide_colourbar(title.position = "top", title.hjust = 0.5)
       )
 
-    plt = plt +
+    plt <- plt +
       guides(size = "none")
 
     if (!transpose) {
-      plt = plt +
+      plt <- plt +
         facet_grid(
           rows = if (!is.null(taxrank_facet)) {
             vars(.data[[taxrank_facet]])
@@ -530,7 +530,7 @@ plot_ig_score = function(
           space = "free"
         )
     } else {
-      plt = plt +
+      plt <- plt +
         facet_grid(
           cols = if (!is.null(taxrank_facet)) {
             vars(.data[[taxrank_facet]])
@@ -543,7 +543,7 @@ plot_ig_score = function(
         )
     }
 
-    plt = plt +
+    plt <- plt +
       theme_minimal() +
       labs(x = NULL, y = NULL, fill = paste(score_agglom_fn, score_name)) +
       theme(
@@ -556,24 +556,25 @@ plot_ig_score = function(
         panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
       )
   } else if (plot_type %in% c("boxplot", "violin")) {
-    plot_data$point_color = ifelse(
-      plot_data$agglom_score > right_lim, "high",
+    plot_data$point_color <- ifelse(
+      plot_data$agglom_score > right_lim,
+      "high",
       ifelse(plot_data$agglom_score < left_lim, "low", "ns")
     )
 
-    plt =
+    plt <-
       ggplot(
         data = plot_data,
         aes(x = agglom_score, y = .data[[taxrank_score]])
       )
     if (plot_type == "violin") {
-      plt = plt + geom_violin()
+      plt <- plt + geom_violin()
     } else {
-      plt = plt + geom_boxplot(outliers = FALSE)
+      plt <- plt + geom_boxplot(outliers = FALSE)
     }
 
     if (add_stats) {
-      plt = plt +
+      plt <- plt +
         stat_compare_means(
           method = "wilcox.test",
           comparisons = valid_comparisons,
@@ -583,21 +584,26 @@ plot_ig_score = function(
         )
     }
 
-    plt = plt +
+    plt <- plt +
       geom_jitter(
         alpha = 0.5,
-        aes(size = abs(agglom_score - mean(left_lim, right_lim)), color = point_color)
+        aes(
+          size = abs(agglom_score - mean(left_lim, right_lim)),
+          color = point_color
+        )
       ) +
-      scale_color_manual(values = c(
-        "high" = signif_colors[1],
-        "low"  = signif_colors[2],
-        "ns"   = "darkgrey"
-      )) +
+      scale_color_manual(
+        values = c(
+          "high" = signif_colors[1],
+          "low" = signif_colors[2],
+          "ns" = "darkgrey"
+        )
+      ) +
       guides(size = "none", color = "none") +
       scale_size_continuous(range = c(1, 2))
 
     if (mean(left_lim, right_lim) == 0) {
-      plt = plt +
+      plt <- plt +
         scale_x_continuous(
           limits = c(
             -max(abs(plot_data$agglom_score)),
@@ -606,11 +612,11 @@ plot_ig_score = function(
         )
     }
 
-    plt = plt +
+    plt <- plt +
       geom_vline(xintercept = unique(c(left_lim, right_lim)), linetype = 2)
 
     if (!transpose) {
-      plt = plt +
+      plt <- plt +
         facet_grid(
           rows = if (!is.null(taxrank_facet)) {
             vars(.data[[taxrank_facet]])
@@ -622,7 +628,7 @@ plot_ig_score = function(
           space = "free"
         )
     } else {
-      plt = plt +
+      plt <- plt +
         facet_grid(
           cols = if (!is.null(taxrank_facet)) {
             vars(.data[[taxrank_facet]])
@@ -635,7 +641,7 @@ plot_ig_score = function(
         )
     }
 
-    plt = plt +
+    plt <- plt +
       theme_minimal() +
       labs(x = paste(score_agglom_fn, score_name), y = NULL) +
       theme(
@@ -652,7 +658,7 @@ plot_ig_score = function(
   }
 
   if (transpose) {
-    plt = plt +
+    plt <- plt +
       coord_flip() +
       theme(
         plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
@@ -664,7 +670,7 @@ plot_ig_score = function(
         panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
       )
   }
-  plt = plt +
+  plt <- plt +
     labs(
       title = "Ig Score by Taxa and Sample Groups",
       subtitle = paste0(
@@ -693,7 +699,7 @@ plot_ig_score = function(
 
 #' Agglomerate Ig Scores by Taxrank
 #' @export
-agglomPhyloIgSeq = function(
+agglomPhyloIgSeq <- function(
   phyloigseq_obj,
   abundance_fraction = NULL,
   taxrank = NULL,
@@ -703,32 +709,32 @@ agglomPhyloIgSeq = function(
   abundance_quantile = NULL,
   min_rel_abundance = NULL
 ) {
-  scores = intersect(colnames(phyloigseq_obj@ig_coating), IG_SCORES)
+  scores <- intersect(colnames(phyloigseq_obj@ig_coating), IG_SCORES)
 
   for (score in scores) {
     if (all(is.na(phyloigseq_obj@ig_coating[[score]]))) {
-      scores = scores[scores != score]
+      scores <- scores[scores != score]
     }
   }
 
   if (is.null(taxrank)) {
-    taxrank = "taxon_id"
+    taxrank <- "taxon_id"
   }
 
   if (is.null(abundance_quantile)) {
-    abundance_quantile = 0
+    abundance_quantile <- 0
   }
 
   if (is.null(min_rel_abundance)) {
-    min_rel_abundance = 0
+    min_rel_abundance <- 0
   }
 
   if (is.null(agglom_method)) {
-    agglom_method = "median"
+    agglom_method <- "median"
     warning("agglomeration method is set to median")
   }
 
-  agglom_fn = function(score, abundances, agglom_method) {
+  agglom_fn <- function(score, abundances, agglom_method) {
     if (agglom_method == "mean") {
       return(mean(score, na.rm = TRUE))
     } else if (agglom_method == "median") {
@@ -744,13 +750,13 @@ agglomPhyloIgSeq = function(
   }
 
   if (make_unique_taxonomy) {
-    phyloigseq_obj@tax_table = PhyloIgSeq::make_unique_taxa_table(
+    phyloigseq_obj@tax_table <- PhyloIgSeq::make_unique_taxa_table(
       phyloigseq_obj@tax_table
     )
   }
 
   # Agglomerate scores
-  ig_coating_agglom = phyloigseq_obj@ig_coating %>%
+  ig_coating_agglom <- phyloigseq_obj@ig_coating %>%
     select(all_of(c("sample_id", "taxon_id", scores, abundance_fraction))) %>%
     {
       if (taxrank == "taxon_id") {
@@ -769,7 +775,7 @@ agglomPhyloIgSeq = function(
     group_by(sample_id, .data[[taxrank]])
 
   for (score in scores) {
-    ig_coating_agglom = ig_coating_agglom %>%
+    ig_coating_agglom <- ig_coating_agglom %>%
       mutate(
         !!score := agglom_fn(
           .data[[score]],
@@ -783,7 +789,7 @@ agglomPhyloIgSeq = function(
       )
   }
 
-  ig_coating_agglom = ig_coating_agglom %>%
+  ig_coating_agglom <- ig_coating_agglom %>%
     {
       if (!is.null(abundance_fraction)) {
         mutate(
@@ -807,8 +813,8 @@ agglomPhyloIgSeq = function(
           !is.null(phyloigseq_obj@total_reads) &&
             abundance_fraction %in% names(phyloigseq_obj@total_reads)
         ) {
-          total_reads_df = phyloigseq_obj@total_reads
-          names(total_reads_df)[2] = "total_reads"
+          total_reads_df <- phyloigseq_obj@total_reads
+          names(total_reads_df)[2] <- "total_reads"
           merge(., total_reads_df, by = "sample_id") %>%
             #mutate(., total_reads = phyloigseq_obj@total_reads[[abundance_fraction]][phyloigseq_obj@total_reads[["sample_id"]] == sample_id] )
             group_by(., sample_id)
@@ -842,24 +848,24 @@ agglomPhyloIgSeq = function(
     ungroup() %>%
     select(all_of(c(taxrank, "sample_id", abundance_fraction, scores)))
 
-  phyloigseq_obj@ig_coating = ig_coating_agglom
+  phyloigseq_obj@ig_coating <- ig_coating_agglom
 
   names(phyloigseq_obj@ig_coating)[
     names(phyloigseq_obj@ig_coating) == taxrank
-  ] = "taxon_id"
+  ] <- "taxon_id"
 
   # Update taxonomy
-  phyloigseq_obj@tax_table = phyloigseq_obj@tax_table[,
+  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[,
     1:which(colnames(phyloigseq_obj@tax_table) == taxrank)
   ] %>%
     distinct()
 
   if (!"taxon_id" %in% colnames(phyloigseq_obj@tax_table)) {
-    phyloigseq_obj@tax_table$taxon_id = phyloigseq_obj@tax_table[, taxrank]
+    phyloigseq_obj@tax_table$taxon_id <- phyloigseq_obj@tax_table[, taxrank]
   }
 
   if (!is.null(phyloigseq_obj@total_reads)) {
-    phyloigseq_obj@total_reads = phyloigseq_obj@total_reads[
+    phyloigseq_obj@total_reads <- phyloigseq_obj@total_reads[
       phyloigseq_obj@total_reads$sample_id %in%
         phyloigseq_obj@ig_coating$sample_id,
     ]
@@ -870,22 +876,22 @@ agglomPhyloIgSeq = function(
 
 #' Convert Ig Scores to Longer Format
 #' @export
-to_wider_ig_score = function(
+to_wider_ig_score <- function(
   ig_coating_agglom,
   scores = NULL,
   shared_by = NULL # what fraction of samples has this taxon
 ) {
   if (is.null(shared_by)) {
-    shared_by = 0
+    shared_by <- 0
   }
 
   if (is.null(scores)) {
-    scores = intersect(colnames(ig_coating_agglom), IG_SCORES)
+    scores <- intersect(colnames(ig_coating_agglom), IG_SCORES)
   }
 
-  score_list = list()
+  score_list <- list()
   for (score in scores) {
-    score_list[[score]] = ig_coating_agglom %>%
+    score_list[[score]] <- ig_coating_agglom %>%
       select(all_of(c("sample_id", "taxon_id", score))) %>%
       pivot_wider(
         names_from = taxon_id,
@@ -900,7 +906,7 @@ to_wider_ig_score = function(
 
 #' Convert Ig scores from PhyloIgSeq object to phyloseq
 #' @export
-PhyloIgSeq_to_phyloseq =
+PhyloIgSeq_to_phyloseq <-
   function(
     phyloigseq_obj,
     score_name,
@@ -908,8 +914,8 @@ PhyloIgSeq_to_phyloseq =
     imputation_method = NULL,
     central_tendency = NULL, # "mean", "median" or "mode"
     nb_neighbors = 5,
-    svd_rank = 50L,  # rank.max for softImpute (SVD path only)
-    svd_lambda = 1   # regularization lambda for softImpute (SVD path only)
+    svd_rank = 50L, # rank.max for softImpute (SVD path only)
+    svd_lambda = 1 # regularization lambda for softImpute (SVD path only)
   ) {
     # --- SVD path: build incomplete_otu_table without materialising a dense matrix ---
     if (identical(imputation_method, "SVD")) {
@@ -923,44 +929,49 @@ PhyloIgSeq_to_phyloseq =
       taxa_lvls <- unique(ig_obs$taxon_id)
 
       if (eff_shared_by > 0) {
-        n_samp   <- length(samp_lvls)
-        obs_frac <- tapply(ig_obs$sample_id, ig_obs$taxon_id,
-                           function(s) length(unique(s)) / n_samp)
+        n_samp <- length(samp_lvls)
+        obs_frac <- tapply(ig_obs$sample_id, ig_obs$taxon_id, function(s) {
+          length(unique(s)) / n_samp
+        })
         taxa_lvls <- names(obs_frac[obs_frac >= eff_shared_by])
-        ig_obs    <- ig_obs[ig_obs$taxon_id %in% taxa_lvls, , drop = FALSE]
+        ig_obs <- ig_obs[ig_obs$taxon_id %in% taxa_lvls, , drop = FALSE]
       }
 
       i_idx <- match(ig_obs$sample_id, samp_lvls)
-      j_idx <- match(ig_obs$taxon_id,  taxa_lvls)
+      j_idx <- match(ig_obs$taxon_id, taxa_lvls)
 
       X_inc <- softImpute::Incomplete(i_idx, j_idx, ig_obs[[score_name]])
       dimnames(X_inc) <- list(samp_lvls, taxa_lvls)
 
       # Dense NA matrix for softImpute (passing Incomplete directly is slower)
-      n_s     <- length(samp_lvls)
-      n_t     <- length(taxa_lvls)
-      X_dense <- matrix(NA_real_, nrow = n_s, ncol = n_t,
-                        dimnames = list(samp_lvls, taxa_lvls))
+      n_s <- length(samp_lvls)
+      n_t <- length(taxa_lvls)
+      X_dense <- matrix(
+        NA_real_,
+        nrow = n_s,
+        ncol = n_t,
+        dimnames = list(samp_lvls, taxa_lvls)
+      )
       if (length(X_inc@x) > 0L) {
         col_idx <- rep(seq_len(n_t), diff(X_inc@p))
         row_idx <- X_inc@i + 1L
         X_dense[cbind(row_idx, col_idx)] <- X_inc@x
       }
 
-      col_means             <- colMeans(X_dense, na.rm = TRUE)
+      col_means <- colMeans(X_dense, na.rm = TRUE)
       col_means[is.nan(col_means)] <- 0
-      X_centered            <- sweep(X_dense, 2, col_means, "-")
+      X_centered <- sweep(X_dense, 2, col_means, "-")
 
       fit <- softImpute::softImpute(
         X_centered,
         rank.max = svd_rank,
-        lambda   = svd_lambda,
-        type     = "svd"
+        lambda = svd_lambda,
+        type = "svd"
       )
 
       ot_ig <- incomplete_otu_table(
-        X_inc     = X_inc,
-        svd_fit   = list(u = fit$u, d = fit$d, v = fit$v),
+        X_inc = X_inc,
+        svd_fit = list(u = fit$u, d = fit$d, v = fit$v),
         col_means = col_means
       )
 
@@ -975,7 +986,8 @@ PhyloIgSeq_to_phyloseq =
       tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
       tax_table_ig_score <- tax_table_ig_score[
         !is.na(tax_table_ig_score[, "taxon_id"]),
-        , drop = FALSE
+        ,
+        drop = FALSE
       ]
       rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
       tax_table_ig_score <- tax_table_ig_score[,
@@ -991,7 +1003,7 @@ PhyloIgSeq_to_phyloseq =
     }
 
     # --- Legacy path (NULL / "KNN" / "Central Tendency" / "Replace NA with 0") ---
-    igseq_df =
+    igseq_df <-
       PhyloIgSeq::to_wider_ig_score(
         ig_coating_agglom = phyloigseq_obj@ig_coating,
         scores = score_name,
@@ -999,13 +1011,13 @@ PhyloIgSeq_to_phyloseq =
       )[[score_name]]
 
     # "OTU table" - Ig scores instead of abundances
-    otu_table_ig_score = igseq_df
-    otu_table_ig_score = as.matrix(otu_table_ig_score[,
+    otu_table_ig_score <- igseq_df
+    otu_table_ig_score <- as.matrix(otu_table_ig_score[,
       !colnames(otu_table_ig_score) %in% c("sample_id", "NA")
     ])
-    rownames(otu_table_ig_score) = igseq_df$sample_id
+    rownames(otu_table_ig_score) <- igseq_df$sample_id
     if (!is.null(imputation_method)) {
-      otu_table_ig_score = PhyloIgSeq::dataImpute(
+      otu_table_ig_score <- PhyloIgSeq::dataImpute(
         otu_table_ig_score,
         method = imputation_method,
         central.tendency = central_tendency,
@@ -1014,19 +1026,19 @@ PhyloIgSeq_to_phyloseq =
     }
 
     # Sample data
-    sample_data_ig_score = phyloigseq_obj@sample_data[,
+    sample_data_ig_score <- phyloigseq_obj@sample_data[,
       !colnames(phyloigseq_obj@sample_data) %in% c("sample_id"),
       drop = FALSE
     ]
-    rownames(sample_data_ig_score) = phyloigseq_obj@sample_data$sample_id
+    rownames(sample_data_ig_score) <- phyloigseq_obj@sample_data$sample_id
 
     # Taxonomy table
-    tax_table_ig_score = phyloigseq_obj@tax_table %>% as.matrix()
-    tax_table_ig_score = tax_table_ig_score[
+    tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
+    tax_table_ig_score <- tax_table_ig_score[
       !is.na(tax_table_ig_score[, "taxon_id"]),
     ]
-    rownames(tax_table_ig_score) = tax_table_ig_score[, "taxon_id"]
-    tax_table_ig_score = tax_table_ig_score[,
+    rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
+    tax_table_ig_score <- tax_table_ig_score[,
       colnames(tax_table_ig_score) != "taxon_id"
     ]
 

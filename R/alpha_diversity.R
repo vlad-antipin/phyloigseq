@@ -373,7 +373,8 @@ plot_alpha_diversity <- function(
         ggplot2::geom_jitter(point_mapping, alpha = alpha) +
         ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3))
     } else {
-      plt <- plt + ggplot2::geom_jitter(point_mapping, alpha = alpha, size = point.size)
+      plt <- plt +
+        ggplot2::geom_jitter(point_mapping, alpha = alpha, size = point.size)
     }
   } else {
     plt <- plt +
