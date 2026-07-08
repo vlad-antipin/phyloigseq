@@ -10,7 +10,9 @@ PhyloIgSeq_to_phyloseq(
   shared_by = NULL,
   imputation_method = NULL,
   central_tendency = NULL,
-  nb_neighbors = 5
+  nb_neighbors = 5,
+  svd_rank = 50L,
+  svd_lambda = 1
 )
 }
 \description{
