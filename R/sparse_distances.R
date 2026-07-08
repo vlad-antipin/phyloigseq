@@ -247,7 +247,9 @@ SPARSE_DISTANCE_METHODS <- c(
   "canberra",
   "horn",
   "chord",
-  "hellinger"
+  "hellinger",
+  "unifrac",
+  "wunifrac"
 )
 
 #' Compute pairwise sample distances with sparse OTU table support
@@ -278,7 +280,9 @@ sparse_distance <- function(ps, method) {
       canberra = canberra_sparse(ps),
       horn = horn_sparse(ps),
       chord = chord_sparse(ps),
-      hellinger = hellinger_sparse(ps)
+      hellinger = hellinger_sparse(ps),
+      unifrac = sparse_unifrac(ps, "unifrac"),
+      wunifrac = sparse_unifrac(ps, "wunifrac")
     )
   } else {
     warning(

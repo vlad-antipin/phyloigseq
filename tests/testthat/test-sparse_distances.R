@@ -54,6 +54,25 @@ ref_distance <- function(ps, method) {
 pair   <- make_pair()
 pair_t <- make_pair(taxa_are_rows = FALSE)
 
+# UniFrac methods need a phy_tree, which make_pair() doesn't attach. Reuse a
+# pair and bolt a random tree onto its taxa (named "ASV1".."ASVn" by
+# make_pair()) so sparse_distance()'s dispatch to sparse_unifrac() can be
+# exercised here; full sparse_unifrac() correctness/edge-case coverage lives
+# in test-sparse_unifrac.R.
+make_tree_pair <- function(n_taxa = 100, ...) {
+  p <- make_pair(n_taxa = n_taxa, ...)
+  tree <- ape::rtree(n_taxa, tip.label = paste0("ASV", seq_len(n_taxa)))
+  phy_tree(p$dense) <- tree
+  phy_tree(p$sparse) <- tree
+  p
+}
+
+pair_tree <- make_tree_pair()
+
+# Distance methods that require a phy_tree and so are excluded from the
+# generic per-method loop below, which runs against tree-less fixtures.
+TREE_METHODS <- c("unifrac", "wunifrac")
+
 # ---- SPARSE_DISTANCE_METHODS metadata ----
 
 test_that("SPARSE_DISTANCE_METHODS contains 'bray'", {
@@ -62,7 +81,8 @@ test_that("SPARSE_DISTANCE_METHODS contains 'bray'", {
 
 test_that("SPARSE_DISTANCE_METHODS contains all expected methods", {
   expected <- c("bray", "jaccard", "kulczynski", "manhattan",
-                "euclidean", "canberra", "horn", "chord", "hellinger")
+                "euclidean", "canberra", "horn", "chord", "hellinger",
+                "unifrac", "wunifrac")
   expect_true(all(expected %in% SPARSE_DISTANCE_METHODS))
 })
 
@@ -79,10 +99,11 @@ test_that("unsupported method falls back to phyloseq::distance with a warning", 
 })
 
 # ---- Per-method generic tests ----
-# Runs for every method in SPARSE_DISTANCE_METHODS.
+# Runs for every method in SPARSE_DISTANCE_METHODS except TREE_METHODS (see
+# the dedicated UniFrac section below).
 # local() captures the loop variable so each block closes over its own `m`.
 
-for (method in SPARSE_DISTANCE_METHODS) {
+for (method in setdiff(SPARSE_DISTANCE_METHODS, TREE_METHODS)) {
   local({
     m <- method
 
@@ -419,3 +440,31 @@ test_that("[hellinger] two-sample hand-computed formula (sqrt(2))", {
     tolerance = 1e-12
   )
 })
+
+# ---- UniFrac / weighted UniFrac (dispatch to sparse_unifrac) ----
+# These check that sparse_distance() dispatches correctly and matches
+# phyloseq::distance() when a tree is present, and warns + returns NULL when
+# it isn't. Full sparse_unifrac() correctness (rooted/unrooted trees, with/
+# without edge lengths, etc.) is covered in test-sparse_unifrac.R.
+
+for (method in TREE_METHODS) {
+  local({
+    m <- method
+
+    test_that(paste0("[", m, "] sparse_distance matches phyloseq::distance"), {
+      expect_equal(
+        as.numeric(sparse_distance(pair_tree$sparse, method = m)),
+        as.numeric(phyloseq::distance(pair_tree$dense, method = m)),
+        tolerance = 1e-8
+      )
+    })
+
+    test_that(paste0("[", m, "] sparse_distance warns and returns NULL without a tree"), {
+      expect_warning(
+        result <- sparse_distance(pair$dense, method = m),
+        "phy_tree slot is empty"
+      )
+      expect_null(result)
+    })
+  })
+}
