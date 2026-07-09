@@ -277,6 +277,7 @@ filterTaxTable <- function(
     physeq <- t(physeq)
   }
   data <- data.frame(
+    .rowname = taxa_names(physeq),
     tax_table(physeq),
     check.names = FALSE,
     stringsAsFactors = FALSE
@@ -291,10 +292,16 @@ filterTaxTable <- function(
   if (!is.null(filter.expression)) {
     # Otherwise, if no filter criteria is given, return the original data
     print(filter.expression) # /!\ temporary, to control the filters
-    # Parse the resulting string to get the real logical expression and
-    # filter the data
+    # Temporarily add .rowname column so subset_taxa can filter by taxa name
+    tt_orig <- tax_table(physeq)
+    tax_table(physeq) <- cbind(.rowname = taxa_names(physeq), tt_orig)
     filtered.physeq <- physeq %>%
       subset_taxa(eval(parse(text = filter.expression)))
+    tt_f <- tax_table(filtered.physeq)
+    tax_table(filtered.physeq) <- tt_f[,
+      colnames(tt_f) != ".rowname",
+      drop = FALSE
+    ]
   } else {
     filtered.physeq <- physeq
   }
