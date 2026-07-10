@@ -1,8 +1,9 @@
 Package: PhyloIgSeq
 Title: Ig Coating Analysis from Phyloseq Data
 Version: 0.0.0.9000
-Authors@R: 
-    person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre"))
+Authors@R: c(
+    person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre")),
+    person("Martin", "Larsen", role = c("aut", "ths")))
 Description: Provides wrappers for phyloseq functions, adapting them for
     usage in a web application as well for analysis of diversity and Ig
     coating.

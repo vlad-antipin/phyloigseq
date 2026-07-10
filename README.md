@@ -1,98 +1,85 @@
 # PhyloIgSeq
 
 <!-- badges: start -->
+
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 <!-- badges: end -->
 
-**PhyloIgSeq** provides tools for microbiota diversity analysis and immunoglobulin (Ig) coating quantification from 16S sequencing data. It wraps and extends [phyloseq](https://joey711.github.io/phyloseq/) workflows with ordination, compositional analysis, and a suite of Ig coating scores — including a novel sliding Z-score — designed for use in both interactive pipelines and web applications.
+PhyloIgSeq extends [phyloseq](https://joey711.github.io/phyloseq/) with tools for microbiota diversity analysis and IgSeq (immunoglobulin coating) quantification from 16S sequencing data.
+
+## Why PhyloIgSeq
+
+- **IgSeq scores, including a novel sliding Z-score.** `getPhyloIgSeq()` builds an Ig-coating profile from Ig+/Ig− (and optional pre-sort) fractions and scores it with classical Palm and Kau indices, probability-index/ratio variants, purity-corrected variants, and a sliding Z-score developed for this package (`compute_slide_z()`) that estimates a local null distribution along the abundance axis instead of assuming one global null. When a second negative fraction is available, the null can instead be modeled empirically from Ig−.1 vs Ig−.2, capturing technical variability directly rather than assuming a theoretical null.
+- **A sparse-matrix engine for beta diversity.** `as_sparse_phyloseq()` keeps the OTU table as a `dgCMatrix`; `sparse_distance()` and `sparse_unifrac()` compute Bray-Curtis, Jaccard, (weighted) UniFrac and other distances directly on it, without ever densifying the table. This is a drop-in, numerically equivalent replacement for `phyloseq::distance()`/`UniFrac()` that scales to much larger ASV tables.
+- **Approximate UniFrac without a real phylogeny.** `get_taxonomy_tree()` builds a `phy_tree` from the ranks in `tax_table` alone, so UniFrac-family distances remain available when no sequencing-based tree exists. This is a prototype/heuristic construction and not a substitute for a real phylogeny, treat resulting distances as approximate.
+- **A companion app for reproducible analysis.** [phyloigseq-app](https://www.funkycells.com/main/index.php/lab-tools/phyloigseq) exposes the same pipeline through a point-and-click Shiny interface and exports every filter, transform, and scoring parameter used in a session to a dedicated sheet alongside the results, so an analysis can be reproduced exactly.
 
 ## Installation
 
-PhyloIgSeq is currently available from GitHub only. Install it with:
+PhyloIgSeq is currently available from GitHub only:
 
 ```r
 # install.packages("remotes")
 remotes::install_github("vlad-antipin/phyloigseq")
 ```
 
-One dependency ([speedyseq](https://github.com/mikemc/speedyseq)) is also GitHub-only and will be installed automatically.
-
-Bioconductor dependencies (phyloseq, microbiome, ComplexHeatmap) must be present. If they are not already installed:
+This pulls in [speedyseq](https://github.com/mikemc/speedyseq) automatically. Bioconductor dependencies (`phyloseq`, `microbiome`, `ComplexHeatmap`) must be installed separately if not already present:
 
 ```r
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install(c("phyloseq", "microbiome", "ComplexHeatmap"))
 ```
 
-## Overview
-
-A typical analysis proceeds in the following stages:
-
-1. **Import** — load a `phyloseq` object produced by a DADA2 pipeline.
-2. **Filter** — apply sample- and taxa-level filters.
-3. **Alpha diversity** — compute richness, Shannon entropy, and related metrics.
-4. **Beta diversity** — run constrained and unconstrained ordination (PCA, MDS, CA, RDA, CCA) with permutation tests.
-5. **Compositional analysis** — generate barplots, heatmaps, and phylogenetic trees.
-6. **Ig coating** — build a `PhyloIgSeq` object and compute coating scores (Palm, Kau, probability-index variants, sliding Z-score).
-7. **Export** — write metadata, taxonomy, and abundance tables for downstream regression modelling.
-
-## Usage
+## Quick start
 
 ```r
 library(PhyloIgSeq)
+library(phyloseq)
+data(ps_16s_refinement) # bundled example: 515 taxa x 37 samples, with a phy_tree
 
 # --- Alpha diversity ---------------------------------------------------------
-alpha_plot <- plot_alpha_diversity(
-  physeq    = my_phyloseq,
-  measures  = c("Observed", "Shannon"),
-  group_var = "condition"
-)
+alpha <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
+plot_alpha_diversity(alpha, x = "Protocol")
 
-# --- Beta diversity ----------------------------------------------------------
-beta_res <- compute_beta_diversity(
-  physeq   = my_phyloseq,
-  method   = "PCoA",
-  distance = "bray"
-)
+# --- Beta diversity (Bray-Curtis PCoA) ---------------------------------------
+beta <- get_beta_dispersion(ps_16s_refinement, method = "PCoA", dist = "bray")
+ggplot_beta_dispersion(beta)
 
-# --- Ig coating --------------------------------------------------------------
-igseq <- new("PhyloIgSeq",
-  ig_coating              = coating_df,
-  positive_fraction_name  = "IgA+",
-  first_negative_fraction_name = "IgA-"
-)
+# --- Same distances via the sparse engine, without densifying the table -----
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+sparse_distance(ps_sparse, method = "bray")
 
-scores <- compute_ig_score(
-  method = "kau",
-  pos    = igseq@ig_coating$pos_counts,
-  neg    = igseq@ig_coating$neg_counts
-)
+# --- UniFrac from an approximate, taxonomy-derived tree ---------------------
+phy_tree(ps_16s_refinement) <- get_taxonomy_tree(ps_16s_refinement)
+sparse_unifrac(as_sparse_phyloseq(ps_16s_refinement), method = "wunifrac")
 ```
 
-## Key features
+IgSeq scoring works on Ig+/Ig− fraction data, identified by columns in `sample_data`:
 
-| Feature | Details |
-|---|---|
-| Alpha diversity | Richness, Shannon, Simpson, Faith's PD via phyloseq/microbiome |
-| Beta diversity | PCA, PCoA/MDS, CA, RDA, CCA; PERMANOVA and homogeneity tests |
-| Visualisation | ggplot2-based plots with faceting, grouping, and interactive plotly output |
-| Compositional analysis | Stacked barplots, annotated heatmaps (ComplexHeatmap), phylogenetic trees |
-| Ig coating scores | Palm, Kau, probability index/ratio, purity-corrected variants |
-| Sliding Z-score | Novel per-taxon coating score with ellipse coordinate output |
-| Export | Excel-ready tables (openxlsx) and HTML widgets for downstream use |
+```r
+igseq <- getPhyloIgSeq(
+  physeq,
+  sample_id_name = "sample_id",   # column identifying each biological sample
+  fraction_id_name = "fraction",  # column indicating the sort fraction
+  positive_fraction_name = "IgA+",
+  first_negative_fraction_name = "IgA-"
+)
+plot_ig_score(igseq, score_name = "slide_z")
+```
 
-## Dependencies
+The lower-level scoring function operates directly on abundance vectors:
 
-PhyloIgSeq requires R ≥ 3.5 and depends on packages from CRAN, Bioconductor, and GitHub:
+```r
+compute_ig_score(method = "kau", pos = c(120, 45, 0, 300), neg = c(80, 60, 10, 250))
+```
 
-- **Bioconductor**: phyloseq, microbiome, ComplexHeatmap
-- **CRAN**: vegan, ggplot2, ggpubr, ggrepel, plotly, dplyr, tidyr, rstatix, MASS, umap, Rtsne, and others (see `DESCRIPTION`)
-- **GitHub**: [speedyseq](https://github.com/mikemc/speedyseq)
+## Documentation
+
+- `vignette("introduction", package = "PhyloIgSeq")`
+- `?getPhyloIgSeq`, `?compute_slide_z`, `?sparse_distance`, `?sparse_unifrac`, `?get_taxonomy_tree`
 
 ## License
 
-MIT © Vladislav Antipin
-
-
+MIT © Vladislav Antipin, Martin Larsen
