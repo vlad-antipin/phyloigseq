@@ -1,6 +1,6 @@
 # MIT License
 
-Copyright (c) 2026 PhyloIgSeq authors
+Copyright (c) 2026 Vladislav Antipin, Martin Larsen
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
