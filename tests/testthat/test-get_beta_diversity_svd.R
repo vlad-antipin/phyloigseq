@@ -97,60 +97,60 @@ test_that("SVD embedding distance matrix has correct dimensions", {
   expect_equal(dim(dm), c(f$n_samples, f$n_samples))
 })
 
-# ---- Test 7: get_beta_dispersion end-to-end ----
+# ---- Test 7: get_beta_diversity end-to-end ----
 
-result <- get_beta_dispersion(ps, method = "PCoA")
+result <- get_beta_diversity(ps, method = "PCoA")
 
-test_that("get_beta_dispersion returns a list without error", {
+test_that("get_beta_diversity returns a list without error", {
   expect_true(is.list(result))
 })
 
-test_that("get_beta_dispersion coords[[1]] has n_samples rows", {
+test_that("get_beta_diversity coords[[1]] has n_samples rows", {
   expect_equal(nrow(result$coords[[1]]), f$n_samples)
 })
 
-test_that("get_beta_dispersion coords[[1]] rownames match sample names", {
+test_that("get_beta_diversity coords[[1]] rownames match sample names", {
   expect_setequal(rownames(result$coords[[1]]), f$samp_nms)
 })
 
-test_that("get_beta_dispersion coords[[1]] has at least 1 column", {
+test_that("get_beta_diversity coords[[1]] has at least 1 column", {
   expect_gte(ncol(result$coords[[1]]), 1L)
 })
 
-test_that("get_beta_dispersion loadings[[1]] has n_taxa rows", {
+test_that("get_beta_diversity loadings[[1]] has n_taxa rows", {
   expect_equal(nrow(result$loadings[[1]]), f$n_taxa)
 })
 
-test_that("get_beta_dispersion loadings[[1]] rownames match taxa names", {
+test_that("get_beta_diversity loadings[[1]] rownames match taxa names", {
   expect_setequal(rownames(result$loadings[[1]]), f$taxa_nms)
 })
 
-test_that("get_beta_dispersion loadings[[1]] col count matches coords col count", {
+test_that("get_beta_diversity loadings[[1]] col count matches coords col count", {
   expect_equal(ncol(result$loadings[[1]]), ncol(result$coords[[1]]))
 })
 
-test_that("get_beta_dispersion loadings[[1]] colnames match coords colnames", {
+test_that("get_beta_diversity loadings[[1]] colnames match coords colnames", {
   expect_identical(colnames(result$loadings[[1]]), colnames(result$coords[[1]]))
 })
 
-test_that("get_beta_dispersion returns non-null eigen.values for PCoA", {
+test_that("get_beta_diversity returns non-null eigen.values for PCoA", {
   expect_false(is.null(result$eigen.values))
 })
 
 # ---- Test 7b: fit.filter subset path ----
 
-result_ff <- get_beta_dispersion(
+result_ff <- get_beta_diversity(
   ps,
   method = "PCoA",
   fit.filter.name = "group",
   fit.filter.values = "A"
 )
 
-test_that("get_beta_dispersion with fit.filter returns coords for ALL samples", {
+test_that("get_beta_diversity with fit.filter returns coords for ALL samples", {
   expect_equal(nrow(result_ff$coords[[1]]), f$n_samples)
   expect_setequal(rownames(result_ff$coords[[1]]), f$samp_nms)
 })
 
-test_that("get_beta_dispersion with fit.filter marks fit samples correctly", {
+test_that("get_beta_diversity with fit.filter marks fit samples correctly", {
   expect_true(".is.fit.sample" %in% colnames(result_ff$sample.data))
 })

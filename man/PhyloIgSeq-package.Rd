@@ -18,6 +18,7 @@ from this package are used in PhyloIgSeq Shiny Web application on
 Authors:
 \itemize{
   \item Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr}
+  \item Martin Larsen [thesis advisor]
 }
 
 }

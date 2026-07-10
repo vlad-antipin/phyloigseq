@@ -595,6 +595,6 @@ plot_igseq_richness <-
 # ggplot_... - outputs a ggplot instead
 # full_... - imitates the original function
 
-# constrained_beta_dispersion() is very similar, so it's in this function as well
+# constrained_beta_diversity() is very similar, so it's in this function as well
 # BUT: original functions for constrained and unconstrained beta-dispersion
 # don't return the same object, so this one returns the format of original

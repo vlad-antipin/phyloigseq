@@ -44,8 +44,8 @@ alpha <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
 plot_alpha_diversity(alpha, x = "Protocol")
 
 # --- Beta diversity (Bray-Curtis PCoA) ---------------------------------------
-beta <- get_beta_dispersion(ps_16s_refinement, method = "PCoA", dist = "bray")
-ggplot_beta_dispersion(beta)
+beta <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
+ggplot_beta_diversity(beta)
 
 # --- Same distances via the sparse engine, without densifying the table -----
 ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)

@@ -1,6 +1,6 @@
 #' Get Beta-Diversity from Phyloseq Object
 #' @export
-get_beta_dispersion <- function(
+get_beta_diversity <- function(
   physeq,
   taxrank = NULL, # taxrank to agglomerate by (e.g."Phylum")
   fraction_id_name = NULL,
@@ -489,7 +489,7 @@ get_beta_dispersion <- function(
 
 #' Permutation Test for Beta-Diversity Ordination
 #' @export
-stat_beta_dispersion <- function(
+stat_beta_diversity <- function(
   beta.dispersion.fit,
   facet.name = NULL, # backward compat: treated as facet in wrap mode
   facet.mode = "wrap", # "grid", "wrap"
@@ -844,7 +844,7 @@ stat_beta_dispersion <- function(
 
 #' Plot Beta-Diversity
 #' @export
-plot_beta_dispersion <- function(
+plot_beta_diversity <- function(
   fraction_id_name = NULL,
   fraction_ids = NULL,
   scaling = 1, # see vegan's scalings 1 and 2
@@ -880,7 +880,7 @@ plot_beta_dispersion <- function(
   ...
 ) {
   # /!\ This function is used only to imitate the behavior of the original function
-  # by assembling it with other function in full_beta_dispersion()
+  # by assembling it with other function in full_beta_diversity()
   # It will not be used in the PhyloIgSeq app
 
   fit <- beta.dispersion.fit$fit
@@ -1245,7 +1245,7 @@ plot_beta_dispersion <- function(
 
 #' Get and Plot Beta-Diversity from Phyloseq Object
 #' @export
-full_beta_dispersion <- function(
+full_beta_diversity <- function(
   physeq,
   taxrank = NULL,
   fraction_id_name = NULL,
@@ -1284,7 +1284,7 @@ full_beta_dispersion <- function(
   # margins= c(1,1,1,1),
   ...
 ) {
-  beta.dispersion.fit <- get_beta_dispersion(
+  beta.dispersion.fit <- get_beta_diversity(
     physeq = physeq,
     taxrank = taxrank,
     fraction_id_name = fraction_id_name,
@@ -1295,7 +1295,7 @@ full_beta_dispersion <- function(
     species = species
   )
   if (!is.null(stat) && stat != FALSE && stat != "none") {
-    stat.beta.dispersion <- stat_beta_dispersion(
+    stat.beta.dispersion <- stat_beta_diversity(
       beta.dispersion.fit,
       comp = c(axis_x, axis_y),
       label.name = group
@@ -1304,7 +1304,7 @@ full_beta_dispersion <- function(
     stat.beta.dispersion <- NULL
   }
 
-  plot_beta_dispersion(
+  plot_beta_diversity(
     fraction_id_name = fraction_id_name,
     fraction_ids = fraction_ids,
     beta.dispersion.fit = beta.dispersion.fit,
@@ -1355,8 +1355,8 @@ scree_plot <- function(eigen.values, max.nb.comp = 10) {
 
 #' Ggplot Beta-Diversity Ordination
 #' @export
-ggplot_beta_dispersion <- function(
-  beta.dispersion.fit, # output of get_beta_dispersion()
+ggplot_beta_diversity <- function(
+  beta.dispersion.fit, # output of get_beta_diversity()
   hover.variables = NULL, # all columns of sample data if NULL
   scaling = 1, # see vegan's scalings 1 and 2
   comp = c(1, 2), # components to plot (loadings might be lacking components beyond 2)
