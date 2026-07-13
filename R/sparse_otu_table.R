@@ -194,7 +194,10 @@ setMethod("t", "sparse_otu_table", function(x) {
 #' \code{dgCMatrix} slot when the OTU table is a
 #' \code{\link{sparse_otu_table-class}}, avoiding materialisation of the full
 #' dense matrix. Falls back to the phyloseq implementations for standard OTU
-#' tables.
+#' tables. For an \code{\link{incomplete_otu_table-class}} (structurally
+#' missing, not just zero, entries), the sum is taken only over the
+#' \emph{observed} taxon-sample pairs and a warning is issued, since
+#' unobserved entries cannot be assumed to be zero.
 #'
 #' @param physeq A \code{\link[phyloseq]{phyloseq}} object or an
 #'   \code{\link[phyloseq]{otu_table}}.
@@ -203,90 +206,78 @@ setMethod("t", "sparse_otu_table", function(x) {
 #'
 #' @return A named numeric vector of per-taxon (\code{taxa_sums}) or
 #'   per-sample (\code{sample_sums}) abundance sums.
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+#' head(taxa_sums(ps_sparse))
+#' head(sample_sums(ps_sparse))
 #' @name sparse-sums
 NULL
+
+# Shared 3-way dispatch for taxa_sums/sample_sums: incomplete_otu_table (warn,
+# then sum only the observed entries), sparse_otu_table (direct sparse sum),
+# or fall back to the phyloseq implementation for standard OTU tables.
+.sparse_margin_sums <- function(physeq, want_taxa, warn_label, phyloseq_fn, ...) {
+  ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
+  if (is(ot, "incomplete_otu_table")) {
+    warning(
+      warn_label, " on an incomplete_otu_table sums only observed Ig score ",
+      "entries; unobserved taxon-sample pairs are excluded."
+    )
+  } else if (!is(ot, "sparse_otu_table")) {
+    return(phyloseq_fn(physeq, ...))
+  }
+  use_row <- phyloseq::taxa_are_rows(ot) == want_taxa
+  if (use_row) Matrix::rowSums(ot@sparse_data) else Matrix::colSums(ot@sparse_data)
+}
 
 #' @rdname sparse-sums
 #' @export
 taxa_sums <- function(physeq, ...) {
-  ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
-  if (is(ot, "incomplete_otu_table")) {
-    warning(
-      "taxa_sums on an incomplete_otu_table sums only observed Ig score ",
-      "entries; unobserved taxon-sample pairs are excluded."
-    )
-    sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) {
-      Matrix::rowSums(sp)
-    } else {
-      Matrix::colSums(sp)
-    }
-  } else if (is(ot, "sparse_otu_table")) {
-    sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) {
-      Matrix::rowSums(sp)
-    } else {
-      Matrix::colSums(sp)
-    }
-  } else {
-    phyloseq::taxa_sums(physeq, ...)
-  }
+  .sparse_margin_sums(
+    physeq,
+    want_taxa = TRUE,
+    warn_label = "taxa_sums",
+    phyloseq_fn = phyloseq::taxa_sums,
+    ...
+  )
 }
 #' @rdname sparse-sums
 #' @export
 sample_sums <- function(physeq, ...) {
-  ot <- if (is(physeq, "phyloseq")) phyloseq::otu_table(physeq) else physeq
-  if (is(ot, "incomplete_otu_table")) {
-    warning(
-      "sample_sums on an incomplete_otu_table sums only observed Ig score ",
-      "entries; unobserved taxon-sample pairs are excluded."
-    )
-    sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) {
-      Matrix::colSums(sp)
-    } else {
-      Matrix::rowSums(sp)
-    }
-  } else if (is(ot, "sparse_otu_table")) {
-    sp <- ot@sparse_data
-    if (phyloseq::taxa_are_rows(ot)) {
-      Matrix::colSums(sp)
-    } else {
-      Matrix::rowSums(sp)
-    }
-  } else {
-    phyloseq::sample_sums(physeq, ...)
-  }
+  .sparse_margin_sums(
+    physeq,
+    want_taxa = FALSE,
+    warn_label = "sample_sums",
+    phyloseq_fn = phyloseq::sample_sums,
+    ...
+  )
 }
 
 # rowSums / colSums: plain .GlobalEnv functions shadow base:: for all user-level
 # calls (base::rowSums reads .Data stub directly, returning wrong 0x0 results).
-rowSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
+# Shared 3-way dispatch, mirroring .sparse_margin_sums above but operating
+# directly on the otu_table/matrix rather than a phyloseq wrapper.
+.sparse_matrix_sums <- function(x, na.rm, dims, sparse_fn, base_fn, warn_label, ...) {
   if (is(x, "incomplete_otu_table")) {
     warning(
-      "rowSums on an incomplete_otu_table sums only observed Ig score ",
+      warn_label, " on an incomplete_otu_table sums only observed Ig score ",
       "entries; unobserved taxon-sample pairs are excluded."
     )
-    Matrix::rowSums(x@sparse_data, na.rm = na.rm)
-  } else if (is(x, "sparse_otu_table")) {
-    Matrix::rowSums(x@sparse_data, na.rm = na.rm)
-  } else {
-    base::rowSums(x, na.rm = na.rm, dims = dims, ...)
+    return(sparse_fn(x@sparse_data, na.rm = na.rm))
   }
+  if (is(x, "sparse_otu_table")) {
+    return(sparse_fn(x@sparse_data, na.rm = na.rm))
+  }
+  base_fn(x, na.rm = na.rm, dims = dims, ...)
+}
+
+rowSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
+  .sparse_matrix_sums(x, na.rm, dims, Matrix::rowSums, base::rowSums, "rowSums", ...)
 }
 
 colSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
-  if (is(x, "incomplete_otu_table")) {
-    warning(
-      "colSums on an incomplete_otu_table sums only observed Ig score ",
-      "entries; unobserved taxon-sample pairs are excluded."
-    )
-    Matrix::colSums(x@sparse_data, na.rm = na.rm)
-  } else if (is(x, "sparse_otu_table")) {
-    Matrix::colSums(x@sparse_data, na.rm = na.rm)
-  } else {
-    base::colSums(x, na.rm = na.rm, dims = dims, ...)
-  }
+  .sparse_matrix_sums(x, na.rm, dims, Matrix::colSums, base::colSums, "colSums", ...)
 }
 
 # Convert a phyloseq object to use a sparse-backed OTU table.
@@ -307,6 +298,10 @@ colSums <- function(x, na.rm = FALSE, dims = 1L, ...) {
 #'   \code{\link{sparse_otu_table-class}}.
 #'
 #' @seealso \code{\link{sparse_otu_table}} to convert an OTU table directly.
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+#' class(phyloseq::otu_table(ps_sparse))
 #' @export
 as_sparse_phyloseq <- function(ps) {
   stopifnot(is(ps, "phyloseq"))

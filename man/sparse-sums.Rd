@@ -27,5 +27,14 @@ Drop-in replacements for \code{\link[phyloseq]{taxa_sums}} and
 \code{dgCMatrix} slot when the OTU table is a
 \code{\link{sparse_otu_table-class}}, avoiding materialisation of the full
 dense matrix. Falls back to the phyloseq implementations for standard OTU
-tables.
+tables. For an \code{\link{incomplete_otu_table-class}} (structurally
+missing, not just zero, entries), the sum is taken only over the
+\emph{observed} taxon-sample pairs and a warning is issued, since
+unobserved entries cannot be assumed to be zero.
+}
+\examples{
+data(ps_16s_refinement)
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+head(taxa_sums(ps_sparse))
+head(sample_sums(ps_sparse))
 }

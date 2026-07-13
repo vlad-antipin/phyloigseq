@@ -20,6 +20,11 @@ call repeatedly: returns the object unchanged if the OTU table is already
 sparse. All other phyloseq components (tax table, sample data, phylogenetic
 tree, reference sequences) are preserved.
 }
+\examples{
+data(ps_16s_refinement)
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+class(phyloseq::otu_table(ps_sparse))
+}
 \seealso{
 \code{\link{sparse_otu_table}} to convert an OTU table directly.
 }
