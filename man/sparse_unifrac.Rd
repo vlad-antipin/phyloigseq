@@ -30,3 +30,24 @@ bottom-up (postorder) pass over the tree instead of re-summing the full
 descendant-tip set for every edge from scratch. Idea inspired from
 \url{https://github.com/joey711/phyloseq/issues/524}.
 }
+\details{
+If the tree in \code{physeq} is unrooted, it is midpoint-rooted here,
+whereas \code{\link[phyloseq]{UniFrac}}/\code{\link[phyloseq]{distance}}
+root it at a random tip instead; the two are therefore only guaranteed to
+agree when both are run on the same already-rooted tree, not when handed
+the same unrooted tree.
+}
+\examples{
+data(ps_16s_refinement)
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+
+# Tree is unrooted, so this midpoint-roots it first (with a warning)
+d_unweighted <- sparse_unifrac(ps_sparse, method = "unifrac")
+class(d_unweighted)
+
+d_weighted <- sparse_unifrac(ps_sparse, method = "wunifrac")
+
+# Also works directly on a dense (non-sparse) phyloseq object
+d_dense <- sparse_unifrac(ps_16s_refinement, method = "unifrac")
+
+}
