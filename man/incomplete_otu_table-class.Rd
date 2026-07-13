@@ -5,11 +5,28 @@
 \alias{incomplete_otu_table-class}
 \alias{as.matrix.incomplete_otu_table}
 \alias{as.data.frame.incomplete_otu_table}
+\alias{is.na,incomplete_otu_table-method}
+\alias{[,incomplete_otu_table,ANY,ANY,ANY-method}
 \title{Incomplete OTU table backed by a softImpute matrix factorization}
 \usage{
 \method{as.matrix}{incomplete_otu_table}(x, ...)
 
 \method{as.data.frame}{incomplete_otu_table}(x, ...)
+
+\S4method{is.na}{incomplete_otu_table}(x)
+
+\S4method{[}{incomplete_otu_table,ANY,ANY,ANY}(x, i, j, ..., drop = FALSE)
+}
+\arguments{
+\item{x}{An \code{incomplete_otu_table} object.}
+
+\item{...}{Unused; required by the generic signature.}
+
+\item{i}{Row index (integer, character, or logical).}
+
+\item{j}{Column index (integer, character, or logical).}
+
+\item{drop}{Ignored; included for S4 generic compatibility.}
 }
 \description{
 An S4 class extending \code{\link{sparse_otu_table-class}} for IgA-Seq Ig
@@ -19,6 +36,26 @@ sample — genuinely missing, not zero). Observed entries are stored as an
 \code{dgCMatrix}), and a low-rank SVD factorization is fitted eagerly so
 that sample-to-sample distances and taxon loadings can be computed without
 reconstructing the full dense matrix.
+}
+\details{
+\code{is.na(x)} and coercion via \code{as(x, "matrix")} /
+\code{\link{as.matrix.incomplete_otu_table}} both read the observed/missing
+pattern from the underlying \code{Incomplete} object's sparsity structure,
+with semantics that differ from both this class's own parent
+(\code{\link{sparse_otu_table-class}}) and from a plain \code{dgCMatrix}:
+\itemize{
+\item \code{as(x, "matrix")} fills every \emph{unobserved} taxon-sample
+pair with \code{NA} (not \code{0} as \code{sparse_otu_table} does),
+since a structurally missing entry cannot be assumed to be zero
+abundance.
+\item \code{is.na(x)} is \code{TRUE} for unobserved pairs and
+\code{FALSE} for observed ones — including an observed value of
+exactly \code{0}, which is \emph{not} \code{NA}. This is the inverse of
+standard \code{dgCMatrix} semantics, where a stored zero and a
+structural (unstored) zero are both non-missing.
+}
+\code{as(x, "data.frame")} / \code{\link{as.data.frame.incomplete_otu_table}}
+go through the same NA-filled matrix.
 }
 \section{Slots}{
 

@@ -113,35 +113,59 @@ setMethod("is.na", "sparse_otu_table", function(x) {
   is.na(as(x@sparse_data, "matrix"))
 })
 
+# Shared "[" prep for sparse_otu_table/incomplete_otu_table: resolves
+# character i/j to integer positions, and detects flat element extraction
+# (x[!is.na(x)], x[x > 0], x[matrix_index] — a matrix index or a logical
+# vector longer than nrow means the caller wants a plain vector of selected
+# values, not a row-subset otu_table). Flat extraction is handled identically
+# for both classes since as(x, "matrix") dispatches correctly either way, so
+# it's resolved here rather than by each caller. A genuinely missing i/j
+# cannot be stored in the returned list (evaluating a missing argument
+# errors), so missingness is reported via i_missing/j_missing instead of
+# relying on missing() again in the caller.
+.resolve_bracket_index <- function(x, i, j) {
+  i_missing <- missing(i)
+  j_missing <- missing(j)
+  if (!i_missing && is.character(i)) {
+    i <- match(i, rownames(x@sparse_data))
+  }
+  if (!j_missing && is.character(j)) {
+    j <- match(j, colnames(x@sparse_data))
+  }
+  flat <- NULL
+  if (!i_missing && j_missing) {
+    nr <- nrow(x@sparse_data)
+    if (is.matrix(i) || (is.logical(i) && length(i) != nr)) {
+      flat <- as(x, "matrix")[i]
+    }
+  }
+  list(
+    i = if (i_missing) NULL else i,
+    j = if (j_missing) NULL else j,
+    i_missing = i_missing,
+    j_missing = j_missing,
+    flat = flat
+  )
+}
+
 #' @rdname sparse_otu_table-class
 #' @param i Row index (integer, character, or logical).
 #' @param j Column index (integer, character, or logical).
 #' @param ... Unused; required by the generic signature.
 #' @param drop Ignored; included for S4 generic compatibility.
 setMethod("[", "sparse_otu_table", function(x, i, j, ..., drop = FALSE) {
-  if (!missing(i) && is.character(i)) {
-    i <- match(i, rownames(x@sparse_data))
+  idx <- .resolve_bracket_index(x, i, j)
+  if (!is.null(idx$flat)) {
+    return(idx$flat)
   }
-  if (!missing(j) && is.character(j)) {
-    j <- match(j, colnames(x@sparse_data))
-  }
-  if (!missing(i) && missing(j)) {
-    nr <- nrow(x@sparse_data)
-    # Flat element extraction: x[!is.na(x)], x[x > 0], x[matrix_index].
-    # A matrix index or a logical vector longer than nrow means the caller
-    # wants a plain vector of selected values, not a row-subset otu_table.
-    if (is.matrix(i) || (is.logical(i) && length(i) != nr)) {
-      return(as(x, "matrix")[i])
-    }
-  }
-  sp <- if (missing(i) && missing(j)) {
+  sp <- if (idx$i_missing && idx$j_missing) {
     x@sparse_data
-  } else if (missing(i)) {
-    x@sparse_data[, j, drop = FALSE]
-  } else if (missing(j)) {
-    x@sparse_data[i, , drop = FALSE]
+  } else if (idx$i_missing) {
+    x@sparse_data[, idx$j, drop = FALSE]
+  } else if (idx$j_missing) {
+    x@sparse_data[idx$i, , drop = FALSE]
   } else {
-    x@sparse_data[i, j, drop = FALSE]
+    x@sparse_data[idx$i, idx$j, drop = FALSE]
   }
   # Must return otu_table (not bare matrix): prune_taxa does
   # otu_table(ps) <- x[taxa, ], which requires otu_tableOrNULL
@@ -342,6 +366,26 @@ suppressMessages({
 #' that sample-to-sample distances and taxon loadings can be computed without
 #' reconstructing the full dense matrix.
 #'
+#' @details
+#' \code{is.na(x)} and coercion via \code{as(x, "matrix")} /
+#' \code{\link{as.matrix.incomplete_otu_table}} both read the observed/missing
+#' pattern from the underlying \code{Incomplete} object's sparsity structure,
+#' with semantics that differ from both this class's own parent
+#' (\code{\link{sparse_otu_table-class}}) and from a plain \code{dgCMatrix}:
+#' \itemize{
+#'   \item \code{as(x, "matrix")} fills every \emph{unobserved} taxon-sample
+#'     pair with \code{NA} (not \code{0} as \code{sparse_otu_table} does),
+#'     since a structurally missing entry cannot be assumed to be zero
+#'     abundance.
+#'   \item \code{is.na(x)} is \code{TRUE} for unobserved pairs and
+#'     \code{FALSE} for observed ones — including an observed value of
+#'     exactly \code{0}, which is \emph{not} \code{NA}. This is the inverse of
+#'     standard \code{dgCMatrix} semantics, where a stored zero and a
+#'     structural (unstored) zero are both non-missing.
+#' }
+#' \code{as(x, "data.frame")} / \code{\link{as.data.frame.incomplete_otu_table}}
+#' go through the same NA-filled matrix.
+#'
 #' @slot svd_fit A named list with elements \code{$u} (n_samples × r),
 #'   \code{$d} (length-r singular values), and \code{$v} (n_taxa × r) from
 #'   \code{\link[softImpute]{softImpute}}.
@@ -390,6 +434,18 @@ setMethod(
 #'   built from \code{ig_coating} triplets.
 #'
 #' @return An \code{\link{incomplete_otu_table-class}} object.
+#' @examples
+#' # 3 samples x 4 taxa, only 6 of 12 taxon-sample pairs observed
+#' X_inc <- softImpute::Incomplete(
+#'   i = c(1, 1, 2, 2, 3, 3),
+#'   j = c(1, 2, 2, 3, 3, 4),
+#'   x = c(0.5, 1.2, -0.3, 0.8, 2.1, -1.0)
+#' )
+#' dimnames(X_inc) <- list(paste0("S", 1:3), paste0("T", 1:4))
+#' fit <- softImpute::softImpute(X_inc, rank.max = 2, lambda = 0.1)
+#' ot <- incomplete_otu_table(X_inc, svd_fit = fit[c("u", "d", "v")])
+#' dim(ot)
+#' is.na(ot)
 #' @export
 incomplete_otu_table <- function(
   X_inc,
@@ -442,9 +498,10 @@ as.data.frame.incomplete_otu_table <- function(x, ...) {
   as.data.frame(as(x, "matrix"), ...)
 }
 
-# is.na: TRUE for every unobserved position (structural zero in the dgCMatrix),
-# FALSE for every observed position — the inverse of standard dgCMatrix
-# semantics where stored zeros are "non-missing".
+# Inverse of standard dgCMatrix semantics (see @details on the class page):
+# TRUE for every unobserved position, FALSE for every observed one.
+#' @rdname incomplete_otu_table-class
+#' @param x An \code{incomplete_otu_table} object.
 setMethod("is.na", "incomplete_otu_table", function(x) {
   sp <- x@sparse_data
   dims <- dim(sp)
@@ -460,28 +517,25 @@ setMethod("is.na", "incomplete_otu_table", function(x) {
 # [ subset: materialise to NA-filled dense matrix, then return a standard
 # otu_table.  The SVD fit is not meaningful after arbitrary subsetting, so
 # it is not carried over.
+#' @rdname incomplete_otu_table-class
+#' @param i Row index (integer, character, or logical).
+#' @param j Column index (integer, character, or logical).
+#' @param ... Unused; required by the generic signature.
+#' @param drop Ignored; included for S4 generic compatibility.
 setMethod("[", "incomplete_otu_table", function(x, i, j, ..., drop = FALSE) {
-  if (!missing(i) && is.character(i)) {
-    i <- match(i, rownames(x@sparse_data))
-  }
-  if (!missing(j) && is.character(j)) {
-    j <- match(j, colnames(x@sparse_data))
-  }
-  if (!missing(i) && missing(j)) {
-    nr <- nrow(x@sparse_data)
-    if (is.matrix(i) || (is.logical(i) && length(i) != nr)) {
-      return(as(x, "matrix")[i])
-    }
+  idx <- .resolve_bracket_index(x, i, j)
+  if (!is.null(idx$flat)) {
+    return(idx$flat)
   }
   mat <- as(x, "matrix")
-  sub <- if (missing(i) && missing(j)) {
+  sub <- if (idx$i_missing && idx$j_missing) {
     mat
-  } else if (missing(i)) {
-    mat[, j, drop = FALSE]
-  } else if (missing(j)) {
-    mat[i, , drop = FALSE]
+  } else if (idx$i_missing) {
+    mat[, idx$j, drop = FALSE]
+  } else if (idx$j_missing) {
+    mat[idx$i, , drop = FALSE]
   } else {
-    mat[i, j, drop = FALSE]
+    mat[idx$i, idx$j, drop = FALSE]
   }
   phyloseq::otu_table(sub, taxa_are_rows = x@taxa_are_rows)
 })

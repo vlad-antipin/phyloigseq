@@ -35,3 +35,16 @@ into an \code{\link{incomplete_otu_table-class}}. In normal use this is
 called from \code{PhyloIgSeq_to_phyloseq(imputation_method = "SVD")} rather
 than directly.
 }
+\examples{
+# 3 samples x 4 taxa, only 6 of 12 taxon-sample pairs observed
+X_inc <- softImpute::Incomplete(
+  i = c(1, 1, 2, 2, 3, 3),
+  j = c(1, 2, 2, 3, 3, 4),
+  x = c(0.5, 1.2, -0.3, 0.8, 2.1, -1.0)
+)
+dimnames(X_inc) <- list(paste0("S", 1:3), paste0("T", 1:4))
+fit <- softImpute::softImpute(X_inc, rank.max = 2, lambda = 0.1)
+ot <- incomplete_otu_table(X_inc, svd_fit = fit[c("u", "d", "v")])
+dim(ot)
+is.na(ot)
+}

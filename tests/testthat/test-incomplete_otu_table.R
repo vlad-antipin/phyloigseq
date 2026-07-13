@@ -192,6 +192,11 @@ test_that("as.matrix() (S3) is identical to as(x, 'matrix')", {
   expect_identical(as.matrix(ot), as(ot, "matrix"))
 })
 
+test_that("as(x, 'data.frame') and as.data.frame() (S3) match as.data.frame of the dense matrix", {
+  expect_identical(as(ot, "data.frame"), as.data.frame(as(ot, "matrix")))
+  expect_identical(as.data.frame(ot), as(ot, "data.frame"))
+})
+
 # ---- Test 5: SVD fit ----
 
 test_that("svd_fit slots have correct shapes", {
