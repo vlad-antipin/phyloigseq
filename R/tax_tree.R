@@ -1,3 +1,43 @@
+# Shared prep step for the three taxonomy-distance/tree builders below:
+# builds the taxonomy matrix (with taxon names appended as an implicit
+# finest rank, via make_unique_taxa_table() to guard against false rank
+# matches from repeated NA/placeholder labels -- see the callers' docs for
+# why), and resolves/normalizes rank_weights. Not exported, no roxygen
+# needed.
+.prepare_taxonomy_matrix <- function(
+  phyloseq_object,
+  rank_weights,
+  rank_weight_base
+) {
+  taxonomy_matrix <- as.matrix(PhyloIgSeq::make_unique_taxa_table(
+    phyloseq_object@tax_table
+  ))
+  taxonomy_matrix <- cbind(
+    taxonomy_matrix,
+    ASV = taxa_names(phyloseq_object)
+  )
+
+  number_of_taxa <- nrow(taxonomy_matrix)
+  number_of_ranks <- ncol(taxonomy_matrix)
+
+  # Default weights:
+  # Kingdom gets the highest weight,
+  # the appended ASV rank gets the lowest weight.
+  if (is.null(rank_weights)) {
+    rank_weights <- rank_weight_base^((number_of_ranks - 1):0)
+  }
+
+  # Normalize so distances lie between 0 and 1
+  rank_weights <- rank_weights / sum(rank_weights)
+
+  list(
+    taxonomy_matrix = taxonomy_matrix,
+    number_of_taxa = number_of_taxa,
+    number_of_ranks = number_of_ranks,
+    rank_weights = rank_weights
+  )
+}
+
 #' Taxonomic distance from longest common prefix of shared ranks
 #'
 #' Computes a weighted taxonomy distance matrix using the
@@ -29,6 +69,11 @@
 #'   decay (see [get_taxonomy_tree()] for its effect). Ignored if
 #'   `rank_weights` is supplied.
 #' @return A `dist` object with one entry per taxon pair.
+#' @examples
+#' data(ps_16s_refinement)
+#' d <- build_taxonomy_distance_longest_prefix(ps_16s_refinement)
+#' class(d)
+#' as.matrix(d)[1:3, 1:3]
 #' @export
 build_taxonomy_distance_longest_prefix <- function(
   phyloseq_object,
@@ -41,26 +86,14 @@ build_taxonomy_distance_longest_prefix <- function(
   # at a coarser rank, would spuriously "match" at that rank and understate
   # their distance. Called here (not just in get_taxonomy_tree()) so this
   # function is correct even when called directly.
-  taxonomy_matrix <- as.matrix(PhyloIgSeq::make_unique_taxa_table(
-    phyloseq_object@tax_table
-  ))
-  taxonomy_matrix <- cbind(
-    taxonomy_matrix,
-    ASV = taxa_names(phyloseq_object)
+  prepped <- .prepare_taxonomy_matrix(
+    phyloseq_object,
+    rank_weights,
+    rank_weight_base
   )
-
-  number_of_taxa <- nrow(taxonomy_matrix)
-  number_of_ranks <- ncol(taxonomy_matrix)
-
-  # Default weights:
-  # Kingdom gets the highest weight,
-  # the appended ASV rank gets the lowest weight.
-  if (is.null(rank_weights)) {
-    rank_weights <- rank_weight_base^((number_of_ranks - 1):0)
-  }
-
-  # Normalize so distances lie between 0 and 1
-  rank_weights <- rank_weights / sum(rank_weights)
+  taxonomy_matrix <- prepped$taxonomy_matrix
+  number_of_taxa <- prepped$number_of_taxa
+  rank_weights <- prepped$rank_weights
 
   # Preallocate distance matrix
   distance_matrix <- matrix(
@@ -123,6 +156,11 @@ build_taxonomy_distance_longest_prefix <- function(
 #'
 #' @inheritParams build_taxonomy_distance_longest_prefix
 #' @return A `dist` object with one entry per taxon pair.
+#' @examples
+#' data(ps_16s_refinement)
+#' d <- build_taxonomy_distance_rankwise(ps_16s_refinement)
+#' class(d)
+#' as.matrix(d)[1:3, 1:3]
 #' @export
 build_taxonomy_distance_rankwise <- function(
   phyloseq_object,
@@ -135,13 +173,15 @@ build_taxonomy_distance_rankwise <- function(
   # and why taxon names are appended as the finest rank (guarantees a
   # nonzero distance between taxa that are known to be different
   # sequences even when their annotated taxonomy is identical).
-  taxonomy_matrix <- as.matrix(PhyloIgSeq::make_unique_taxa_table(
-    phyloseq_object@tax_table
-  ))
-  taxonomy_matrix <- cbind(
-    taxonomy_matrix,
-    ASV = taxa_names(phyloseq_object)
+  prepped <- .prepare_taxonomy_matrix(
+    phyloseq_object,
+    rank_weights,
+    rank_weight_base
   )
+  taxonomy_matrix <- prepped$taxonomy_matrix
+  number_of_taxa <- prepped$number_of_taxa
+  number_of_ranks <- prepped$number_of_ranks
+  rank_weights <- prepped$rank_weights
 
   # Taxon names (rows of taxonomy table)
   taxon_names <- rownames(taxonomy_matrix)
@@ -154,18 +194,6 @@ build_taxonomy_distance_rankwise <- function(
   if (anyDuplicated(taxon_names)) {
     stop("Taxon names are not unique.")
   }
-
-  number_of_taxa <- nrow(taxonomy_matrix)
-  number_of_ranks <- ncol(taxonomy_matrix)
-
-  # Default decreasing weights:
-  # first ranks (Kingdom/Phylum) contribute more
-  if (is.null(rank_weights)) {
-    rank_weights <- rank_weight_base^((number_of_ranks - 1):0)
-  }
-
-  # Normalize weights to sum to 1
-  rank_weights <- rank_weights / sum(rank_weights)
 
   # Guard against Matrix::tcrossprod() silently overflowing (this is what
   # produces the "bus error: invalid alignment" crash on large datasets).
@@ -261,6 +289,12 @@ build_taxonomy_distance_rankwise <- function(
 #'
 #' @inheritParams build_taxonomy_distance_longest_prefix
 #' @return A rooted, bifurcating object of class `phylo`.
+#' @examples
+#' data(ps_16s_refinement)
+#' tree <- build_taxonomy_tree_hierarchy(ps_16s_refinement)
+#' class(tree)
+#' ape::is.rooted(tree)
+#' ape::is.binary(tree)
 #' @export
 build_taxonomy_tree_hierarchy <- function(
   phyloseq_object,
@@ -273,19 +307,16 @@ build_taxonomy_tree_hierarchy <- function(
   # taxon names are appended as the finest rank (taxa are known to be
   # different sequences even when their annotated taxonomy is identical,
   # so they should not collapse to distance 0).
-  taxonomy_matrix <- as.matrix(PhyloIgSeq::make_unique_taxa_table(
-    phyloseq_object@tax_table
-  ))
+  prepped <- .prepare_taxonomy_matrix(
+    phyloseq_object,
+    rank_weights,
+    rank_weight_base
+  )
+  taxonomy_matrix <- prepped$taxonomy_matrix
+  number_of_taxa <- prepped$number_of_taxa
+  number_of_ranks <- prepped$number_of_ranks
+  rank_weights <- prepped$rank_weights
   taxon_names <- taxa_names(phyloseq_object)
-  taxonomy_matrix <- cbind(taxonomy_matrix, ASV = taxon_names)
-
-  number_of_taxa <- nrow(taxonomy_matrix)
-  number_of_ranks <- ncol(taxonomy_matrix)
-
-  if (is.null(rank_weights)) {
-    rank_weights <- rank_weight_base^((number_of_ranks - 1):0)
-  }
-  rank_weights <- rank_weights / sum(rank_weights)
 
   # For each rank depth, assign an integer code identifying the clade
   # (full lineage from the root down to that rank) each taxon belongs to,
@@ -354,12 +385,24 @@ build_taxonomy_tree_hierarchy <- function(
   taxonomy_tree
 }
 
+# Shared UPGMA hclust -> phylo conversion for the two distance-matrix
+# methods dispatched to by get_taxonomy_tree(); not exported.
+.hclust_tree_from_distance <- function(taxonomy_distance) {
+  taxonomy_hclust <- hclust(
+    taxonomy_distance,
+    method = "average" # UPGMA; appropriate for distance-based taxonomy
+  )
+  tree <- ape::as.phylo(taxonomy_hclust)
+  tree$tip.label <- labels(taxonomy_distance)
+  tree
+}
+
 #' Get a phylogenetic tree from a taxonomy table
 #'
 #' Dispatches to one of the taxonomy-based tree-building methods and
-#' returns a tree whose tip labels match `taxa_names(ps)`.
+#' returns a tree whose tip labels match `taxa_names(phyloseq_object)`.
 #'
-#' @param ps A phyloseq object with a taxonomy table.
+#' @param phyloseq_object A phyloseq object with a taxonomy table.
 #' @param method `"hierarchy"` (default) builds the tree directly from the
 #'   taxonomy's rank structure via [build_taxonomy_tree_hierarchy()] -- no
 #'   pairwise distance matrix, no `hclust()`, scales to arbitrarily large
@@ -376,48 +419,38 @@ build_taxonomy_tree_hierarchy <- function(
 #'   coarse-rank differences dominate the distance. Passed through to
 #'   whichever `method` is selected.
 #' @return An object of class `phylo`.
+#' @examples
+#' data(ps_16s_refinement)
+#' tree <- get_taxonomy_tree(ps_16s_refinement)
+#' class(tree)
+#' tree_rankwise <- get_taxonomy_tree(ps_16s_refinement, method = "rankwise")
+#' ape::is.rooted(tree_rankwise)
 #' @export
 get_taxonomy_tree <- function(
-  ps,
+  phyloseq_object,
   method = c("hierarchy", "rankwise", "longest_prefix"),
   rank_weight_base = 1.1
 ) {
   method <- match.arg(method)
 
-  taxonomy_tree <- switch(
-    method,
+  taxonomy_tree <- switch(method,
     hierarchy = build_taxonomy_tree_hierarchy(
-      ps,
+      phyloseq_object,
       rank_weight_base = rank_weight_base
     ),
-    rankwise = {
-      taxonomy_distance <- build_taxonomy_distance_rankwise(
-        ps,
-        rank_weight_base = rank_weight_base
-      )
-      taxonomy_hclust <- hclust(
-        taxonomy_distance,
-        method = "average" # UPGMA; appropriate for distance-based taxonomy
-      )
-      tree <- ape::as.phylo(taxonomy_hclust)
-      tree$tip.label <- labels(taxonomy_distance)
-      tree
-    },
-    longest_prefix = {
-      taxonomy_distance <- build_taxonomy_distance_longest_prefix(
-        ps,
-        rank_weight_base = rank_weight_base
-      )
-      taxonomy_hclust <- hclust(taxonomy_distance, method = "average")
-      tree <- ape::as.phylo(taxonomy_hclust)
-      tree$tip.label <- labels(taxonomy_distance)
-      tree
-    }
+    rankwise = .hclust_tree_from_distance(build_taxonomy_distance_rankwise(
+      phyloseq_object,
+      rank_weight_base = rank_weight_base
+    )),
+    longest_prefix = .hclust_tree_from_distance(build_taxonomy_distance_longest_prefix(
+      phyloseq_object,
+      rank_weight_base = rank_weight_base
+    ))
   )
 
   # Check compatibility
   stopifnot(
-    setequal(taxonomy_tree$tip.label, taxa_names(ps))
+    setequal(taxonomy_tree$tip.label, taxa_names(phyloseq_object))
   )
 
   return(taxonomy_tree)

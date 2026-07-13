@@ -48,3 +48,9 @@ datasets -- use \code{\link[=build_taxonomy_tree_hierarchy]{build_taxonomy_tree_
 function raises an informative error (rather than crashing) if the
 sparse crossprod would overflow.
 }
+\examples{
+data(ps_16s_refinement)
+d <- build_taxonomy_distance_rankwise(ps_16s_refinement)
+class(d)
+as.matrix(d)[1:3, 1:3]
+}

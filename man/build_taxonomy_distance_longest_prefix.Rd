@@ -47,3 +47,9 @@ distance 0 would discard that information.
 Requires an n x n comparison (\verb{NOTE: very slow}), so it does not scale to
 large datasets -- use \code{\link[=build_taxonomy_tree_hierarchy]{build_taxonomy_tree_hierarchy()}} instead for those.
 }
+\examples{
+data(ps_16s_refinement)
+d <- build_taxonomy_distance_longest_prefix(ps_16s_refinement)
+class(d)
+as.matrix(d)[1:3, 1:3]
+}

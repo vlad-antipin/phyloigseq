@@ -50,3 +50,10 @@ The result is resolved into a strictly bifurcating rooted tree (via
 \code{phyloseq::UniFrac()} requires one and fails with an opaque error
 otherwise; neither step changes any tip-to-tip patristic distance.
 }
+\examples{
+data(ps_16s_refinement)
+tree <- build_taxonomy_tree_hierarchy(ps_16s_refinement)
+class(tree)
+ape::is.rooted(tree)
+ape::is.binary(tree)
+}

@@ -5,13 +5,13 @@
 \title{Get a phylogenetic tree from a taxonomy table}
 \usage{
 get_taxonomy_tree(
-  ps,
+  phyloseq_object,
   method = c("hierarchy", "rankwise", "longest_prefix"),
   rank_weight_base = 1.1
 )
 }
 \arguments{
-\item{ps}{A phyloseq object with a taxonomy table.}
+\item{phyloseq_object}{A phyloseq object with a taxonomy table.}
 
 \item{method}{\code{"hierarchy"} (default) builds the tree directly from the
 taxonomy's rank structure via \code{\link[=build_taxonomy_tree_hierarchy]{build_taxonomy_tree_hierarchy()}} -- no
@@ -35,5 +35,12 @@ An object of class \code{phylo}.
 }
 \description{
 Dispatches to one of the taxonomy-based tree-building methods and
-returns a tree whose tip labels match \code{taxa_names(ps)}.
+returns a tree whose tip labels match \code{taxa_names(phyloseq_object)}.
+}
+\examples{
+data(ps_16s_refinement)
+tree <- get_taxonomy_tree(ps_16s_refinement)
+class(tree)
+tree_rankwise <- get_taxonomy_tree(ps_16s_refinement, method = "rankwise")
+ape::is.rooted(tree_rankwise)
 }
