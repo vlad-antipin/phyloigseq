@@ -21,4 +21,9 @@ A \code{phyloseq} object used to benchmark and compare different 16S
 sequencing approaches. Contains 515 taxa across 37 samples with 9 sample
 metadata variables, 7 taxonomic ranks, and a phylogenetic tree.
 }
+\examples{
+data(ps_16s_refinement)
+ps_16s_refinement
+phyloseq::sample_variables(ps_16s_refinement)
+}
 \keyword{datasets}

@@ -11,6 +11,10 @@
 #'   \item{tax_table}{515 taxa x 7 taxonomic ranks (Kingdom to Species)}
 #'   \item{phy_tree}{515 tips, 513 internal nodes}
 #' }
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_16s_refinement
+#' phyloseq::sample_variables(ps_16s_refinement)
 "ps_16s_refinement"
 
 #' Toy IgSeq dataset
@@ -28,4 +32,8 @@
 #'     sorting_fraction, sex, age)}
 #'   \item{tax_table}{4703 taxa x 8 taxonomic ranks}
 #' }
+#' @examples
+#' data(ps_igseq)
+#' ps_igseq
+#' phyloseq::sample_data(ps_igseq)
 "ps_igseq"

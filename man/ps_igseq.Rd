@@ -23,4 +23,9 @@ experiment, intended as a toy dataset for examples and tests. Sample names and
 \code{sample_*}), and \code{sex} and \code{age} are synthetic,
 randomly-generated variables not present in the original data.
 }
+\examples{
+data(ps_igseq)
+ps_igseq
+phyloseq::sample_data(ps_igseq)
+}
 \keyword{datasets}
