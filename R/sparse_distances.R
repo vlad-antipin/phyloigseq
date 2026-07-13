@@ -53,21 +53,26 @@ compute_min_matrix <- function(sp) {
   C
 }
 
+# Shared tail for every *_sparse kernel below: zero the diagonal, attach
+# sample-name dimnames, and coerce to a dist object.
+finalize_sparse_dist <- function(mat, nms) {
+  diag(mat) <- 0
+  dimnames(mat) <- list(nms, nms)
+  stats::as.dist(mat)
+}
+
 # ============================================================
 # Distance implementations (not exported; called via sparse_distance)
 # ============================================================
 
 bray_curtis_sparse <- function(ps) {
   sp <- get_sp_taxa_by_samples(ps)
-  n <- ncol(sp)
   ss <- Matrix::colSums(sp)
   nms <- colnames(sp)
   C <- compute_min_matrix(sp)
   denom <- outer(ss, ss, `+`)
   bc <- ifelse(denom == 0, 0.0, 1.0 - 2.0 * C / denom)
-  diag(bc) <- 0
-  dimnames(bc) <- list(nms, nms)
-  stats::as.dist(bc)
+  finalize_sparse_dist(bc, nms)
 }
 
 # Abundance-weighted Jaccard: 1 - C / (A + B - C)
@@ -82,9 +87,7 @@ jaccard_sparse <- function(ps) {
   B <- matrix(ss, n, n, byrow = TRUE)
   denom <- A + B - C
   jac <- ifelse(denom == 0, 0.0, 1.0 - C / denom)
-  diag(jac) <- 0
-  dimnames(jac) <- list(nms, nms)
-  stats::as.dist(jac)
+  finalize_sparse_dist(jac, nms)
 }
 
 # Kulczynski: 1 - 0.5 * (C/A + C/B)
@@ -98,9 +101,7 @@ kulczynski_sparse <- function(ps) {
   B <- matrix(ss, n, n, byrow = TRUE)
   sim <- 0.5 * (ifelse(A == 0, 0, C / A) + ifelse(B == 0, 0, C / B))
   kul <- 1 - sim
-  diag(kul) <- 0
-  dimnames(kul) <- list(nms, nms)
-  stats::as.dist(kul)
+  finalize_sparse_dist(kul, nms)
 }
 
 # L1 (Manhattan) distance for non-negative data: A + B - 2*C
@@ -112,9 +113,7 @@ manhattan_sparse <- function(ps) {
   C <- compute_min_matrix(sp)
   man <- outer(ss, ss, `+`) - 2 * C
   man[man < 0] <- 0 # floating-point guard
-  diag(man) <- 0
-  dimnames(man) <- list(nms, nms)
-  stats::as.dist(man)
+  finalize_sparse_dist(man, nms)
 }
 
 # Euclidean via the dot-product identity: ||xi - xj||^2 = ||xi||^2 + ||xj||^2 - 2*(xi.xj)
@@ -127,9 +126,7 @@ euclidean_sparse <- function(ps) {
   eu_sq <- outer(norm2, rep(1, n)) + outer(rep(1, n), norm2) - 2 * D
   eu_sq[eu_sq < 0] <- 0 # floating-point guard
   eu <- sqrt(eu_sq)
-  diag(eu) <- 0
-  dimnames(eu) <- list(nms, nms)
-  stats::as.dist(eu)
+  finalize_sparse_dist(eu, nms)
 }
 
 # Canberra: (1/n_active) * sum_{union(xi,xj)>0} |xi-yi|/(xi+yi)
@@ -169,9 +166,7 @@ canberra_sparse <- function(ps) {
   n_union <- outer(nnz, rep(1, n)) + outer(rep(1, n), nnz) - n_both
 
   can <- ifelse(n_union == 0, 0.0, 1.0 - 2 * harm_min / n_union)
-  diag(can) <- 0
-  dimnames(can) <- list(nms, nms)
-  stats::as.dist(can)
+  finalize_sparse_dist(can, nms)
 }
 
 # Morisita-Horn: 1 - 2*(xi.xj) / (da*N1*N2 + db*N1*N2)
@@ -186,9 +181,7 @@ horn_sparse <- function(ps) {
   sqss <- ifelse(ss == 0, 0, sq / ss)
   denom <- outer(sqss, ss) + outer(ss, sqss)
   horn <- ifelse(denom == 0, 0.0, 1.0 - 2 * D / denom)
-  diag(horn) <- 0
-  dimnames(horn) <- list(nms, nms)
-  stats::as.dist(horn)
+  finalize_sparse_dist(horn, nms)
 }
 
 # Chord: Euclidean distance after L2-normalizing each sample.
@@ -202,9 +195,7 @@ chord_sparse <- function(ps) {
   inner <- ifelse(denom == 0, 0, 2 - 2 * D / denom)
   inner[inner < 0] <- 0 # floating-point guard
   ch <- sqrt(inner)
-  diag(ch) <- 0
-  dimnames(ch) <- list(nms, nms)
-  stats::as.dist(ch)
+  finalize_sparse_dist(ch, nms)
 }
 
 # Hellinger: Euclidean distance after Hellinger transformation (sqrt of relative abundances).
@@ -221,9 +212,7 @@ hellinger_sparse <- function(ps) {
   inner <- ifelse(denom == 0, 0, 2 - 2 * DH / denom)
   inner[inner < 0] <- 0 # floating-point guard
   hel <- sqrt(inner)
-  diag(hel) <- 0
-  dimnames(hel) <- list(nms, nms)
-  stats::as.dist(hel)
+  finalize_sparse_dist(hel, nms)
 }
 
 # ============================================================
@@ -236,6 +225,10 @@ hellinger_sparse <- function(ps) {
 #' implementation in \pkg{PhyloIgSeq}. Pass one of these to
 #' \code{\link{sparse_distance}} to avoid converting the OTU table to a dense
 #' matrix.
+#'
+#' @examples
+#' SPARSE_DISTANCE_METHODS
+#' "bray" %in% SPARSE_DISTANCE_METHODS
 #'
 #' @export
 SPARSE_DISTANCE_METHODS <- c(
@@ -267,11 +260,21 @@ SPARSE_DISTANCE_METHODS <- c(
 #'   \code{"chord"}, \code{"hellinger"}).
 #'
 #' @return A \code{\link[stats]{dist}} object of pairwise sample distances.
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+#' bc <- sparse_distance(ps_sparse, method = "bray")
+#' class(bc)
+#'
+#' # Falls back to phyloseq::distance() (with a warning) for methods without
+#' # a native sparse implementation.
+#' gower <- sparse_distance(ps_sparse, method = "gower")
+#'
 #' @export
 sparse_distance <- function(ps, method) {
   if (method %in% SPARSE_DISTANCE_METHODS) {
-    switch(
-      method,
+    switch(method,
       bray = bray_curtis_sparse(ps),
       jaccard = jaccard_sparse(ps),
       kulczynski = kulczynski_sparse(ps),

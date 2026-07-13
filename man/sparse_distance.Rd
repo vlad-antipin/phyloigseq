@@ -24,3 +24,14 @@ Dispatches to a native sparse-matrix implementation when \code{method}
 appears in \code{\link{SPARSE_DISTANCE_METHODS}}, and falls back to
 \code{\link[phyloseq]{distance}} otherwise.
 }
+\examples{
+data(ps_16s_refinement)
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+bc <- sparse_distance(ps_sparse, method = "bray")
+class(bc)
+
+# Falls back to phyloseq::distance() (with a warning) for methods without
+# a native sparse implementation.
+gower <- sparse_distance(ps_sparse, method = "gower")
+
+}

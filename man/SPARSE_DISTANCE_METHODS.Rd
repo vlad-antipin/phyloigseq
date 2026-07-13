@@ -12,3 +12,8 @@ implementation in \pkg{PhyloIgSeq}. Pass one of these to
 \code{\link{sparse_distance}} to avoid converting the OTU table to a dense
 matrix.
 }
+\examples{
+SPARSE_DISTANCE_METHODS
+"bray" \%in\% SPARSE_DISTANCE_METHODS
+
+}
