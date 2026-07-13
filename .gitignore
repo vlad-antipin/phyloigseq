@@ -29,4 +29,6 @@ docs/
 tests/testthat/_snaps/
 
 .claude/
+CLAUDE.md
+
 inst/doc
