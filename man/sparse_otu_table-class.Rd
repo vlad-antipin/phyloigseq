@@ -9,6 +9,9 @@
 \alias{dimnames<-,sparse_otu_table,ANY-method}
 \alias{is.na,sparse_otu_table-method}
 \alias{[,sparse_otu_table,ANY,ANY,ANY-method}
+\alias{as.matrix.sparse_otu_table}
+\alias{as.data.frame.sparse_otu_table}
+\alias{t,sparse_otu_table-method}
 \title{Sparse OTU table backed by a dgCMatrix}
 \usage{
 \S4method{dim}{sparse_otu_table}(x)
@@ -22,6 +25,12 @@
 \S4method{is.na}{sparse_otu_table}(x)
 
 \S4method{[}{sparse_otu_table,ANY,ANY,ANY}(x, i, j, ..., drop = FALSE)
+
+\method{as.matrix}{sparse_otu_table}(x, ...)
+
+\method{as.data.frame}{sparse_otu_table}(x, ...)
+
+\S4method{t}{sparse_otu_table}(x)
 }
 \arguments{
 \item{x}{A \code{sparse_otu_table} object.}
@@ -43,6 +52,12 @@ matrix, reducing memory use for typical microbiome datasets where most
 taxon-sample counts are zero. All standard phyloseq operations
 (\code{prune_taxa}, \code{sample_sums}, subsetting with \code{[}, etc.)
 work transparently.
+}
+\details{
+Low-level coercion via \code{as(x, "matrix")} / \code{as(x, "data.frame")}
+is also defined and is what \code{\link{as.matrix.sparse_otu_table}} /
+\code{\link{as.data.frame.sparse_otu_table}} call into; most users will
+prefer the \code{as.matrix()}/\code{as.data.frame()} spelling below.
 }
 \section{Slots}{
 

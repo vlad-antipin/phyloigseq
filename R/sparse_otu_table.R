@@ -19,6 +19,12 @@ suppressMessages({
 #' (\code{prune_taxa}, \code{sample_sums}, subsetting with \code{[}, etc.)
 #' work transparently.
 #'
+#' @details
+#' Low-level coercion via \code{as(x, "matrix")} / \code{as(x, "data.frame")}
+#' is also defined and is what \code{\link{as.matrix.sparse_otu_table}} /
+#' \code{\link{as.data.frame.sparse_otu_table}} call into; most users will
+#' prefer the \code{as.matrix()}/\code{as.data.frame()} spelling below.
+#'
 #' @slot sparse_data A \code{dgCMatrix} holding the actual abundance counts.
 #'   The \code{.Data} slot inherited from \code{otu_table} is kept as a 0x0
 #'   stub to satisfy S4 validity without allocating a full dense copy.
@@ -59,6 +65,12 @@ setMethod(
 #'
 #' @seealso \code{\link{as_sparse_phyloseq}} to convert a whole
 #'   \code{phyloseq} object at once.
+#' @examples
+#' data(ps_16s_refinement)
+#' ot_sparse <- sparse_otu_table(phyloseq::otu_table(ps_16s_refinement))
+#' class(ot_sparse)
+#' dim(ot_sparse)
+#'
 #' @export
 sparse_otu_table <- function(otu) {
   tar <- phyloseq::taxa_are_rows(otu)
@@ -147,13 +159,16 @@ setAs("sparse_otu_table", "data.frame", function(from) {
 # S3 methods so as.matrix() / as.data.frame() route here instead of
 # *.default, which checks is.matrix() at C-level, sees the 0x0 .Data stub,
 # and returns the sparse_otu_table unchanged (silently wrong).
+#' @rdname sparse_otu_table-class
 #' @exportS3Method base::as.matrix
 as.matrix.sparse_otu_table <- function(x, ...) as(x, "matrix")
+#' @rdname sparse_otu_table-class
 #' @exportS3Method base::as.data.frame
 as.data.frame.sparse_otu_table <- function(x, ...) {
   as.data.frame(as(x, "matrix"), ...)
 }
 
+#' @rdname sparse_otu_table-class
 setMethod("t", "sparse_otu_table", function(x) {
   new(
     "sparse_otu_table",
@@ -164,10 +179,14 @@ setMethod("t", "sparse_otu_table", function(x) {
 })
 
 # Plain functions in .GlobalEnv shadow phyloseq's taxa_sums/sample_sums for
-# user-level calls (bench::mark, direct console calls, other packages that
-# search the global path).  phyloseq's own copies are also patched below via
-# assignInNamespace so that explicit phyloseq::sample_sums() calls from third-
-# party packages (e.g. PhyloIgSeq) go through the sparse-aware path too.
+# unqualified user-level calls (bench::mark, direct console calls, other
+# packages that search the global path). phyloseq's own namespace is NOT
+# patched, so an explicitly-qualified phyloseq::taxa_sums()/sample_sums()
+# call still runs phyloseq's dense-only implementation and will silently
+# return wrong results (or error) on a sparse_otu_table — always call
+# PhyloIgSeq::taxa_sums()/PhyloIgSeq::sample_sums() explicitly from code
+# that isn't relying on search-path shadowing (see CLAUDE.md's app
+# integration note).
 #' Sparse-aware taxa and sample sum functions
 #'
 #' Drop-in replacements for \code{\link[phyloseq]{taxa_sums}} and

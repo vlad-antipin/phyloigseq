@@ -17,6 +17,13 @@ Converts a \code{\link[phyloseq]{otu_table}} into a
 \code{\link{sparse_otu_table-class}} backed by a \code{dgCMatrix}, reducing
 memory use when most counts are zero.
 }
+\examples{
+data(ps_16s_refinement)
+ot_sparse <- sparse_otu_table(phyloseq::otu_table(ps_16s_refinement))
+class(ot_sparse)
+dim(ot_sparse)
+
+}
 \seealso{
 \code{\link{as_sparse_phyloseq}} to convert a whole
 \code{phyloseq} object at once.
