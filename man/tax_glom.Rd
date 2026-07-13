@@ -27,3 +27,12 @@ materialises the OTU table to a dense matrix when the input uses a
 internally, which falls through to a C-level routine that reads the stub
 \code{.Data} slot directly and errors on the 0x0 placeholder.
 }
+\examples{
+data(ps_16s_refinement)
+ps_glom <- tax_glom(ps_16s_refinement, taxrank = "Genus")
+phyloseq::ntaxa(ps_glom)
+
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+ps_glom_sparse <- tax_glom(ps_sparse, taxrank = "Genus")
+phyloseq::ntaxa(ps_glom_sparse)
+}

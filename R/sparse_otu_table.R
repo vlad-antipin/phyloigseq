@@ -560,6 +560,14 @@ setMethod("[", "incomplete_otu_table", function(x, i, j, ..., drop = FALSE) {
 #'
 #' @return A \code{\link[phyloseq]{phyloseq}} object agglomerated at
 #'   \code{taxrank}, with a standard dense OTU table.
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_glom <- tax_glom(ps_16s_refinement, taxrank = "Genus")
+#' phyloseq::ntaxa(ps_glom)
+#'
+#' ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+#' ps_glom_sparse <- tax_glom(ps_sparse, taxrank = "Genus")
+#' phyloseq::ntaxa(ps_glom_sparse)
 #' @export
 tax_glom <- function(physeq, taxrank, ...) {
   if (
