@@ -60,8 +60,27 @@ getPhyloIgSeq(
 \item{scores}{Vector of score names to compute.}
 }
 \value{
-A data frame or list with computed scores per sample.
+A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per
+taxon/sample with the requested \code{scores} as columns (also recorded in \code{score_names})
+plus supporting fraction/diagnostic columns; see \code{\link{get_ig_score}} to retrieve a
+single score without dealing with the rest of \code{ig_coating}.
 }
 \description{
 This function computes various Ig scores based on sample fraction data.
+}
+\examples{
+data(ps_igseq)
+pis <- getPhyloIgSeq(
+  physeq = ps_igseq,
+  sample_ids = c("sample_1", "sample_2", "sample_3"),
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  scores = c("slide_z", "palm", "kau")
+)
+pis
+get_ig_score(pis, score_name = "slide_z", sample_ids = "sample_1")
+
 }

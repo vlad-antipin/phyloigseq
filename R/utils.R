@@ -24,6 +24,11 @@ smart_facet_ncol <- function(n) {
 }
 
 
+#' Ig-Coating Score Names
+#'
+#' Character vector of the Ig-coating score names computable via \code{\link{compute_ig_score}}
+#' and requestable through \code{\link{getPhyloIgSeq}}'s \code{scores} argument.
+#'
 #' @import openxlsx
 #' @import DT
 #' @import ade4
@@ -55,17 +60,20 @@ smart_facet_ncol <- function(n) {
 #' @import gifski
 #' @importFrom utils globalVariables
 #'
-#' @keywords internal
+#' @examples
+#' IG_SCORES
+#'
+#' @export
 IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # scores to come:
-#"purity_corrected_prob_index", "purity_corrected_prob_ratio")
+# "purity_corrected_prob_index", "purity_corrected_prob_ratio")
 
 # Prevent R CMD check NOTE about undefined global variable
 utils::globalVariables("IG_SCORES")
 
-#'Similar to veganifyOTU from phyloseq.
-#'@keywords internal
-#'@export
+#' Similar to veganifyOTU from phyloseq.
+#' @keywords internal
+#' @export
 reverseASV <- function(physeq) {
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
@@ -94,7 +102,7 @@ geom_jitter <- function(..., height = 0) {
 transform_abundances <-
   function(
     abundance_table, # matrix
-    transform = c("compositional", "hellinger"), #,"clr", "log10", "log10p"),
+    transform = c("compositional", "hellinger"), # ,"clr", "log10", "log10p"),
     taxa_are_rows = TRUE
   ) {
     # assumes taxa are rows
@@ -340,8 +348,7 @@ rarefy_abundances <-
         ]
       } else {
         abundance_table <- abundance_table[
-          sampleSums(abundance_table) >= common_count_sum,
-          ,
+          sampleSums(abundance_table) >= common_count_sum, ,
           drop = FALSE
         ]
       }
@@ -377,8 +384,7 @@ rarefy_abundances <-
     if (trim_taxa) {
       if (taxa_are_rows) {
         abundance_table <- abundance_table[
-          taxaSums(abundance_table) > 0,
-          ,
+          taxaSums(abundance_table) > 0, ,
           drop = FALSE
         ]
       } else {

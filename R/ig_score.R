@@ -198,8 +198,7 @@ plot_slide_z <- function(
       ig_df[
         ig_df$sample_id %in%
           sample_id &
-          !ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]],
-        ,
+          !ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]], ,
         drop = FALSE
       ]
     )
@@ -208,8 +207,7 @@ plot_slide_z <- function(
       ig_df[
         ig_df$sample_id %in%
           sample_id &
-          ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]],
-        ,
+          ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]], ,
         drop = FALSE
       ]
     )
@@ -247,7 +245,7 @@ plot_slide_z <- function(
         y = obs_change,
         size = stat_imputed,
         color = stat_imputed,
-        #shape = stat_imputed,
+        # shape = stat_imputed,
         text = tooltip
       ),
       alpha = 0.8,
@@ -268,7 +266,7 @@ plot_slide_z <- function(
       aes(obs_abundance, obs_change, size = stat, color = stat, text = tooltip),
       alpha = 0.8
     ) +
-    #ggsci::scale_color_npg()+
+    # ggsci::scale_color_npg()+
     scale_color_manual(values = signif_colors) +
     scale_size_discrete(range = c(1.5, 3))
 
@@ -805,7 +803,7 @@ agglomPhyloIgSeq <- function(
       }
     } %>%
     ungroup() %>%
-    select(all_of(c(taxrank, "sample_id", abundance_fraction, scores))) %>%
+    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction))) %>%
     distinct() %>%
     {
       if (!is.null(abundance_fraction)) {
@@ -816,7 +814,7 @@ agglomPhyloIgSeq <- function(
           total_reads_df <- phyloigseq_obj@total_reads
           names(total_reads_df)[2] <- "total_reads"
           merge(., total_reads_df, by = "sample_id") %>%
-            #mutate(., total_reads = phyloigseq_obj@total_reads[[abundance_fraction]][phyloigseq_obj@total_reads[["sample_id"]] == sample_id] )
+            # mutate(., total_reads = phyloigseq_obj@total_reads[[abundance_fraction]][phyloigseq_obj@total_reads[["sample_id"]] == sample_id] )
             group_by(., sample_id)
         } else {
           group_by(., sample_id) %>%
@@ -846,16 +844,18 @@ agglomPhyloIgSeq <- function(
       }
     } %>%
     ungroup() %>%
-    select(all_of(c(taxrank, "sample_id", abundance_fraction, scores)))
+    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction)))
 
   phyloigseq_obj@ig_coating <- ig_coating_agglom
+  phyloigseq_obj@score_names <- scores
 
   names(phyloigseq_obj@ig_coating)[
     names(phyloigseq_obj@ig_coating) == taxrank
   ] <- "taxon_id"
 
   # Update taxonomy
-  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[,
+  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[
+    ,
     1:which(colnames(phyloigseq_obj@tax_table) == taxrank)
   ] %>%
     distinct()
@@ -985,8 +985,7 @@ PhyloIgSeq_to_phyloseq <-
       # Taxonomy table
       tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
       tax_table_ig_score <- tax_table_ig_score[
-        !is.na(tax_table_ig_score[, "taxon_id"]),
-        ,
+        !is.na(tax_table_ig_score[, "taxon_id"]), ,
         drop = FALSE
       ]
       rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
@@ -1012,7 +1011,8 @@ PhyloIgSeq_to_phyloseq <-
 
     # "OTU table" - Ig scores instead of abundances
     otu_table_ig_score <- igseq_df
-    otu_table_ig_score <- as.matrix(otu_table_ig_score[,
+    otu_table_ig_score <- as.matrix(otu_table_ig_score[
+      ,
       !colnames(otu_table_ig_score) %in% c("sample_id", "NA")
     ])
     rownames(otu_table_ig_score) <- igseq_df$sample_id
@@ -1038,7 +1038,8 @@ PhyloIgSeq_to_phyloseq <-
       !is.na(tax_table_ig_score[, "taxon_id"]),
     ]
     rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
-    tax_table_ig_score <- tax_table_ig_score[,
+    tax_table_ig_score <- tax_table_ig_score[
+      ,
       colnames(tax_table_ig_score) != "taxon_id"
     ]
 

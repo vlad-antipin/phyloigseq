@@ -6,6 +6,35 @@
 \usage{
 collapsePhyloIgSeq(phyloigseq_list)
 }
+\arguments{
+\item{phyloigseq_list}{A list of \code{PhyloIgSeq} objects. Elements that are not a
+\code{PhyloIgSeq} object are skipped.}
+}
+\value{
+A single \code{PhyloIgSeq} object. Its \code{score_names} is the union of
+\code{score_names} across all input objects; \code{tax_table} and the fraction-name slots are
+not combined here (left at their defaults) and are set by the caller.
+}
 \description{
-Collapse a List of PhyloIgSeq objects
+Row-binds the \code{ig_coating}, \code{ellipse_coords}, \code{sample_data} and
+\code{imputed_taxa} of a list of per-sample \code{\link{PhyloIgSeq-class}} objects (as produced
+internally by \code{\link{getPhyloIgSeq}}) into a single object.
+}
+\examples{
+pis_1 <- new(
+  "PhyloIgSeq",
+  ig_coating = data.frame(taxon_id = 1:2, sample_id = "s1", slide_z = c(0.5, -0.2)),
+  score_names = "slide_z",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg"
+)
+pis_2 <- new(
+  "PhyloIgSeq",
+  ig_coating = data.frame(taxon_id = 1:2, sample_id = "s2", slide_z = c(1.1, 0.3)),
+  score_names = "slide_z",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg"
+)
+collapsePhyloIgSeq(list(pis_1, pis_2))
+
 }

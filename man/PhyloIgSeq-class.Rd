@@ -3,15 +3,35 @@
 \docType{class}
 \name{PhyloIgSeq-class}
 \alias{PhyloIgSeq-class}
+\alias{show,PhyloIgSeq-method}
 \title{PhyloIgSeq class}
+\usage{
+\S4method{show}{PhyloIgSeq}(object)
+}
+\arguments{
+\item{object}{A PhyloIgSeq object.}
+}
 \description{
 An S4 class to represent the results of an Ig-Seq experiment, including Ig coating scores,
 fractions, and taxonomic or sample-level metadata.
 }
+\details{
+\code{ig_coating} always carries the identifier columns \code{taxon_id}/\code{sample_id},
+followed by the actual Ig score columns (named in \code{score_names}), followed by
+whichever per-fraction abundance and scoring-diagnostic columns (e.g. the fraction names
+themselves, \code{zeros_imputed}, \code{ellipse_level}, \code{obs_change}/\code{obs_abundance}/
+\code{null_change}/\code{null_abundance}) happened to be produced upstream. Only the columns
+listed in \code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one
+out without having to know which of the remaining columns are metadata.
+}
 \section{Slots}{
 
 \describe{
-\item{\code{ig_coating}}{A data.frame containing calculated Ig scores per taxon/sample}
+\item{\code{ig_coating}}{A data.frame containing per-taxon/sample Ig scores plus supporting metadata
+(see Details)}
+
+\item{\code{score_names}}{Character. Names of the \code{ig_coating} columns that are actual Ig scores
+(as opposed to fraction/diagnostic metadata columns)}
 
 \item{\code{positive_fraction_name}}{Character. Name of the positive Ig-coated fraction}
 
@@ -28,8 +48,6 @@ fractions, and taxonomic or sample-level metadata.
 \item{\code{sample_data}}{A data.frame or NULL. Optional metadata for each sample}
 
 \item{\code{tax_table}}{A data.frame or NULL. Taxonomic information}
-
-\item{\code{phyloseq_sample_ids}}{Vector or NULL. Correspondence between phyloseq sample IDs and sample IDs used in \code{ig_coating}}
 
 \item{\code{total_reads}}{A data.frame or NULL. Total read counts per sample and fraction before rarefaction}
 

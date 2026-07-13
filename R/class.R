@@ -1,13 +1,24 @@
 setClassUnion("data.frameOrNULL", c("data.frame", "NULL"))
 setClassUnion("characterOrNULL", c("character", "NULL"))
-setClassUnion("vectorOrNULL", c("vector", "NULL"))
 setClassUnion("listOrNULL", c("list", "NULL"))
 #' PhyloIgSeq class
 #'
 #' An S4 class to represent the results of an Ig-Seq experiment, including Ig coating scores,
 #' fractions, and taxonomic or sample-level metadata.
 #'
-#' @slot ig_coating A data.frame containing calculated Ig scores per taxon/sample
+#' @details
+#' \code{ig_coating} always carries the identifier columns \code{taxon_id}/\code{sample_id},
+#' followed by the actual Ig score columns (named in \code{score_names}), followed by
+#' whichever per-fraction abundance and scoring-diagnostic columns (e.g. the fraction names
+#' themselves, \code{zeros_imputed}, \code{ellipse_level}, \code{obs_change}/\code{obs_abundance}/
+#' \code{null_change}/\code{null_abundance}) happened to be produced upstream. Only the columns
+#' listed in \code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one
+#' out without having to know which of the remaining columns are metadata.
+#'
+#' @slot ig_coating A data.frame containing per-taxon/sample Ig scores plus supporting metadata
+#'   (see Details)
+#' @slot score_names Character. Names of the \code{ig_coating} columns that are actual Ig scores
+#'   (as opposed to fraction/diagnostic metadata columns)
 #' @slot positive_fraction_name Character. Name of the positive Ig-coated fraction
 #' @slot first_negative_fraction_name Character. Name of the main negative fraction (e.g., 90%)
 #' @slot second_negative_fraction_name Character or NULL. Name of the secondary negative fraction (e.g., 10%)
@@ -16,7 +27,6 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #' @slot ellipse_coords A data.frame or NULL. Stores coordinates for sliding Z-score ellipses
 #' @slot sample_data A data.frame or NULL. Optional metadata for each sample
 #' @slot tax_table A data.frame or NULL. Taxonomic information
-#' @slot phyloseq_sample_ids Vector or NULL. Correspondence between phyloseq sample IDs and sample IDs used in \code{ig_coating}
 #' @slot total_reads A data.frame or NULL. Total read counts per sample and fraction before rarefaction
 #' @slot imputed_taxa List or NULL. Taxa that had zeros imputed, stored per sample
 #'
@@ -25,6 +35,7 @@ setClass(
   Class = "PhyloIgSeq",
   slots = list(
     ig_coating = "data.frame",
+    score_names = "character",
     positive_fraction_name = "character",
     first_negative_fraction_name = "character", # 9/10 of the whole negative fraction for IgSeq
     second_negative_fraction_name = "characterOrNULL", # 1/10 -//-
@@ -33,33 +44,113 @@ setClass(
     ellipse_coords = "data.frameOrNULL",
     sample_data = "data.frameOrNULL",
     tax_table = "data.frameOrNULL",
-    phyloseq_sample_ids = "vectorOrNULL", # corresp. btw phyloseq_sam_id and sample_id
-    #  you'll need this for exports from PhyloIgSeq!
     total_reads = "data.frameOrNULL",
     imputed_taxa = "listOrNULL"
-  )
+  ),
+  prototype = list(score_names = character(0))
 )
 
+#' @rdname PhyloIgSeq-class
+#' @param object A PhyloIgSeq object.
+setMethod("show", "PhyloIgSeq", function(object) {
+  n_samples <- length(unique(object@ig_coating$sample_id))
+  n_taxa <- length(unique(object@ig_coating$taxon_id))
+  scores_label <- if (length(object@score_names) > 0) {
+    paste(object@score_names, collapse = ", ")
+  } else {
+    "(none computed)"
+  }
+
+  fraction_names <- c(
+    positive = object@positive_fraction_name,
+    neg1 = object@first_negative_fraction_name,
+    neg2 = object@second_negative_fraction_name,
+    presort = object@presorting_fraction_name
+  )
+
+  cat("PhyloIgSeq-class Ig-coating scoring result\n")
+  cat(sprintf(
+    "ig_coating       Ig scores:      [ %s ] across %d sample(s), %d taxa\n",
+    scores_label,
+    n_samples,
+    n_taxa
+  ))
+  if (length(fraction_names) > 0) {
+    cat(
+      "Fractions        ",
+      paste(sprintf("%s=\"%s\"", names(fraction_names), fraction_names), collapse = ", "),
+      "\n"
+    )
+  }
+  if (!is.null(object@sample_data)) {
+    cat(sprintf(
+      "sample_data()    Sample Data:    [ %d samples by %d sample variables ]\n",
+      nrow(object@sample_data),
+      ncol(object@sample_data)
+    ))
+  }
+  if (!is.null(object@tax_table)) {
+    cat(sprintf(
+      "tax_table()      Taxonomy Table: [ %d taxa by %d taxonomic ranks ]\n",
+      nrow(object@tax_table),
+      ncol(object@tax_table)
+    ))
+  }
+  invisible(NULL)
+})
+
 #' Collapse a List of PhyloIgSeq objects
+#'
+#' Row-binds the \code{ig_coating}, \code{ellipse_coords}, \code{sample_data} and
+#' \code{imputed_taxa} of a list of per-sample \code{\link{PhyloIgSeq-class}} objects (as produced
+#' internally by \code{\link{getPhyloIgSeq}}) into a single object.
+#'
+#' @param phyloigseq_list A list of \code{PhyloIgSeq} objects. Elements that are not a
+#'   \code{PhyloIgSeq} object are skipped.
+#'
+#' @return A single \code{PhyloIgSeq} object. Its \code{score_names} is the union of
+#'   \code{score_names} across all input objects; \code{tax_table} and the fraction-name slots are
+#'   not combined here (left at their defaults) and are set by the caller.
+#'
+#' @examples
+#' pis_1 <- new(
+#'   "PhyloIgSeq",
+#'   ig_coating = data.frame(taxon_id = 1:2, sample_id = "s1", slide_z = c(0.5, -0.2)),
+#'   score_names = "slide_z",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg"
+#' )
+#' pis_2 <- new(
+#'   "PhyloIgSeq",
+#'   ig_coating = data.frame(taxon_id = 1:2, sample_id = "s2", slide_z = c(1.1, 0.3)),
+#'   score_names = "slide_z",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg"
+#' )
+#' collapsePhyloIgSeq(list(pis_1, pis_2))
+#'
 #' @export
 collapsePhyloIgSeq <- function(phyloigseq_list) {
   ig_coating <- data.frame()
   sample_data <- data.frame()
   ellipse_coords <- data.frame()
   imputed_taxa <- list()
+  score_names <- character(0)
   for (phyloigseq_obj in phyloigseq_list) {
-    if (class(phyloigseq_obj) == "PhyloIgSeq") {
+    if (is(phyloigseq_obj, "PhyloIgSeq")) {
       # bind_rows() matches columns by name, fills in NA for missing columns
       ig_coating <- bind_rows(ig_coating, phyloigseq_obj@ig_coating)
       ellipse_coords <- bind_rows(ellipse_coords, phyloigseq_obj@ellipse_coords)
       sample_data <- bind_rows(sample_data, phyloigseq_obj@sample_data)
       imputed_taxa <- c(imputed_taxa, phyloigseq_obj@imputed_taxa)
+      score_names <- union(score_names, phyloigseq_obj@score_names)
     }
   }
 
   return(new(
     Class = "PhyloIgSeq",
     ig_coating = ig_coating,
+    score_names = score_names,
     ellipse_coords = ellipse_coords,
     sample_data = sample_data,
     tax_table = NULL,
@@ -89,7 +180,26 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param confidence_levels Optional. Confidence levels for scoring.
 #' @param scores Vector of score names to compute.
 #'
-#' @return A data frame or list with computed scores per sample.
+#' @return A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per
+#'   taxon/sample with the requested \code{scores} as columns (also recorded in \code{score_names})
+#'   plus supporting fraction/diagnostic columns; see \code{\link{get_ig_score}} to retrieve a
+#'   single score without dealing with the rest of \code{ig_coating}.
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_ids = c("sample_1", "sample_2", "sample_3"),
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   second_negative_fraction_name = "Neg2",
+#'   scores = c("slide_z", "palm", "kau")
+#' )
+#' pis
+#' get_ig_score(pis, score_name = "slide_z", sample_ids = "sample_1")
+#'
 #' @export
 getPhyloIgSeq <- function(
   physeq, # containing raw counts
@@ -101,7 +211,6 @@ getPhyloIgSeq <- function(
   rarefy_by_sample = TRUE, # inside each sample, rarefy abundances for each
   # fraction (so that fractions of the same sample have the same total sum of reads)
   transform_by_sample = "identity",
-
   positive_fraction_name = "pos",
   first_negative_fraction_name = "neg",
   second_negative_fraction_name = NULL,
@@ -212,8 +321,7 @@ getPhyloIgSeq <- function(
     sam_metadata_df <-
       metadata[
         metadata[["sample_id"]] == sample_id &
-          metadata[[fraction_id_name]] %in% all_fraction_names,
-        ,
+          metadata[[fraction_id_name]] %in% all_fraction_names, ,
         drop = FALSE
       ]
     sam_metadata_row <- data.frame(matrix(NA, nrow = 1, ncol = ncol(metadata)))
@@ -226,7 +334,8 @@ getPhyloIgSeq <- function(
         sam_metadata_row[[var_name]] <- unique_values
       }
     }
-    sam_metadata_row <- sam_metadata_row[,
+    sam_metadata_row <- sam_metadata_row[
+      ,
       names(sam_metadata_row) != fraction_id_name
     ]
 
@@ -318,6 +427,12 @@ getPhyloIgSeq <- function(
         )
     }
 
+    # Ig scores are the columns users look for first; keep them right after the
+    # taxon_id/sample_id identifiers, ahead of fraction/diagnostic columns.
+    score_names_present <- intersect(scores, names(ig_coating))
+    ig_coating <- ig_coating %>%
+      relocate(all_of(score_names_present), .after = "sample_id")
+
     imputed_taxa <- list()
     imputed_taxa[[sample_id]] <- zero_imputation_result$imputed_taxa
 
@@ -325,9 +440,10 @@ getPhyloIgSeq <- function(
       new(
         Class = "PhyloIgSeq",
         ig_coating = ig_coating,
+        score_names = score_names_present,
         positive_fraction_name = positive_fraction_name,
         first_negative_fraction_name = first_negative_fraction_name,
-        second_negative_fraction_name = first_negative_fraction_name,
+        second_negative_fraction_name = second_negative_fraction_name,
         ellipse_coords = ellipse_coords,
         sample_data = sam_metadata_row,
         tax_table = NULL,
@@ -370,13 +486,65 @@ getPhyloIgSeq <- function(
   # TODO: keep only taxa that are left
   phyloigseq_obj@tax_table <- tax_table
 
-  # a mapping (named vector) from "sample id" from otu_table (e.g. sam1_presorting)
-  # to sample_id of Igseq (e.g. sam1)
-  phyloigseq_obj@phyloseq_sample_ids <- as.matrix(sample_data(physeq))[,
-    sample_id_name
-  ]
-
   return(phyloigseq_obj)
+}
+
+#' Get an Ig Score from a PhyloIgSeq Object
+#'
+#' Retrieves a single Ig score from \code{ig_coating}, optionally restricted to a subset of taxa
+#' and/or samples, without having to know which of \code{ig_coating}'s other columns are metadata.
+#'
+#' @param phyloigseq_obj A \code{\link{PhyloIgSeq-class}} object.
+#' @param score_name Character. Name of the score to retrieve; must be one of
+#'   \code{phyloigseq_obj@score_names}.
+#' @param taxa_ids Optional. A vector of taxon IDs to restrict to; \code{NULL} (the default) keeps
+#'   all taxa.
+#' @param sample_ids Optional. A vector of sample IDs to restrict to; \code{NULL} (the default)
+#'   keeps all samples.
+#'
+#' @return A data frame with columns \code{taxon_id}, \code{sample_id} and \code{score_name},
+#'   filtered to \code{taxa_ids}/\code{sample_ids} if given.
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_ids = c("sample_1", "sample_2", "sample_3"),
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   second_negative_fraction_name = "Neg2",
+#'   scores = c("slide_z", "palm", "kau")
+#' )
+#' get_ig_score(pis, score_name = "palm", sample_ids = c("sample_1", "sample_2"))
+#'
+#' @export
+get_ig_score <- function(
+  phyloigseq_obj,
+  score_name,
+  taxa_ids = NULL,
+  sample_ids = NULL
+) {
+  if (!is(phyloigseq_obj, "PhyloIgSeq")) {
+    stop("`phyloigseq_obj` must be a PhyloIgSeq object")
+  }
+  if (!score_name %in% phyloigseq_obj@score_names) {
+    stop(
+      "`score_name` must be one of: ",
+      paste(phyloigseq_obj@score_names, collapse = ", ")
+    )
+  }
+
+  result <- phyloigseq_obj@ig_coating[, c("taxon_id", "sample_id", score_name)]
+  if (!is.null(taxa_ids)) {
+    result <- result[result$taxon_id %in% taxa_ids, ]
+  }
+  if (!is.null(sample_ids)) {
+    result <- result[result$sample_id %in% sample_ids, ]
+  }
+  rownames(result) <- NULL
+  result
 }
 
 # Mimics seq_table() function with these differences:
