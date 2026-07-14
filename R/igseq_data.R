@@ -1,4 +1,59 @@
+# Warn that a sample is being excluded from grouping, and why.
+.warn_excluded <- function(sample_id, reason, detail = NULL) {
+  msg <- paste0(sample_id, " excluded: ", reason)
+  if (!is.null(detail)) {
+    msg <- paste0(msg, paste0(detail, collapse = ", "))
+  }
+  warning(msg, "\n")
+}
+
 #' Group Ig Fractions by Sample
+#'
+#' Reshapes a [phyloseq::phyloseq-class] object with samples split across
+#' IgSeq sort fractions (e.g. Ig+/Ig-/pre-sort) into one abundance data frame
+#' per biological sample, with each fraction as a column. Optionally
+#' agglomerates taxa at a given rank first, and rarefies/transforms
+#' abundances within each sample so its fractions become comparable.
+#'
+#' A sample is excluded (with a `warning()`) if: a fraction id is duplicated
+#' within it, it has fewer than two fractions, at least one fraction has zero
+#' total reads, or its post-processing count table contains `NA`s.
+#'
+#' @param physeq A [phyloseq::phyloseq-class] object with raw counts.
+#' @param taxrank Taxonomic rank to agglomerate to via [tax_glom()] before
+#'   grouping, or `NULL` (default) to keep taxa as-is.
+#' @param sample_id_name Name of the `sample_data` column identifying the
+#'   biological sample (individual) each sort fraction belongs to.
+#' @param sample_ids Which values of `sample_id_name` to include, or `NULL`
+#'   (default) to include all.
+#' @param fraction_id_name Name of the `sample_data` column identifying the
+#'   sort fraction (e.g. `"Pos"`/`"Neg1"`/`"Neg2"`).
+#' @param fraction_ids Which values of `fraction_id_name` to include, or
+#'   `NULL` (default) to include all.
+#' @param rarefy_by_sample If `TRUE` (default), rarefy fraction abundances
+#'   within each sample so all its fractions share the same total read count.
+#' @param fractions_to_rarefy Which fractions to rarefy when
+#'   `rarefy_by_sample = TRUE`, or `NULL` (default) to rarefy all of them.
+#' @param transform_by_sample Abundance transformation applied within each
+#'   sample after rarefaction: `"identity"` (default, no transformation) or
+#'   `"compositional"`.
+#'
+#' @return A named list of data frames, one per included `sample_id`. Each
+#'   data frame has one row per taxon and columns `sample_id`, `taxon_id`,
+#'   and one column per retained fraction (its abundance).
+#'
+#' @examples
+#' data(ps_igseq)
+#' grouped <- group_sorted_samples(
+#'   physeq = ps_igseq,
+#'   sample_id_name = "sample_id",
+#'   sample_ids = c("sample_1", "sample_2"),
+#'   fraction_id_name = "sorting_fraction",
+#'   fraction_ids = c("Pos", "Neg1", "Neg2")
+#' )
+#' names(grouped)
+#' head(grouped[["sample_1"]])
+#'
 #' @export
 group_sorted_samples <- function(
   physeq, # containing raw counts
@@ -77,36 +132,29 @@ group_sorted_samples <- function(
     # Each fraction should be unique and therefore there must be one to one correspondence
     # unique row_ids <-> unique fraction_ids inside each sample
     if (sum(duplicated(fraction_ids)) != 0) {
-      warning(paste0(
+      .warn_excluded(
         sample_id,
-        " excluded: duplicated fraction(s): ",
-        paste0(unique(fraction_ids[duplicated(fraction_ids)]), collapse = ", "),
-        "\n"
-      ))
+        "duplicated fraction(s): ",
+        unique(fraction_ids[duplicated(fraction_ids)])
+      )
       next
     }
 
     # Each sample has to have at least two fractions - otherwise there's nothing
     # to compare downstream
     if (length(fraction_ids) <= 1) {
-      warning(paste0(
-        sample_id,
-        " excluded: only one or no fraction: ",
-        paste0(fraction_ids, collapse = ", "),
-        "\n"
-      ))
+      .warn_excluded(sample_id, "only one or no fraction: ", fraction_ids)
       next
     }
 
     # If at least one fraction doesn't have any reads for any taxon, the whole sample is excluded
     countsums_by_fraction <- colSums(abundance_table[, row_ids]) #physeq %>% prune_samples(row_ids,.) %>% sample_sums()
     if (0 %in% countsums_by_fraction) {
-      warning(paste0(
+      .warn_excluded(
         sample_id,
-        " excluded: no reads for at least one fraction: ",
-        paste0(fraction_ids[countsums_by_fraction == 0], collapse = ", "),
-        "\n"
-      ))
+        "no reads for at least one fraction: ",
+        fraction_ids[countsums_by_fraction == 0]
+      )
       next
     }
 
@@ -154,7 +202,7 @@ group_sorted_samples <- function(
     taxa_counts_by_fraction <- as.data.frame(taxa_counts_by_fraction)
 
     if (anyNA(taxa_counts_by_fraction)) {
-      warning(paste0(sample_id, " excluded: NA(s) in its count table\n"))
+      .warn_excluded(sample_id, "NA(s) in its count table")
       next
     }
 
@@ -177,6 +225,48 @@ group_sorted_samples <- function(
 }
 
 #' Handle Zero Abundance
+#'
+#' Resolves zero counts in a taxa (rows) by fraction (columns) abundance data
+#' frame before Ig-score computation, since several scores are undefined when
+#' a fraction abundance is exactly zero. Taxa that are zero in every retained
+#' fraction are always dropped first; `method` then controls how any
+#' *remaining* per-fraction zeros are handled.
+#'
+#' @param data A data frame of taxa (rows) by fractions and metadata
+#'   (columns), as produced by [group_sorted_samples()].
+#' @param fraction_names Names of the columns in `data` holding fraction
+#'   abundances to impute; other columns (e.g. `taxon_id`) are left as-is.
+#' @param method One of `"no_zero"` (drop any taxon with a zero in any
+#'   fraction), `"pseudo_count"` (add half the minimum nonzero count across
+#'   all fractions to every count), `"random_pseudo_count"` (add a count
+#'   drawn uniformly between a small fraction of, and, the minimum nonzero
+#'   count, to every count), `"bayesian_inference"` (Bayesian multiplicative
+#'   zero replacement via [zCompositions::cmultRepl()]; only zeros are
+#'   modified), or `"keep_zeros"` (leave zeros as-is).
+#'
+#' @return A list with `data` (the input data frame, restricted to retained
+#'   taxa, with the `fraction_names` columns updated per `method`) and
+#'   `imputed_taxa` (the `taxon_id`s that had at least one zero fraction
+#'   before imputation, or `NULL` if `data` has no `taxon_id` column, or none
+#'   were imputed).
+#'
+#' @examples
+#' data(ps_igseq)
+#' grouped <- group_sorted_samples(
+#'   physeq = ps_igseq,
+#'   sample_id_name = "sample_id",
+#'   sample_ids = c("sample_1", "sample_2"),
+#'   fraction_id_name = "sorting_fraction",
+#'   fraction_ids = c("Pos", "Neg1", "Neg2")
+#' )
+#' result <- impute_zeros(
+#'   data = grouped[["sample_1"]],
+#'   fraction_names = c("Pos", "Neg1", "Neg2"),
+#'   method = "pseudo_count"
+#' )
+#' head(result$data)
+#' head(result$imputed_taxa)
+#'
 #' @export
 impute_zeros <- function(
   data, # dataframe taxa (rows) x fractions (cols)
@@ -201,48 +291,54 @@ impute_zeros <- function(
     any(row == 0)
   })]
 
-  if (method == "no_zero") {
-    # Exclude all taxa having zero abundance in any fraction
-    fractions <- fractions[
-      !apply(fractions, 1, function(row) {
-        any(row == 0)
-      }),
-      ,
-      drop = FALSE
-    ]
-    rows_with_zeros <- NULL
-  } else if (method == "pseudo_count") {
-    # Add a fixed pseudo count (a half of the minimum count observed across all fractions)
-    # to ALL counts
-    fractions <- fractions + min(fractions[fractions != 0]) / 2
-  } else if (method == "random_pseudo_count") {
-    # Add a uniformely random psedocount between nearly zero and a minimum count
-    # observed across all fractions to ALL counts
-    min_count <- min(fractions[fractions != 0])
-    fractions <- fractions +
-      matrix(
-        runif(
-          n = prod(dim(fractions)),
-          min = min_count / 1000,
-          max = min_count
-        ),
-        nrow = dim(fractions)[1],
-        ncol = dim(fractions)[2]
+  switch(
+    method,
+    no_zero = {
+      # Exclude all taxa having zero abundance in any fraction
+      fractions <- fractions[
+        !apply(fractions, 1, function(row) {
+          any(row == 0)
+        }),
+        ,
+        drop = FALSE
+      ]
+      rows_with_zeros <- NULL
+    },
+    pseudo_count = {
+      # Add a fixed pseudo count (a half of the minimum count observed across all fractions)
+      # to ALL counts
+      fractions <- fractions + min(fractions[fractions != 0]) / 2
+    },
+    random_pseudo_count = {
+      # Add a uniformely random psedocount between nearly zero and a minimum count
+      # observed across all fractions to ALL counts
+      min_count <- min(fractions[fractions != 0])
+      fractions <- fractions +
+        matrix(
+          runif(
+            n = prod(dim(fractions)),
+            min = min_count / 1000,
+            max = min_count
+          ),
+          nrow = dim(fractions)[1],
+          ncol = dim(fractions)[2]
+        )
+    },
+    bayesian_inference = {
+      # Use imputation of zeros with Bayesian models, ONLY ZEROS are modified
+      fractions <- zCompositions::cmultRepl(
+        X = fractions,
+        method = "BL",
+        output = "p-counts"
       )
-  } else if (method == "bayesian_inference") {
-    # Use imputation of zeros with Bayesian models, ONLY ZEROS are modified
-    # TODO: check the theory
-    fractions <- zCompositions::cmultRepl(
-      X = fractions,
-      method = "BL",
-      output = "p-counts"
-    )
-  } else if (method == "keep_zeros") {
-    # keep zeros...
-  } else {
+    },
+    keep_zeros = {
+      # keep zeros...
+    },
     stop("Wrong 'method' argument")
-  }
+  )
 
+  imputed_taxa <- NULL
   if ("taxon_id" %in% colnames(data)) {
     imputed_taxa <- data$taxon_id[1:nrow(data) %in% rows_with_zeros]
   }
@@ -260,5 +356,3 @@ impute_zeros <- function(
 
   return(list(data = data, imputed_taxa = imputed_taxa))
 }
-
-# Implements the idea of MA plot (from microarray analysis) to abundance analysis

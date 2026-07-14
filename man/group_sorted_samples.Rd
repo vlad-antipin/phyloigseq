@@ -16,6 +16,61 @@ group_sorted_samples(
   transform_by_sample = "identity"
 )
 }
+\arguments{
+\item{physeq}{A \link[phyloseq:phyloseq-class]{phyloseq::phyloseq} object with raw counts.}
+
+\item{taxrank}{Taxonomic rank to agglomerate to via \code{\link[=tax_glom]{tax_glom()}} before
+grouping, or \code{NULL} (default) to keep taxa as-is.}
+
+\item{sample_id_name}{Name of the \code{sample_data} column identifying the
+biological sample (individual) each sort fraction belongs to.}
+
+\item{sample_ids}{Which values of \code{sample_id_name} to include, or \code{NULL}
+(default) to include all.}
+
+\item{fraction_id_name}{Name of the \code{sample_data} column identifying the
+sort fraction (e.g. \code{"Pos"}/\code{"Neg1"}/\code{"Neg2"}).}
+
+\item{fraction_ids}{Which values of \code{fraction_id_name} to include, or
+\code{NULL} (default) to include all.}
+
+\item{rarefy_by_sample}{If \code{TRUE} (default), rarefy fraction abundances
+within each sample so all its fractions share the same total read count.}
+
+\item{fractions_to_rarefy}{Which fractions to rarefy when
+\code{rarefy_by_sample = TRUE}, or \code{NULL} (default) to rarefy all of them.}
+
+\item{transform_by_sample}{Abundance transformation applied within each
+sample after rarefaction: \code{"identity"} (default, no transformation) or
+\code{"compositional"}.}
+}
+\value{
+A named list of data frames, one per included \code{sample_id}. Each
+data frame has one row per taxon and columns \code{sample_id}, \code{taxon_id},
+and one column per retained fraction (its abundance).
+}
 \description{
-Group Ig Fractions by Sample
+Reshapes a \link[phyloseq:phyloseq-class]{phyloseq::phyloseq} object with samples split across
+IgSeq sort fractions (e.g. Ig+/Ig-/pre-sort) into one abundance data frame
+per biological sample, with each fraction as a column. Optionally
+agglomerates taxa at a given rank first, and rarefies/transforms
+abundances within each sample so its fractions become comparable.
+}
+\details{
+A sample is excluded (with a \code{warning()}) if: a fraction id is duplicated
+within it, it has fewer than two fractions, at least one fraction has zero
+total reads, or its post-processing count table contains \code{NA}s.
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+names(grouped)
+head(grouped[["sample_1"]])
+
 }

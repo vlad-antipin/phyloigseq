@@ -6,6 +6,50 @@
 \usage{
 impute_zeros(data, fraction_names, method)
 }
+\arguments{
+\item{data}{A data frame of taxa (rows) by fractions and metadata
+(columns), as produced by \code{\link[=group_sorted_samples]{group_sorted_samples()}}.}
+
+\item{fraction_names}{Names of the columns in \code{data} holding fraction
+abundances to impute; other columns (e.g. \code{taxon_id}) are left as-is.}
+
+\item{method}{One of \code{"no_zero"} (drop any taxon with a zero in any
+fraction), \code{"pseudo_count"} (add half the minimum nonzero count across
+all fractions to every count), \code{"random_pseudo_count"} (add a count
+drawn uniformly between a small fraction of, and, the minimum nonzero
+count, to every count), \code{"bayesian_inference"} (Bayesian multiplicative
+zero replacement via \code{\link[zCompositions:cmultRepl]{zCompositions::cmultRepl()}}; only zeros are
+modified), or \code{"keep_zeros"} (leave zeros as-is).}
+}
+\value{
+A list with \code{data} (the input data frame, restricted to retained
+taxa, with the \code{fraction_names} columns updated per \code{method}) and
+\code{imputed_taxa} (the \code{taxon_id}s that had at least one zero fraction
+before imputation, or \code{NULL} if \code{data} has no \code{taxon_id} column, or none
+were imputed).
+}
 \description{
-Handle Zero Abundance
+Resolves zero counts in a taxa (rows) by fraction (columns) abundance data
+frame before Ig-score computation, since several scores are undefined when
+a fraction abundance is exactly zero. Taxa that are zero in every retained
+fraction are always dropped first; \code{method} then controls how any
+\emph{remaining} per-fraction zeros are handled.
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+result <- impute_zeros(
+  data = grouped[["sample_1"]],
+  fraction_names = c("Pos", "Neg1", "Neg2"),
+  method = "pseudo_count"
+)
+head(result$data)
+head(result$imputed_taxa)
+
 }

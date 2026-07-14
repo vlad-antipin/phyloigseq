@@ -1,3 +1,4 @@
+# Implements the idea of MA plot (from microarray analysis) to abundance analysis
 # analogous to ImmuMicrobiome::log_ratio()
 
 #' Get MA Coordinates
