@@ -2,18 +2,18 @@
 % Please edit documentation in R/ig_score.R
 \name{plot_ig_score}
 \alias{plot_ig_score}
-\title{Plot Any Ig score}
+\title{Plot an Ig Score by Taxon and Sample Group}
 \usage{
 plot_ig_score(
   phyloigseq_obj,
-  plot_type = c("boxplot", "bubbleplot")[1],
+  plot_type = c("boxplot", "violin", "bubbleplot"),
   score_name = "slide_z",
   taxrank_score = "taxon_id",
   taxrank_facet = NULL,
   group_score = "sample_id",
   group_facet = NULL,
-  score_agglom_fn = c("mean", "median")[1],
-  first_score_agglom_for_each = c("sample", "taxon", "both")[1],
+  score_agglom_fn = c("mean", "median"),
+  first_score_agglom_for_each = c("sample", "taxon", "both"),
   z_alpha2 = 1.96,
   exclude_na = TRUE,
   transpose = FALSE,
@@ -21,6 +21,74 @@ plot_ig_score(
   add_stats = TRUE
 )
 }
+\arguments{
+\item{phyloigseq_obj}{A \code{PhyloIgSeq} object, e.g. from \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}.}
+
+\item{plot_type}{One of \code{"boxplot"}, \code{"violin"}, \code{"bubbleplot"}.}
+
+\item{score_name}{Name of an \code{ig_coating} column to plot (one of \code{IG_SCORES}, e.g.
+\code{"slide_z"}). See Details for the boundary/significance threshold used per score.}
+
+\item{taxrank_score}{Column of \code{tax_table} (or \code{"taxon_id"}) to agglomerate the score by and
+show on the taxon axis.}
+
+\item{taxrank_facet}{Optional column of \code{tax_table} to facet by, in addition to
+\code{taxrank_score}.}
+
+\item{group_score}{Column of \code{sample_data} (or \code{"sample_id"}) to agglomerate the score by and
+show on the sample-group axis.}
+
+\item{group_facet}{Optional column of \code{sample_data} to facet by, in addition to \code{group_score}.}
+
+\item{score_agglom_fn}{One of \code{"mean"}, \code{"median"}: central-tendency function used to
+agglomerate \code{score_name} within a group.}
+
+\item{first_score_agglom_for_each}{One of \code{"sample"}, \code{"taxon"}, \code{"both"}: whether to
+agglomerate first within each sample (\code{group_score} level) and then across taxa, first
+within each taxon (\code{taxrank_score} level) and then across samples, or simultaneously across
+both dimensions. Only matters when \code{score_agglom_fn = "median"} (non-linear); with \code{"mean"}
+all three give the same result.}
+
+\item{z_alpha2}{Two-tailed significance threshold; only used when \code{score_name == "slide_z"}.}
+
+\item{exclude_na}{Logical. Drop rows with \code{NA} \code{score_name} values before plotting.}
+
+\item{transpose}{Logical. Flip the taxon/group axes (\code{coord_flip()}).}
+
+\item{signif_colors}{Length-2 color vector, \code{c(high, low)}, for points/boundary crossings.}
+
+\item{add_stats}{Logical. Add pairwise Wilcoxon significance brackets (via
+\code{\link[ggpubr:stat_compare_means]{ggpubr::stat_compare_means()}}) between \code{taxrank_score} levels with enough data in every
+facet panel they appear in. Only applies to \code{plot_type = "boxplot"}/\code{"violin"}; silently
+disabled (no brackets, no error) if fewer than 2 levels qualify.}
+}
+\value{
+A \code{ggplot} object.
+}
 \description{
-Plot Any Ig score
+Renders an \code{ig_coating} score (\code{score_name}) agglomerated by taxon (\code{taxrank_score}) and
+sample group (\code{group_score}), either as a bubble plot (one tile per taxon x group, sized/
+colored by the agglomerated score) or as a boxplot/violin plot (one box/violin per taxon,
+jittered points colored by whether they cross \code{score_name}'s significance boundary).
+}
+\details{
+\code{score_name}'s plotting boundary (significance thresholds, color-scale midpoint, and legal
+value range) is looked up internally for the 5 names in \code{IG_SCORES} (\code{"slide_z"}, \code{"kau"},
+\code{"prob_ratio"}, \code{"palm"}, \code{"prob_index"}) and errors for any other \code{score_name} — this covers
+every score currently produced by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}/\code{\link[=compute_ig_score]{compute_ig_score()}}, but a custom/future
+score name needs its own boundary added internally (\code{.ig_score_boundary()}) before it can be
+plotted here.
+}
+\examples{
+phyloigseq_obj <- getPhyloIgSeq(
+  ps_igseq,
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  scores = c("slide_z", "palm")
+)
+plot_ig_score(phyloigseq_obj, plot_type = "boxplot", score_name = "slide_z")
+plot_ig_score(phyloigseq_obj, plot_type = "bubbleplot", score_name = "palm")
+
 }

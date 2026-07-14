@@ -477,38 +477,432 @@ plot_slide_z <- function(
   return(plt)
 }
 
-#' Plot Any Ig score
+#' Score-Specific Plot Boundaries For `plot_ig_score()`
+#'
+#' Internal. Returns the significance thresholds (`left_lim`/`right_lim`), color-scale midpoint,
+#' and legal value range (`left_boundary`/`right_boundary`) used by `plot_ig_score()` to color
+#' points/boxes and draw reference lines, one set per `score_name`. Errors for any `score_name`
+#' not in `IG_SCORES` (i.e. not one of `"slide_z"`/`"kau"`/`"prob_ratio"`/`"palm"`/`"prob_index"`)
+#' rather than leaving these unbound.
+#'
+#' @noRd
+.ig_score_boundary <- function(score_name, z_alpha2) {
+  switch(
+    score_name,
+    slide_z = list(
+      left_lim = -z_alpha2,
+      right_lim = z_alpha2,
+      midpoint = 0,
+      left_boundary = -Inf,
+      right_boundary = Inf
+    ),
+    kau = ,
+    prob_ratio = list(
+      left_lim = 0,
+      right_lim = 0,
+      midpoint = 0,
+      left_boundary = -Inf,
+      right_boundary = Inf
+    ),
+    palm = list(
+      left_lim = 1,
+      right_lim = 1,
+      midpoint = 1,
+      left_boundary = 0,
+      right_boundary = Inf
+    ),
+    prob_index = list(
+      left_lim = 0.5,
+      right_lim = 0.5,
+      midpoint = 0.5,
+      left_boundary = 0,
+      right_boundary = 1
+    ),
+    stop(
+      "`plot_ig_score()` has no known plotting boundary for score_name = '",
+      score_name,
+      "'. Supported names: 'slide_z', 'kau', 'prob_ratio', 'palm', 'prob_index'."
+    )
+  )
+}
+
+#' Two-Level Central-Tendency Agglomeration For `plot_ig_score()`
+#'
+#' Internal. Collapses `plot_data` (one row per taxon/sample) to one row per
+#' (`taxrank_score`, `group_score`) combination via `score_agglom_fn`, either simultaneously
+#' (`first_score_agglom_for_each = "both"`) or in two stages: first within each sample (or each
+#' taxon), then across the remaining dimension. `"sample"`/`"taxon"`/`"both"` only give different
+#' results when `score_agglom_fn` is non-linear across the intermediate step (e.g. `"median"`).
+#'
+#' @noRd
+.ig_score_agglomerate <- function(
+  plot_data,
+  score_name,
+  score_agglom_fn,
+  taxrank_score,
+  taxrank_facet,
+  group_score,
+  group_facet,
+  first_score_agglom_for_each
+) {
+  keep_cols <- unique(c(
+    taxrank_score,
+    taxrank_facet,
+    group_score,
+    group_facet,
+    "agglom_score"
+  ))
+
+  if (first_score_agglom_for_each == "both") {
+    plot_data %>%
+      # Compute central tendency (mean, median) in a sample group and taxrank
+      # - for all values in intersections formed by these groupings
+      group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
+      mutate(
+        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
+      ) %>%
+      select(all_of(keep_cols)) %>%
+      distinct() %>%
+      ungroup()
+  } else {
+    first_id <- if (first_score_agglom_for_each == "sample") {
+      "sample_id"
+    } else {
+      "taxon_id"
+    }
+    first_agglom <- if (first_score_agglom_for_each == "sample") {
+      taxrank_score
+    } else {
+      group_score
+    }
+
+    plot_data %>%
+      # First, compute central tendency separately for each individual sample (or taxon)
+      # grouping by a taxrank (or sample group)
+      group_by(.data[[first_id]], .data[[first_agglom]]) %>%
+      mutate(
+        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
+      ) %>%
+      # ungroup and get rid of duplications, otherwise the central tendency will be false!
+      ungroup() %>%
+      select(all_of(keep_cols)) %>%
+      distinct() %>%
+      # Then, compute central tendency for each sample group (or taxrank), based on central
+      # tendencies for each sample per taxrank (or for each taxon per sample group)
+      group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
+      mutate(
+        agglom_score = get(score_agglom_fn)(agglom_score, na.rm = TRUE)
+      ) %>%
+      ungroup()
+  }
+}
+
+#' Pairwise `taxrank_score` Comparisons With Enough Data For `plot_ig_score()`
+#'
+#' Internal. Builds the `comparisons` list passed to [ggpubr::stat_compare_means()]: every pair
+#' of `taxrank_score` levels that have at least 2 (already-agglomerated) data points in *every*
+#' facet panel (`taxrank_facet`/`group_facet`) they appear in, not just overall — a level with
+#' plenty of data summed across facets but only 1 point in one specific panel is excluded, since
+#' a comparison can't be drawn from a single point in that panel. Returns `NULL` when fewer than
+#' 2 levels qualify (nothing to compare).
+#'
+#' @noRd
+.ig_score_valid_comparisons <- function(
+  plot_data,
+  taxrank_score,
+  taxrank_facet,
+  group_facet
+) {
+  facet_vars <- c(taxrank_facet, group_facet)
+  count_cols <- unique(c(taxrank_score, facet_vars))
+
+  group_counts <- plot_data %>%
+    count(across(all_of(count_cols)), name = "n")
+
+  if (length(facet_vars) > 0) {
+    # Worst case (smallest) count across only the facet panels where this taxrank_score level
+    # actually appears - a panel it's absent from isn't a "too few points" problem.
+    group_counts <- group_counts %>%
+      group_by(across(all_of(taxrank_score))) %>%
+      summarise(n = min(n), .groups = "drop")
+  }
+
+  valid_groups <- group_counts[[taxrank_score]][group_counts$n >= 2]
+  if (length(valid_groups) > 1) {
+    combn(valid_groups, 2, simplify = FALSE)
+  } else {
+    NULL
+  }
+}
+
+#' Shared `facet_grid()` For `plot_ig_score()`
+#'
+#' Internal. `taxrank_facet` and `group_facet` swap between rows/columns when `transpose = TRUE`,
+#' matching the non-faceted axis swap done by `coord_flip()` elsewhere in `plot_ig_score()`.
+#'
+#' @noRd
+.ig_score_facet_grid <- function(taxrank_facet, group_facet, transpose, scales) {
+  row_var <- if (transpose) group_facet else taxrank_facet
+  col_var <- if (transpose) taxrank_facet else group_facet
+  facet_grid(
+    rows = if (!is.null(row_var)) vars(.data[[row_var]]),
+    cols = if (!is.null(col_var)) vars(.data[[col_var]]),
+    scales = scales,
+    space = "free"
+  )
+}
+
+#' Shared `theme()` Blocks For `plot_ig_score()`
+#'
+#' Internal. `.ig_score_base_theme()` is used by both the bubbleplot and boxplot/violin render
+#' paths; `.ig_score_transpose_theme()` is layered on top of it when `transpose = TRUE` (after
+#' `coord_flip()`), targeting the axis text position that applies post-flip.
+#'
+#' @noRd
+.ig_score_base_theme <- function() {
+  theme(
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    legend.title = element_text(face = "bold", hjust = 0.5),
+    legend.direction = "horizontal",
+    axis.text.y.left = element_text(angle = 0, hjust = 1),
+    strip.text.y.right = element_text(angle = 0, hjust = 0),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+  )
+}
+
+#' @noRd
+.ig_score_transpose_theme <- function() {
+  theme(
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    legend.title = element_text(face = "bold", hjust = 0.5),
+    legend.direction = "horizontal",
+    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
+    strip.text.y.right = element_text(angle = 0, hjust = 0),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+  )
+}
+
+#' Bubbleplot Render Path For `plot_ig_score()`
+#'
+#' Internal. One tile per (`group_score`, `taxrank_score`) combination, sized by
+#' `abs(agglom_score)` and colored on a diverging scale centered at `boundary$midpoint`.
+#'
+#' @noRd
+.ig_score_bubbleplot <- function(
+  plot_data,
+  group_score,
+  taxrank_score,
+  taxrank_facet,
+  group_facet,
+  transpose,
+  signif_colors,
+  boundary,
+  score_agglom_fn,
+  score_name
+) {
+  ggplot(
+    plot_data,
+    aes(
+      x = .data[[group_score]],
+      y = .data[[taxrank_score]],
+      size = abs(agglom_score),
+      fill = agglom_score
+    )
+  ) +
+    geom_point(pch = 21) +
+    scale_fill_gradient2(
+      high = signif_colors[1],
+      low = signif_colors[2],
+      midpoint = boundary$midpoint,
+      limits = c(
+        max(
+          boundary$left_boundary,
+          boundary$midpoint - max(abs(plot_data$agglom_score - boundary$midpoint))
+        ),
+        min(
+          boundary$right_boundary,
+          boundary$midpoint + max(abs(plot_data$agglom_score - boundary$midpoint))
+        )
+      ),
+      guide = guide_colourbar(title.position = "top", title.hjust = 0.5)
+    ) +
+    guides(size = "none") +
+    .ig_score_facet_grid(taxrank_facet, group_facet, transpose, scales = "free") +
+    theme_minimal() +
+    labs(x = NULL, y = NULL, fill = paste(score_agglom_fn, score_name)) +
+    .ig_score_base_theme()
+}
+
+#' Boxplot/Violin Render Path For `plot_ig_score()`
+#'
+#' Internal. One box/violin per `taxrank_score` level, jittered points colored by whether
+#' `agglom_score` crosses `boundary$left_lim`/`right_lim`, with optional pairwise significance
+#' brackets (`add_stats`).
+#'
+#' @noRd
+.ig_score_boxplot <- function(
+  plot_data,
+  plot_type,
+  taxrank_score,
+  taxrank_facet,
+  group_facet,
+  transpose,
+  signif_colors,
+  boundary,
+  add_stats,
+  valid_comparisons,
+  score_agglom_fn,
+  score_name
+) {
+  plot_data$point_color <- ifelse(
+    plot_data$agglom_score > boundary$right_lim,
+    "high",
+    ifelse(plot_data$agglom_score < boundary$left_lim, "low", "ns")
+  )
+
+  plt <- ggplot(data = plot_data, aes(x = agglom_score, y = .data[[taxrank_score]]))
+  plt <- plt +
+    if (plot_type == "violin") geom_violin() else geom_boxplot(outliers = FALSE)
+
+  if (add_stats) {
+    plt <- plt +
+      stat_compare_means(
+        method = "wilcox.test",
+        comparisons = valid_comparisons,
+        label = "p.signif",
+        hide.ns = TRUE,
+        p.adjust.method = "BH"
+      )
+  }
+
+  plt <- plt +
+    geom_jitter(
+      alpha = 0.5,
+      aes(
+        size = abs(agglom_score - mean(boundary$left_lim, boundary$right_lim)),
+        color = point_color
+      )
+    ) +
+    scale_color_manual(
+      values = c("high" = signif_colors[1], "low" = signif_colors[2], "ns" = "darkgrey")
+    ) +
+    guides(size = "none", color = "none") +
+    scale_size_continuous(range = c(1, 2))
+
+  if (mean(boundary$left_lim, boundary$right_lim) == 0) {
+    plt <- plt +
+      scale_x_continuous(
+        limits = c(
+          -max(abs(plot_data$agglom_score)),
+          max(abs(plot_data$agglom_score))
+        )
+      )
+  }
+
+  plt +
+    geom_vline(xintercept = unique(c(boundary$left_lim, boundary$right_lim)), linetype = 2) +
+    .ig_score_facet_grid(
+      taxrank_facet,
+      group_facet,
+      transpose,
+      scales = if (transpose) "free_x" else "free_y"
+    ) +
+    theme_minimal() +
+    labs(x = paste(score_agglom_fn, score_name), y = NULL) +
+    .ig_score_base_theme()
+}
+
+#' Plot an Ig Score by Taxon and Sample Group
+#'
+#' Renders an `ig_coating` score (`score_name`) agglomerated by taxon (`taxrank_score`) and
+#' sample group (`group_score`), either as a bubble plot (one tile per taxon x group, sized/
+#' colored by the agglomerated score) or as a boxplot/violin plot (one box/violin per taxon,
+#' jittered points colored by whether they cross `score_name`'s significance boundary).
+#'
+#' @param phyloigseq_obj A `PhyloIgSeq` object, e.g. from [getPhyloIgSeq()].
+#' @param plot_type One of `"boxplot"`, `"violin"`, `"bubbleplot"`.
+#' @param score_name Name of an `ig_coating` column to plot (one of `IG_SCORES`, e.g.
+#'   `"slide_z"`). See Details for the boundary/significance threshold used per score.
+#' @param taxrank_score Column of `tax_table` (or `"taxon_id"`) to agglomerate the score by and
+#'   show on the taxon axis.
+#' @param taxrank_facet Optional column of `tax_table` to facet by, in addition to
+#'   `taxrank_score`.
+#' @param group_score Column of `sample_data` (or `"sample_id"`) to agglomerate the score by and
+#'   show on the sample-group axis.
+#' @param group_facet Optional column of `sample_data` to facet by, in addition to `group_score`.
+#' @param score_agglom_fn One of `"mean"`, `"median"`: central-tendency function used to
+#'   agglomerate `score_name` within a group.
+#' @param first_score_agglom_for_each One of `"sample"`, `"taxon"`, `"both"`: whether to
+#'   agglomerate first within each sample (`group_score` level) and then across taxa, first
+#'   within each taxon (`taxrank_score` level) and then across samples, or simultaneously across
+#'   both dimensions. Only matters when `score_agglom_fn = "median"` (non-linear); with `"mean"`
+#'   all three give the same result.
+#' @param z_alpha2 Two-tailed significance threshold; only used when `score_name == "slide_z"`.
+#' @param exclude_na Logical. Drop rows with `NA` `score_name` values before plotting.
+#' @param transpose Logical. Flip the taxon/group axes (`coord_flip()`).
+#' @param signif_colors Length-2 color vector, `c(high, low)`, for points/boundary crossings.
+#' @param add_stats Logical. Add pairwise Wilcoxon significance brackets (via
+#'   [ggpubr::stat_compare_means()]) between `taxrank_score` levels with enough data in every
+#'   facet panel they appear in. Only applies to `plot_type = "boxplot"`/`"violin"`; silently
+#'   disabled (no brackets, no error) if fewer than 2 levels qualify.
+#'
+#' @details
+#' `score_name`'s plotting boundary (significance thresholds, color-scale midpoint, and legal
+#' value range) is looked up internally for the 5 names in `IG_SCORES` (`"slide_z"`, `"kau"`,
+#' `"prob_ratio"`, `"palm"`, `"prob_index"`) and errors for any other `score_name` — this covers
+#' every score currently produced by [getPhyloIgSeq()]/[compute_ig_score()], but a custom/future
+#' score name needs its own boundary added internally (`.ig_score_boundary()`) before it can be
+#' plotted here.
+#'
+#' @return A `ggplot` object.
+#'
+#' @examples
+#' phyloigseq_obj <- getPhyloIgSeq(
+#'   ps_igseq,
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   scores = c("slide_z", "palm")
+#' )
+#' plot_ig_score(phyloigseq_obj, plot_type = "boxplot", score_name = "slide_z")
+#' plot_ig_score(phyloigseq_obj, plot_type = "bubbleplot", score_name = "palm")
+#'
 #' @export
 plot_ig_score <- function(
   phyloigseq_obj,
-  plot_type = c("boxplot", "bubbleplot")[1],
+  plot_type = c("boxplot", "violin", "bubbleplot"),
   score_name = "slide_z",
   taxrank_score = "taxon_id", # taxrank level to agglomerate the Ig score
   taxrank_facet = NULL, # taxrank for faceting
   group_score = "sample_id", # sample group to agglomerate the Ig score
   group_facet = NULL, # sample group for facetting
-  score_agglom_fn = c("mean", "median")[1],
-  first_score_agglom_for_each = c("sample", "taxon", "both")[1],
+  score_agglom_fn = c("mean", "median"),
+  first_score_agglom_for_each = c("sample", "taxon", "both"),
   z_alpha2 = 1.96, # in case of z score
   exclude_na = TRUE,
   transpose = FALSE,
   signif_colors = ggsci::pal_npg()(2),
   add_stats = TRUE
 ) {
-  if (score_name == "slide_z" & is.null(z_alpha2)) {
+  plot_type <- match.arg(plot_type)
+  score_agglom_fn <- match.arg(score_agglom_fn)
+  first_score_agglom_for_each <- match.arg(first_score_agglom_for_each)
+
+  if (score_name == "slide_z" && is.null(z_alpha2)) {
     z_alpha2 <- 1.96
   }
 
   # TODO: add a possibility for multiple faceting (e.g. with timepoints)
-  # FIXME: fix the mess with faceting when a x or y is not unique in each facet
 
-  # Agglomeration of Ig score should be either with 1. median 2. mean 3. weighted average by abundance.
+  # Agglomeration of Ig score should be either with 1. median 2. mean 3. weighted average by
+  # abundance.
   # TODO: 3.
 
   # TODO: check the correctness of data agglomeration and averaging
-  if (!score_agglom_fn %in% c("mean", "median")) {
-    stop("`score_agglom_fn` should be either 'mean' or 'median'")
-  }
+
   # Merge score, sample and taxonomic data together
   plot_data <- phyloigseq_obj@ig_coating[, c(
     "taxon_id",
@@ -530,293 +924,71 @@ plot_ig_score <- function(
       by = "taxon_id"
     )
 
-  if (first_score_agglom_for_each == "both") {
-    plot_data <- plot_data %>%
-      # Compute central tendency (mean, median) in a sample group and taxrank
-      # - for all values in intersections formed by these groupings
-      group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
-      mutate(
-        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
-      ) %>%
-      select(all_of(unique(c(
-        taxrank_score,
-        taxrank_facet,
-        group_score,
-        group_facet,
-        "agglom_score"
-      )))) %>%
-      distinct() %>%
-      ungroup()
-  } else if (first_score_agglom_for_each %in% c("sample", "taxon")) {
-    if (first_score_agglom_for_each == "sample") {
-      first_id <- "sample_id"
-      first_agglom <- taxrank_score
-    } else if (first_score_agglom_for_each == "taxon") {
-      first_id <- "taxon_id"
-      first_agglom <- group_score
-    }
-
-    plot_data <- plot_data %>%
-      # First, compute central tendency separately for each individual sample (or taxon)
-      # grouping by a taxrank (or sample group)
-      group_by(.data[[first_id]], .data[[first_agglom]]) %>%
-      mutate(
-        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
-      ) %>%
-      # ungroup and get rid of duplications, otherwise the central tendency will be false!
-      ungroup() %>%
-      select(all_of(unique(c(
-        taxrank_score,
-        taxrank_facet,
-        group_score,
-        group_facet,
-        "agglom_score"
-      )))) %>%
-      distinct() %>%
-      # Then, compute central tendency for each sample group (or taxrank), based on central tendencies for
-      # each sample per taxrank ( or for each taxon per sample group)
-      group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
-      mutate(
-        agglom_score = get(score_agglom_fn)(agglom_score, na.rm = TRUE)
-      ) %>%
-      ungroup()
-  } else {
-    stop(
-      "`first_score_agglom_by` argument should be 'sample', 'taxon' or 'both'"
-    )
-  }
+  plot_data <- .ig_score_agglomerate(
+    plot_data,
+    score_name = score_name,
+    score_agglom_fn = score_agglom_fn,
+    taxrank_score = taxrank_score,
+    taxrank_facet = taxrank_facet,
+    group_score = group_score,
+    group_facet = group_facet,
+    first_score_agglom_for_each = first_score_agglom_for_each
+  )
 
   if (exclude_na) {
     plot_data <- na.omit(plot_data)
   }
 
+  valid_comparisons <- NULL
   if (add_stats) {
-    # FIXME: didn't account for group_score
-    group_counts <- plot_data %>%
-      count(.data[[taxrank_score]]) %>%
-      filter(n >= 2)
-    valid_groups <- group_counts[[taxrank_score]]
-    if (length(valid_groups) > 1) {
-      valid_comparisons <- combn(valid_groups, 2, simplify = FALSE)
-    } else {
-      add_stats <- FALSE
-    }
-  }
-
-  if (score_name == "slide_z") {
-    left_lim <- -z_alpha2
-    right_lim <- z_alpha2
-    midpoint <- 0
-    left_boundary <- -Inf
-    right_boundary <- +Inf
-  } else if (score_name %in% c("kau", "prob_ratio")) {
-    left_lim <- 0
-    right_lim <- 0
-    midpoint <- 0
-    left_boundary <- -Inf
-    right_boundary <- +Inf
-  } else if (score_name == "palm") {
-    left_lim <- 1
-    right_lim <- 1
-    midpoint <- 1
-    left_boundary <- 0
-    right_boundary <- +Inf
-  } else if (score_name == "prob_index") {
-    left_lim <- 0.5
-    right_lim <- 0.5
-    midpoint <- 0.5
-    left_boundary <- 0
-    right_boundary <- 1
-  }
-
-  if (plot_type == "bubbleplot") {
-    plt <-
-      ggplot(
-        plot_data,
-        aes(
-          x = .data[[group_score]],
-          y = .data[[taxrank_score]],
-          size = abs(agglom_score),
-          fill = agglom_score
-        )
-      ) +
-      geom_point(pch = 21)
-
-    plt <- plt +
-      scale_fill_gradient2(
-        high = signif_colors[1],
-        low = signif_colors[2],
-        midpoint = midpoint,
-        limits = c(
-          max(
-            left_boundary,
-            midpoint - max(abs(plot_data$agglom_score - midpoint))
-          ),
-          min(
-            right_boundary,
-            midpoint + max(abs(plot_data$agglom_score - midpoint))
-          )
-        ),
-        guide = guide_colourbar(title.position = "top", title.hjust = 0.5)
-      )
-
-    plt <- plt +
-      guides(size = "none")
-
-    if (!transpose) {
-      plt <- plt +
-        facet_grid(
-          rows = if (!is.null(taxrank_facet)) {
-            vars(.data[[taxrank_facet]])
-          },
-          cols = if (!is.null(group_facet)) {
-            vars(.data[[group_facet]])
-          },
-          scales = "free",
-          space = "free"
-        )
-    } else {
-      plt <- plt +
-        facet_grid(
-          cols = if (!is.null(taxrank_facet)) {
-            vars(.data[[taxrank_facet]])
-          },
-          rows = if (!is.null(group_facet)) {
-            vars(.data[[group_facet]])
-          },
-          scales = "free",
-          space = "free"
-        )
-    }
-
-    plt <- plt +
-      theme_minimal() +
-      labs(x = NULL, y = NULL, fill = paste(score_agglom_fn, score_name)) +
-      theme(
-        plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 10, hjust = 0.5),
-        legend.title = element_text(face = "bold", hjust = 0.5),
-        legend.direction = "horizontal",
-        axis.text.y.left = element_text(angle = 0, hjust = 1),
-        strip.text.y.right = element_text(angle = 0, hjust = 0),
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
-      )
-  } else if (plot_type %in% c("boxplot", "violin")) {
-    plot_data$point_color <- ifelse(
-      plot_data$agglom_score > right_lim,
-      "high",
-      ifelse(plot_data$agglom_score < left_lim, "low", "ns")
+    valid_comparisons <- .ig_score_valid_comparisons(
+      plot_data,
+      taxrank_score = taxrank_score,
+      taxrank_facet = taxrank_facet,
+      group_facet = group_facet
     )
+    add_stats <- !is.null(valid_comparisons)
+  }
 
-    plt <-
-      ggplot(
-        data = plot_data,
-        aes(x = agglom_score, y = .data[[taxrank_score]])
-      )
-    if (plot_type == "violin") {
-      plt <- plt + geom_violin()
-    } else {
-      plt <- plt + geom_boxplot(outliers = FALSE)
-    }
+  boundary <- .ig_score_boundary(score_name, z_alpha2)
 
-    if (add_stats) {
-      plt <- plt +
-        stat_compare_means(
-          method = "wilcox.test",
-          comparisons = valid_comparisons,
-          label = "p.signif",
-          hide.ns = TRUE,
-          p.adjust.method = "BH"
-        )
-    }
-
-    plt <- plt +
-      geom_jitter(
-        alpha = 0.5,
-        aes(
-          size = abs(agglom_score - mean(left_lim, right_lim)),
-          color = point_color
-        )
-      ) +
-      scale_color_manual(
-        values = c(
-          "high" = signif_colors[1],
-          "low" = signif_colors[2],
-          "ns" = "darkgrey"
-        )
-      ) +
-      guides(size = "none", color = "none") +
-      scale_size_continuous(range = c(1, 2))
-
-    if (mean(left_lim, right_lim) == 0) {
-      plt <- plt +
-        scale_x_continuous(
-          limits = c(
-            -max(abs(plot_data$agglom_score)),
-            max(abs(plot_data$agglom_score))
-          )
-        )
-    }
-
-    plt <- plt +
-      geom_vline(xintercept = unique(c(left_lim, right_lim)), linetype = 2)
-
-    if (!transpose) {
-      plt <- plt +
-        facet_grid(
-          rows = if (!is.null(taxrank_facet)) {
-            vars(.data[[taxrank_facet]])
-          },
-          cols = if (!is.null(group_facet)) {
-            vars(.data[[group_facet]])
-          },
-          scales = "free_y",
-          space = "free"
-        )
-    } else {
-      plt <- plt +
-        facet_grid(
-          cols = if (!is.null(taxrank_facet)) {
-            vars(.data[[taxrank_facet]])
-          },
-          rows = if (!is.null(group_facet)) {
-            vars(.data[[group_facet]])
-          },
-          scales = "free_x",
-          space = "free"
-        )
-    }
-
-    plt <- plt +
-      theme_minimal() +
-      labs(x = paste(score_agglom_fn, score_name), y = NULL) +
-      theme(
-        plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 10, hjust = 0.5),
-        legend.title = element_text(face = "bold", hjust = 0.5),
-        legend.direction = "horizontal",
-        axis.text.y.left = element_text(angle = 0, hjust = 1),
-        strip.text.y.right = element_text(angle = 0, hjust = 0),
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
-      )
+  plt <- if (plot_type == "bubbleplot") {
+    .ig_score_bubbleplot(
+      plot_data,
+      group_score = group_score,
+      taxrank_score = taxrank_score,
+      taxrank_facet = taxrank_facet,
+      group_facet = group_facet,
+      transpose = transpose,
+      signif_colors = signif_colors,
+      boundary = boundary,
+      score_agglom_fn = score_agglom_fn,
+      score_name = score_name
+    )
   } else {
-    stop("Plot type should be 'boxplot', 'violin' or 'bubbleplot'")
+    .ig_score_boxplot(
+      plot_data,
+      plot_type = plot_type,
+      taxrank_score = taxrank_score,
+      taxrank_facet = taxrank_facet,
+      group_facet = group_facet,
+      transpose = transpose,
+      signif_colors = signif_colors,
+      boundary = boundary,
+      add_stats = add_stats,
+      valid_comparisons = valid_comparisons,
+      score_agglom_fn = score_agglom_fn,
+      score_name = score_name
+    )
   }
 
   if (transpose) {
     plt <- plt +
       coord_flip() +
-      theme(
-        plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 10, hjust = 0.5),
-        legend.title = element_text(face = "bold", hjust = 0.5),
-        legend.direction = "horizontal",
-        axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-        strip.text.y.right = element_text(angle = 0, hjust = 0),
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
-      )
+      .ig_score_transpose_theme()
   }
-  plt <- plt +
+
+  plt +
     labs(
       title = "Ig Score by Taxa and Sample Groups",
       subtitle = paste0(
@@ -840,7 +1012,6 @@ plot_ig_score <- function(
         }
       )
     )
-  return(plt)
 }
 
 #' Agglomerate Ig Scores by Taxrank

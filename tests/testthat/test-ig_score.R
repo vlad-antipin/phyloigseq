@@ -308,11 +308,31 @@ test_that("plot_slide_z returns a ggplot", {
   expect_s3_class(suppressWarnings(plot_slide_z(pis)), "ggplot")
 })
 
+# plot_slide_z's `text` aes (for the plotly tooltip, see plotly::ggplotly(tooltip = "text") in
+# the app) and its discrete size scale are intentional and trigger their own harmless ggplot2
+# cosmetic warnings on every call, alongside whichever warning a given test is actually checking
+# for; muffle just those two known ones so expect_warning()'s regexp isn't drowned out below.
+quiet_plot_cosmetics <- function(expr) {
+  withCallingHandlers(
+    expr,
+    warning = function(w) {
+      if (
+        grepl(
+          "Ignoring unknown aesthetics|for a discrete variable is not advised",
+          conditionMessage(w)
+        )
+      ) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
 test_that("plot_slide_z falls back to the observed distribution with a warning when there are no null columns", {
   pis <- make_phyloigseq_fixture(with_null = FALSE)
 
   expect_warning(
-    plot_slide_z(pis, ellipses = FALSE),
+    quiet_plot_cosmetics(plot_slide_z(pis, ellipses = FALSE)),
     "empirical null distribution"
   )
 })
@@ -320,7 +340,7 @@ test_that("plot_slide_z falls back to the observed distribution with a warning w
 test_that("plot_slide_z disables ellipses with a warning when none are furnished", {
   pis <- make_phyloigseq_fixture(with_ellipses = FALSE)
 
-  expect_warning(plot_slide_z(pis), "No ellipse coordinates")
+  expect_warning(quiet_plot_cosmetics(plot_slide_z(pis)), "No ellipse coordinates")
 })
 
 test_that("plot_slide_z restricts and relevels to the requested sample_ids", {
@@ -352,4 +372,297 @@ test_that("plot_slide_z truncates tax_table values in the tooltip via tooltip_ma
 
   all_tooltips <- c(plt$data$tooltip, plt$layers[[1]]$data$tooltip)
   expect_true(any(grepl("taxon_name: AAAAA\\.\\.\\.", all_tooltips)))
+})
+
+# ---- plot_ig_score ----
+
+test_that(".ig_score_boundary returns the documented boundary for each known score", {
+  expect_equal(
+    PhyloIgSeq:::.ig_score_boundary("slide_z", z_alpha2 = 1.96),
+    list(left_lim = -1.96, right_lim = 1.96, midpoint = 0, left_boundary = -Inf, right_boundary = Inf)
+  )
+  expect_equal(
+    PhyloIgSeq:::.ig_score_boundary("kau", z_alpha2 = 1.96),
+    PhyloIgSeq:::.ig_score_boundary("prob_ratio", z_alpha2 = 1.96)
+  )
+  expect_equal(
+    PhyloIgSeq:::.ig_score_boundary("palm", z_alpha2 = 1.96),
+    list(left_lim = 1, right_lim = 1, midpoint = 1, left_boundary = 0, right_boundary = Inf)
+  )
+  expect_equal(
+    PhyloIgSeq:::.ig_score_boundary("prob_index", z_alpha2 = 1.96),
+    list(left_lim = 0.5, right_lim = 0.5, midpoint = 0.5, left_boundary = 0, right_boundary = 1)
+  )
+})
+
+test_that(".ig_score_boundary uses the supplied z_alpha2 for slide_z", {
+  result <- PhyloIgSeq:::.ig_score_boundary("slide_z", z_alpha2 = 3)
+  expect_equal(c(result$left_lim, result$right_lim), c(-3, 3))
+})
+
+test_that(".ig_score_boundary errors on an unsupported score_name instead of leaving limits unbound", {
+  expect_error(
+    PhyloIgSeq:::.ig_score_boundary("not_a_real_score", z_alpha2 = 1.96),
+    "no known plotting boundary"
+  )
+})
+
+test_that(".ig_score_agglomerate: 'both' and 'taxon' agree, 'sample' diverges when sample sizes are unequal", {
+  # 3 taxa nested in s1, a single (larger) taxon in s2 - a classic case where "median of
+  # per-sample medians" (sample-first) differs from both the raw median ("both") and
+  # "median of per-taxon medians" (taxon-first, which degenerates to the raw values here
+  # since each taxon appears in only one sample).
+  plot_data <- data.frame(
+    sample_id = c("s1", "s1", "s1", "s2"),
+    taxon_id = c(1, 2, 3, 4),
+    Genus = "G",
+    group = "A",
+    score = c(1, 2, 3, 1000)
+  )
+
+  agg <- function(mode) {
+    PhyloIgSeq:::.ig_score_agglomerate(
+      plot_data,
+      score_name = "score",
+      score_agglom_fn = "median",
+      taxrank_score = "Genus",
+      taxrank_facet = NULL,
+      group_score = "group",
+      group_facet = NULL,
+      first_score_agglom_for_each = mode
+    )
+  }
+
+  expect_equal(unique(agg("both")$agglom_score), 2.5)
+  expect_equal(unique(agg("taxon")$agglom_score), 2.5)
+  expect_equal(unique(agg("sample")$agglom_score), 501)
+})
+
+test_that(".ig_score_agglomerate 'both'/'sample'/'taxon' agree when score_agglom_fn is 'mean'", {
+  plot_data <- data.frame(
+    sample_id = c("s1", "s1", "s1", "s2"),
+    taxon_id = c(1, 2, 3, 4),
+    Genus = "G",
+    group = "A",
+    score = c(1, 2, 3, 1000)
+  )
+  agg <- function(mode) {
+    PhyloIgSeq:::.ig_score_agglomerate(
+      plot_data,
+      score_name = "score",
+      score_agglom_fn = "mean",
+      taxrank_score = "Genus",
+      taxrank_facet = NULL,
+      group_score = "group",
+      group_facet = NULL,
+      first_score_agglom_for_each = mode
+    )
+  }
+  expect_equal(unique(agg("both")$agglom_score), mean(c(1, 2, 3, 1000)))
+  expect_equal(unique(agg("taxon")$agglom_score), mean(c(1, 2, 3, 1000)))
+  expect_equal(unique(agg("sample")$agglom_score), mean(c(mean(c(1, 2, 3)), 1000)))
+})
+
+test_that(".ig_score_valid_comparisons pairs up every level with >= 2 points when there are no facets", {
+  plot_data <- data.frame(
+    taxrank = c("A", "A", "B", "B"),
+    agglom_score = 1:4
+  )
+  result <- PhyloIgSeq:::.ig_score_valid_comparisons(
+    plot_data,
+    taxrank_score = "taxrank",
+    taxrank_facet = NULL,
+    group_facet = NULL
+  )
+  expect_equal(result, list(c("A", "B")))
+})
+
+test_that(".ig_score_valid_comparisons returns NULL when fewer than 2 levels qualify", {
+  plot_data <- data.frame(
+    taxrank = c("A", "B", "B"),
+    agglom_score = 1:3
+  )
+  result <- PhyloIgSeq:::.ig_score_valid_comparisons(
+    plot_data,
+    taxrank_score = "taxrank",
+    taxrank_facet = NULL,
+    group_facet = NULL
+  )
+  expect_null(result)
+})
+
+test_that(".ig_score_valid_comparisons excludes a level with < 2 points in one facet panel even though its overall total is >= 2", {
+  # taxrank "A" has 1 point in facet f1 and 3 in f2 (4 overall); taxrank "B" has 2 in both.
+  plot_data <- data.frame(
+    taxrank = c("A", "A", "A", "A", "B", "B", "B", "B"),
+    facet = c("f1", "f2", "f2", "f2", "f1", "f1", "f2", "f2"),
+    agglom_score = 1:8
+  )
+  result <- PhyloIgSeq:::.ig_score_valid_comparisons(
+    plot_data,
+    taxrank_score = "taxrank",
+    taxrank_facet = "facet",
+    group_facet = NULL
+  )
+  # only "B" qualifies (min per-facet count 2 >= 2); "A"'s worst facet (f1) has only 1 point.
+  expect_null(result)
+})
+
+test_that(".ig_score_valid_comparisons doesn't penalize a level that is simply absent from a facet panel", {
+  plot_data <- data.frame(
+    taxrank = c("A", "A", "B", "B", "B", "B"),
+    facet = c("f2", "f2", "f1", "f1", "f2", "f2"),
+    agglom_score = 1:6
+  )
+  result <- PhyloIgSeq:::.ig_score_valid_comparisons(
+    plot_data,
+    taxrank_score = "taxrank",
+    taxrank_facet = "facet",
+    group_facet = NULL
+  )
+  # "A" is entirely absent from f1 (not "too few points", just not there) and has 2 in f2.
+  expect_equal(result, list(c("A", "B")))
+})
+
+make_ig_score_fixture <- function() {
+  ig_coating <- data.frame(
+    taxon_id = rep(1:4, times = 3),
+    sample_id = rep(c("s1", "s2", "s3"), each = 4),
+    slide_z = c(
+      3, -0.5, 2.0, -2.5, # s1: taxa 1..4
+      2.5, 0.3, 2.2, -2.0, # s2
+      -3, 0.1, 1.8, -1.5 # s3
+    ),
+    palm = c(
+      3, 1, 2, 0.2,
+      2.5, 1, 2, 0.1,
+      0.2, 1, 2, 0.3
+    )
+  )
+
+  sample_data <- data.frame(
+    sample_id = c("s1", "s2", "s3"),
+    group = c("group_a", "group_a", "group_b"),
+    batch = c("b1", "b2", "b1")
+  )
+
+  tax_table <- data.frame(
+    taxon_id = 1:4,
+    Genus = c("G1", "G1", "G2", "G2"),
+    Phylum = "P1"
+  )
+
+  new(
+    "PhyloIgSeq",
+    ig_coating = ig_coating,
+    score_names = c("slide_z", "palm"),
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    sample_data = sample_data,
+    tax_table = tax_table
+  )
+}
+
+test_that("plot_ig_score returns a ggplot for each plot_type", {
+  pis <- make_ig_score_fixture()
+
+  for (pt in c("boxplot", "violin", "bubbleplot")) {
+    plt <- suppressWarnings(
+      plot_ig_score(pis, plot_type = pt, taxrank_score = "Genus", group_score = "group")
+    )
+    expect_s3_class(plt, "ggplot")
+  }
+})
+
+test_that("plot_ig_score rejects an unrecognized plot_type/score_agglom_fn/first_score_agglom_for_each via match.arg", {
+  pis <- make_ig_score_fixture()
+
+  expect_error(plot_ig_score(pis, plot_type = "not_a_type"), "should be one of")
+  expect_error(plot_ig_score(pis, score_agglom_fn = "not_a_fn"), "should be one of")
+  expect_error(
+    plot_ig_score(pis, first_score_agglom_for_each = "not_a_mode"),
+    "should be one of"
+  )
+})
+
+test_that("plot_ig_score errors for a score_name with no known plotting boundary", {
+  pis <- make_ig_score_fixture()
+  pis@ig_coating$custom_score <- 1
+
+  expect_error(
+    plot_ig_score(pis, score_name = "custom_score"),
+    "no known plotting boundary"
+  )
+})
+
+test_that("plot_ig_score applies coord_flip when transpose = TRUE", {
+  pis <- make_ig_score_fixture()
+
+  plt <- suppressWarnings(plot_ig_score(pis, taxrank_score = "Genus", group_score = "group"))
+  plt_transposed <- suppressWarnings(
+    plot_ig_score(pis, taxrank_score = "Genus", group_score = "group", transpose = TRUE)
+  )
+
+  expect_false(inherits(plt$coordinates, "CoordFlip"))
+  expect_true(inherits(plt_transposed$coordinates, "CoordFlip"))
+})
+
+test_that("plot_ig_score adds significance brackets when at least 2 taxrank_score levels qualify", {
+  pis <- make_ig_score_fixture()
+
+  plt <- suppressWarnings(
+    plot_ig_score(
+      pis,
+      plot_type = "boxplot",
+      taxrank_score = "Genus",
+      group_score = "group",
+      add_stats = TRUE
+    )
+  )
+
+  stat_layers <- vapply(
+    plt$layers,
+    function(l) inherits(l$stat, "StatSignif") || inherits(l$stat, "StatCompareMeans"),
+    logical(1)
+  )
+  expect_true(any(stat_layers))
+})
+
+test_that("plot_ig_score silently disables add_stats (no error) when fewer than 2 taxrank_score levels have data", {
+  pis <- make_ig_score_fixture()
+  pis@ig_coating <- pis@ig_coating[pis@ig_coating$taxon_id %in% c(1, 2), ]
+
+  plt <- suppressWarnings(
+    plot_ig_score(
+      pis,
+      plot_type = "boxplot",
+      taxrank_score = "Genus",
+      group_score = "group",
+      add_stats = TRUE
+    )
+  )
+  expect_s3_class(plt, "ggplot")
+
+  stat_layers <- vapply(
+    plt$layers,
+    function(l) inherits(l$stat, "StatSignif") || inherits(l$stat, "StatCompareMeans"),
+    logical(1)
+  )
+  expect_false(any(stat_layers))
+})
+
+test_that("plot_ig_score accepts taxrank_facet/group_facet without error", {
+  pis <- make_ig_score_fixture()
+
+  plt <- suppressWarnings(
+    plot_ig_score(
+      pis,
+      plot_type = "bubbleplot",
+      taxrank_score = "Genus",
+      taxrank_facet = "Phylum",
+      group_score = "group",
+      group_facet = "batch"
+    )
+  )
+  expect_s3_class(plt, "ggplot")
 })
