@@ -169,7 +169,147 @@ compute_ig_score <- function(
 }
 
 
-#' Plot Slide Z Score
+#' Compute a Jitter Offset for Off-Axis Points
+#'
+#' Shared by [plot_slide_z()] and [plot_ma()]: points that can't be placed at
+#' their true x-position (e.g. an imputed/undefined log-abundance) are instead
+#' jittered in a band just past the low end of the plotted x-range.
+#'
+#' @param values Numeric vector the x-range is computed from (the abundance
+#'   values of the points that *do* get plotted at their true position).
+#'
+#' @return A list with `width` (the jitter band's width, `range(values) / 6`)
+#'   and `x` (the band's center, three widths below `min(values)`).
+#' @noRd
+.jitter_offset <- function(values) {
+  jitter_width <- diff(range(values)) / 6
+  list(width = jitter_width, x = min(values) - jitter_width * 3)
+}
+
+#' Truncate Long Values for a ggplot Hover Tooltip
+#'
+#' @param x Vector coerced to character; values longer than `max_chars` are
+#'   cut short with a trailing `"..."` (taxon names/IDs can be full ASV/OTU
+#'   sequences, which would otherwise bloat the plot object and the tooltip).
+#' @param max_chars Single integer, the maximum number of characters to keep.
+#'
+#' @return A character vector the same length as `x`.
+#' @noRd
+.truncate_for_tooltip <- function(x, max_chars) {
+  x <- as.character(x)
+  ifelse(
+    is.na(x) | nchar(x) <= max_chars,
+    x,
+    paste0(substr(x, 1, max_chars), "...")
+  )
+}
+
+#' Build Per-Taxon Hover Tooltips for `plot_slide_z()`
+#'
+#' @param ig_df `phyloigseq_obj@ig_coating` (or a subset), one row per
+#'   taxon/sample, with a `slide_z` column.
+#' @param tax_table `phyloigseq_obj@tax_table`, or `NULL`/empty if not
+#'   available.
+#' @param max_chars Passed to `.truncate_for_tooltip()`.
+#'
+#' @return A character vector the same length as `nrow(ig_df)`.
+#' @noRd
+.slide_z_tooltip <- function(ig_df, tax_table, max_chars) {
+  if (length(tax_table) == 0) {
+    return(paste0("slide_z: ", round(ig_df$slide_z, digits = 3)))
+  }
+
+  tax_cols <- colnames(tax_table)
+  matched_tax <- tax_table[
+    match(ig_df$taxon_id, tax_table$taxon_id),
+    tax_cols,
+    drop = FALSE
+  ]
+
+  hover_lines <- lapply(tax_cols, function(col) {
+    paste0(
+      col,
+      ": ",
+      .truncate_for_tooltip(matched_tax[[col]], max_chars),
+      "<br>"
+    )
+  })
+
+  paste0(
+    do.call(paste0, hover_lines),
+    "slide_z: ",
+    round(ig_df$slide_z, digits = 3)
+  )
+}
+
+#' Flag Imputed (`sample_id`, `taxon_id`) Pairs
+#'
+#' @param imputed_taxa `phyloigseq_obj@imputed_taxa`: a list of `taxon_id`
+#'   vectors, named by `sample_id`.
+#'
+#' @return A character vector of `"sample_id taxon_id"` keys, one per
+#'   imputed pair, suitable for `%in%` against `paste(sample_id, taxon_id)`.
+#' @noRd
+.imputed_taxa_lookup <- function(imputed_taxa) {
+  if (length(imputed_taxa) == 0) {
+    return(character(0))
+  }
+  unlist(lapply(names(imputed_taxa), function(sample_id) {
+    taxa <- imputed_taxa[[sample_id]]
+    if (length(taxa) == 0) {
+      return(character(0))
+    }
+    paste(sample_id, taxa)
+  }))
+}
+
+#' Plot Sliding Z-Scores
+#'
+#' Draws the sliding-Z MA-plot for the sample(s) in a `PhyloIgSeq` object built with `"slide_z"`
+#' among its `scores`: log-abundance on the x-axis, log-ratio on the y-axis, colored/sized by
+#' whether `|slide_z|` exceeds `z_alpha2`. Optionally overlays the null distribution (empirical or
+#' theoretical, see [get_slide_z()]) and the confidence ellipses from
+#' `phyloigseq_obj@ellipse_coords`. Taxa with an imputed zero (`phyloigseq_obj@imputed_taxa`) are
+#' drawn jittered just past the plot's x-range instead of at their (undefined) true abundance, as
+#' in [plot_ma()].
+#'
+#' @param phyloigseq_obj A [PhyloIgSeq-class] object with `"slide_z"` in `score_names` (i.e. built
+#'   by [getPhyloIgSeq()] with `"slide_z"` among `scores`).
+#' @param sample_ids Optional character vector of `sample_id`s to restrict/order the plot to;
+#'   `NULL` (default) plots every sample in `ig_coating`, faceted by `sample_id` if there is more
+#'   than one.
+#' @param empirical_null_distribution Logical. If `TRUE` (default), overlay the empirical null
+#'   distribution (`null_abundance`/`null_change`, from a second negative fraction). Falls back to
+#'   `FALSE` with a `warning()` if `ig_coating` doesn't carry those columns.
+#' @param z_alpha2 Single number, the `|slide_z|` significance threshold used to color/size points
+#'   `"signif"` vs `"ns"` and to label the legend/axis. Default `1.96` (two-sided 95% threshold).
+#' @param signif_colors Character vector of length 2, passed to `scale_color_manual()`. Matched to
+#'   the alphabetically-sorted significance categories (`"ns"` first, then `"signif"`). Defaults to
+#'   two colors from `ggsci::pal_npg()`.
+#' @param ellipses Logical. If `TRUE` (default), overlay the confidence ellipse boundaries from
+#'   `phyloigseq_obj@ellipse_coords`. Falls back to `FALSE` with a `warning()` if none are present.
+#' @param tooltip_max_chars Single integer, the maximum number of characters of each `tax_table`
+#'   value (e.g. `taxon_name`, which may be a full ASV/OTU sequence) shown in a point's hover
+#'   tooltip before truncating with `"..."`. Default `40`.
+#'
+#' @return A `ggplot` object (one panel per `sample_id` if more than one is plotted).
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_ids = c("sample_1", "sample_2", "sample_3"),
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   second_negative_fraction_name = "Neg2",
+#'   scores = c("slide_z", "palm", "kau"),
+#'   confidence_levels = c(0.95, 0.99)
+#' )
+#' plot_slide_z(pis)
+#' plot_slide_z(pis, sample_ids = "sample_1", ellipses = FALSE)
+#'
 #' @export
 plot_slide_z <- function(
   phyloigseq_obj,
@@ -177,7 +317,8 @@ plot_slide_z <- function(
   empirical_null_distribution = TRUE,
   z_alpha2 = 1.96,
   signif_colors = c(ggsci::pal_npg()(2)[2], ggsci::pal_npg()(2)[1]),
-  ellipses = TRUE
+  ellipses = TRUE,
+  tooltip_max_chars = 40
 ) {
   ig_df <- phyloigseq_obj@ig_coating
   ellipse_df <- phyloigseq_obj@ellipse_coords
@@ -208,65 +349,23 @@ plot_slide_z <- function(
     ellipse_df$sample_id <- factor(ellipse_df$sample_id, levels = sample_ids)
   }
 
-  if (length(phyloigseq_obj@tax_table) > 0) {
-    hover.text.all <- rep(NA, nrow(ig_df))
-    for (i in 1:nrow(ig_df)) {
-      # it makes sure that taxa names match
-      taxon_id <- ig_df$taxon_id[i]
-      hover.text <- ""
-      # TODO: for now original taxon name is not kept
-      values <- phyloigseq_obj@tax_table[
-        phyloigseq_obj@tax_table$taxon_id == taxon_id,
-        !colnames(phyloigseq_obj@tax_table) %in% c("taxon_id", "taxon_name"),
-        drop = FALSE
-      ]
-      for (variable in colnames(values)) {
-        value <- values[[variable]]
-        hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
-      }
-      hover.text.all[i] <- paste0(
-        hover.text,
-        paste("slide Z: ", round(ig_df$slide_z[i], digits = 3))
-      )
-    }
-    ig_df$tooltip <- hover.text.all
-  } else {
-    ig_df <- mutate(
-      ig_df,
-      tooltip = paste("<br>slide_z: ", round(slide_z, digits = 3))
-    )
-  }
+  ig_df$tooltip <- .slide_z_tooltip(
+    ig_df,
+    phyloigseq_obj@tax_table,
+    tooltip_max_chars
+  )
 
-  ig_df_non_imputed <- data.frame()
-  ig_df_imputed <- data.frame()
+  is_imputed <- paste(ig_df$sample_id, ig_df$taxon_id) %in%
+    .imputed_taxa_lookup(phyloigseq_obj@imputed_taxa)
 
-  for (sample_id in unique(ig_df$sample_id)) {
-    ig_df_non_imputed <- rbind(
-      ig_df_non_imputed,
-      ig_df[
-        ig_df$sample_id %in%
-          sample_id &
-          !ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]], ,
-        drop = FALSE
-      ]
-    )
-    ig_df_imputed <- rbind(
-      ig_df_imputed,
-      ig_df[
-        ig_df$sample_id %in%
-          sample_id &
-          ig_df$taxon_id %in% phyloigseq_obj@imputed_taxa[[sample_id]], ,
-        drop = FALSE
-      ]
-    )
-  }
+  ig_df_imputed <- ig_df[is_imputed, , drop = FALSE]
+  ig_df <- ig_df[!is_imputed, , drop = FALSE]
+
   stat_imputed <- ifelse(
     ig_df_imputed$slide_z >= z_alpha2 | ig_df_imputed$slide_z <= -z_alpha2,
     "signif",
     "ns"
   )
-
-  ig_df <- ig_df_non_imputed
   stat <- ifelse(
     ig_df$slide_z >= z_alpha2 | ig_df$slide_z <= -z_alpha2,
     "signif",
@@ -275,9 +374,9 @@ plot_slide_z <- function(
 
   plt <- ggplot(ig_df)
 
-  jitter_width <- diff(range(c(ig_df$null_abundance, ig_df$obs_abundance))) / 6
-  jitter_x <- min(c(ig_df$null_abundance, ig_df$obs_abundance)) -
-    jitter_width * 3
+  jitter <- .jitter_offset(c(ig_df$null_abundance, ig_df$obs_abundance))
+  jitter_width <- jitter$width
+  jitter_x <- jitter$x
   plt <- plt +
     geom_jitter(
       data = ig_df_imputed,
@@ -318,7 +417,7 @@ plot_slide_z <- function(
     scale_color_manual(values = signif_colors) +
     scale_size_discrete(range = c(1.5, 3))
 
-  if (length(ellipse_df) != 0 & ellipses) {
+  if (nrow(ellipse_df) > 0 & ellipses) {
     plt <- plt +
       geom_path(
         data = ellipse_df,
@@ -328,7 +427,8 @@ plot_slide_z <- function(
       )
   }
 
-  if (length(unique(ig_df$sample_id)) > 1) {
+  sample_id_levels <- unique(ig_df$sample_id)
+  if (length(sample_id_levels) > 1) {
     plt <- plt +
       facet_wrap(. ~ sample_id)
   }
@@ -363,13 +463,13 @@ plot_slide_z <- function(
       size = paste0("|sliding Z| >", z_alpha2),
       title = paste0(
         "Sliding Z Score",
-        if (length(unique(ig_df$sample_id)) == 1) {
-          paste0(" of ", unique(ig_df$sample_id))
+        if (length(sample_id_levels) == 1) {
+          paste0(" of ", sample_id_levels)
         }
       )
     ) +
     theme_minimal() +
-    ggplot2::theme(
+    theme(
       plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(size = 10, hjust = 0.5),
       legend.title = element_text(face = "bold", hjust = 0.5)

@@ -2,7 +2,7 @@
 % Please edit documentation in R/ig_score.R
 \name{plot_slide_z}
 \alias{plot_slide_z}
-\title{Plot Slide Z Score}
+\title{Plot Sliding Z-Scores}
 \usage{
 plot_slide_z(
   phyloigseq_obj,
@@ -10,9 +10,62 @@ plot_slide_z(
   empirical_null_distribution = TRUE,
   z_alpha2 = 1.96,
   signif_colors = c((ggsci::pal_npg())(2)[2], (ggsci::pal_npg())(2)[1]),
-  ellipses = TRUE
+  ellipses = TRUE,
+  tooltip_max_chars = 40
 )
 }
+\arguments{
+\item{phyloigseq_obj}{A \link[=PhyloIgSeq-class]{PhyloIgSeq} object with \code{"slide_z"} in \code{score_names} (i.e. built
+by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} with \code{"slide_z"} among \code{scores}).}
+
+\item{sample_ids}{Optional character vector of \code{sample_id}s to restrict/order the plot to;
+\code{NULL} (default) plots every sample in \code{ig_coating}, faceted by \code{sample_id} if there is more
+than one.}
+
+\item{empirical_null_distribution}{Logical. If \code{TRUE} (default), overlay the empirical null
+distribution (\code{null_abundance}/\code{null_change}, from a second negative fraction). Falls back to
+\code{FALSE} with a \code{warning()} if \code{ig_coating} doesn't carry those columns.}
+
+\item{z_alpha2}{Single number, the \verb{|slide_z|} significance threshold used to color/size points
+\code{"signif"} vs \code{"ns"} and to label the legend/axis. Default \code{1.96} (two-sided 95\% threshold).}
+
+\item{signif_colors}{Character vector of length 2, passed to \code{scale_color_manual()}. Matched to
+the alphabetically-sorted significance categories (\code{"ns"} first, then \code{"signif"}). Defaults to
+two colors from \code{ggsci::pal_npg()}.}
+
+\item{ellipses}{Logical. If \code{TRUE} (default), overlay the confidence ellipse boundaries from
+\code{phyloigseq_obj@ellipse_coords}. Falls back to \code{FALSE} with a \code{warning()} if none are present.}
+
+\item{tooltip_max_chars}{Single integer, the maximum number of characters of each \code{tax_table}
+value (e.g. \code{taxon_name}, which may be a full ASV/OTU sequence) shown in a point's hover
+tooltip before truncating with \code{"..."}. Default \code{40}.}
+}
+\value{
+A \code{ggplot} object (one panel per \code{sample_id} if more than one is plotted).
+}
 \description{
-Plot Slide Z Score
+Draws the sliding-Z MA-plot for the sample(s) in a \code{PhyloIgSeq} object built with \code{"slide_z"}
+among its \code{scores}: log-abundance on the x-axis, log-ratio on the y-axis, colored/sized by
+whether \verb{|slide_z|} exceeds \code{z_alpha2}. Optionally overlays the null distribution (empirical or
+theoretical, see \code{\link[=get_slide_z]{get_slide_z()}}) and the confidence ellipses from
+\code{phyloigseq_obj@ellipse_coords}. Taxa with an imputed zero (\code{phyloigseq_obj@imputed_taxa}) are
+drawn jittered just past the plot's x-range instead of at their (undefined) true abundance, as
+in \code{\link[=plot_ma]{plot_ma()}}.
+}
+\examples{
+data(ps_igseq)
+pis <- getPhyloIgSeq(
+  physeq = ps_igseq,
+  sample_ids = c("sample_1", "sample_2", "sample_3"),
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  scores = c("slide_z", "palm", "kau"),
+  confidence_levels = c(0.95, 0.99)
+)
+plot_slide_z(pis)
+plot_slide_z(pis, sample_ids = "sample_1", ellipses = FALSE)
+
 }

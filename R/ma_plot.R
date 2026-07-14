@@ -330,8 +330,9 @@ plot_ma <-
       ma_plot_data$plot_data$taxon_id %in% ma_plot_data$imputed_taxa,
     ]
 
-    jitter_width <- diff(range(ma_non_imputed$A)) / 6
-    jitter_x <- min(ma_non_imputed$A) - jitter_width * 3
+    jitter <- .jitter_offset(ma_non_imputed$A)
+    jitter_width <- jitter$width
+    jitter_x <- jitter$x
 
     plt <- ggplot(ma_non_imputed, aes(x = A, y = M))
 
