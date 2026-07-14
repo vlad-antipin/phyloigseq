@@ -8,8 +8,8 @@
 A \code{\link[phyloseq]{phyloseq}} object with:
 \describe{
 \item{otu_table}{4703 taxa x 30 samples}
-\item{sample_data}{30 samples x 4 variables (sample_id,
-sorting_fraction, sex, age)}
+\item{sample_data}{30 samples x 6 variables (sample_id,
+sorting_fraction, sex, age, batch, operator)}
 \item{tax_table}{4703 taxa x 8 taxonomic ranks}
 }
 }
@@ -20,8 +20,11 @@ ps_igseq
 A small, anonymized \code{phyloseq} object derived from a mouse IgA-Seq
 experiment, intended as a toy dataset for examples and tests. Sample names and
 \code{sample_id} values have been anonymized (\code{experiment_*} /
-\code{sample_*}), and \code{sex} and \code{age} are synthetic,
-randomly-generated variables not present in the original data.
+\code{sample_*}). \code{sex} and \code{age} are synthetic, randomly-generated
+sample-level variables not present in the original data (constant across all
+rows sharing the same \code{sample_id}). \code{batch} and \code{operator} are
+synthetic, randomly-generated experiment-level variables, so they may vary
+across rows even when \code{sample_id} is the same.
 }
 \examples{
 data(ps_igseq)
