@@ -1,4 +1,50 @@
-#' Compute Other Ig Scores
+#' Compute Ig-Coating Scores From Sort-Fraction Abundances
+#'
+#' Computes a per-taxon immunoglobulin(Ig)-coating score from Ig+/Ig- (and optionally
+#' pre-sort) fraction abundances, using one of several closed-form indices. Unlike
+#' [get_slide_z()]'s sliding Z-score, these are classical, non-windowed scores computed
+#' directly from the pos/neg(/pre) abundance vectors. See `IG_SCORES` for the set of
+#' method names used elsewhere in the package's pipeline.
+#'
+#' `"purity_corrected_prob_index"`/`"purity_corrected_prob_ratio"` are experimental:
+#' their derivation (see the inline comments in the source) is not yet fully verified and
+#' they are not part of `IG_SCORES`/the main [getPhyloIgSeq()] pipeline. They remain
+#' available here for direct use while under development.
+#'
+#' @param method One of `"palm"`, `"kau"`, `"prob_index"`, `"prob_ratio"`,
+#'   `"purity_corrected_prob_index"`, `"purity_corrected_prob_ratio"`. See Details.
+#' @param pos Numeric vector of Ig+ fraction counts or relative abundances, one value per
+#'   taxon.
+#' @param neg Numeric vector of Ig- fraction counts or relative abundances, same length
+#'   as `pos`. Required by `"palm"`, `"kau"`, `"prob_ratio"`, and the `purity_corrected_*`
+#'   methods.
+#' @param pre Numeric vector of pre-sort counts or relative abundances, same length as
+#'   `pos`. Required by `"prob_index"` and the `purity_corrected_*` methods.
+#' @param ig_freq Single probability in `[0, 1]`, the total frequency of real Ig+
+#'   bacteria (P(Ig+)). Required by `"prob_index"`/`"prob_ratio"`.
+#' @param pos_purity Single probability in `[0, 1]`, P(real Ig+ | Ig+ fraction). Required
+#'   by the `purity_corrected_*` methods.
+#' @param neg_impurity Single probability in `[0, 1]`, P(real Ig+ | Ig- fraction).
+#'   Required by the `purity_corrected_*` methods.
+#' @param pos_fraction Single probability in `[0, 1]`, P(Ig+ fraction). Required by the
+#'   `purity_corrected_*` methods.
+#' @param neg_fraction Single probability in `[0, 1]`, P(Ig- fraction). Required by the
+#'   `purity_corrected_*` methods.
+#'
+#' @return A numeric vector of the same length as `pos`, one score per taxon. `NaN`/
+#'   infinite values (e.g. from a zero-abundance taxon in a denominator) are converted to
+#'   `NA`.
+#'
+#' @examples
+#' pos <- c(50, 30, 20, 5)
+#' neg <- c(5, 10, 40, 45)
+#' pre <- c(20, 20, 20, 40)
+#'
+#' compute_ig_score(method = "palm", pos = pos, neg = neg)
+#' compute_ig_score(method = "kau", pos = pos, neg = neg)
+#' compute_ig_score(method = "prob_index", pos = pos, pre = pre, ig_freq = 0.3)
+#' compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, ig_freq = 0.3)
+#'
 #' @export
 compute_ig_score <- function(
   method = c(
@@ -21,6 +67,8 @@ compute_ig_score <- function(
   pos_fraction = NULL, # P(Ig+ fraction)
   neg_fraction = NULL # P(Ig- fraction)
 ) {
+  method <- match.arg(method)
+
   # Transform counts to relative abundances
   if (is.numeric(pos)) {
     # P(taxon | Ig+ fraction)
@@ -67,53 +115,53 @@ compute_ig_score <- function(
     neg_impurity <- NA
   }
 
-  if (method == "palm") {
-    score <- pos_abund / neg_abund
-  } else if (method == "kau") {
-    # minus to negate the fact that log10(pos_abund*neg_abund) is negative
-    score <- -log2(pos_abund / neg_abund) / log10(pos_abund * neg_abund)
-  } else if (method == "prob_index") {
-    score <- pos_abund * ig_freq / pre_abund # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
-  } else if (method == "prob_ratio") {
-    score <- log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq)))
-  } else if (method == "purity_corrected_prob_index") {
-    # TODO: verify the proof!!!
-    # Here, we discriminate `real Ig+` and `Ig+ fraction` events, assuming that
-    # the purity of a fraction is independent of a taxon abundance in this fraction
-    # i.e. independence of `real Ig+` and `taxon` events conditional on knowing
-    # the fraction (Ig+/-):
-    #
-    # P(taxon & real Ig+ | fraction) = P(taxon | fraction) * P(real Ig+ | fraction)
-    # flu -> temp -> test => P(test & flu | temp) = P(flu | temp) + P(test | temp)
-    # which corresponds to this Bayesian network:
-    # taxon -> fraction -> real Ig+ (knowing fraction breaks dependence between `taxon` and `real Ig+`)
-    # BUT: theoretically, the correct network should be:
-    # taxon -> real Ig+ -> fraction
-    # But this will require conditioning on `real Ig+` and knowing P(taxon | real Ig+)
-    # which is technically unavailable :(
-    #
-    # So this assumption is not totally justified theoretically, but is probably
-    # still better in case of low fraction purity (?) - to verify!
-    #
-    # P(real Ig+ | taxon) =
-    #   (   P(taxon | Ig+ fraction) * P(real Ig+ | Ig+ fraction) * P(Ig+ fraction)
-    #     + P(taxon | Ig- fraction) * P(real Ig+ | Ig- fraction) * P(Ig- fraction)
-    #    ) / P(taxon)
-    score <- (pos_abund *
-      pos_purity *
-      pos_fraction +
-      neg_abund * neg_impurity * neg_fraction) /
-      pre_abund
-  } else if (method == "purity_corrected_prob_ratio") {
-    # TODO: verify!
-    prob <- pos_abund *
-      pos_purity *
-      pos_fraction +
-      neg_abund * neg_impurity * neg_fraction
-    score <- log2(prob / (1 - prob))
-  } else {
-    stop("Wrong score type")
-  }
+  score <- switch(
+    method,
+    palm = pos_abund / neg_abund,
+    kau = {
+      # minus to negate the fact that log10(pos_abund*neg_abund) is negative
+      -log2(pos_abund / neg_abund) / log10(pos_abund * neg_abund)
+    },
+    prob_index = pos_abund * ig_freq / pre_abund, # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
+    prob_ratio = log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq))),
+    purity_corrected_prob_index = {
+      # TODO: verify the proof!!!
+      # Here, we discriminate `real Ig+` and `Ig+ fraction` events, assuming that
+      # the purity of a fraction is independent of a taxon abundance in this fraction
+      # i.e. independence of `real Ig+` and `taxon` events conditional on knowing
+      # the fraction (Ig+/-):
+      #
+      # P(taxon & real Ig+ | fraction) = P(taxon | fraction) * P(real Ig+ | fraction)
+      # flu -> temp -> test => P(test & flu | temp) = P(flu | temp) + P(test | temp)
+      # which corresponds to this Bayesian network:
+      # taxon -> fraction -> real Ig+ (knowing fraction breaks dependence between `taxon` and `real Ig+`)
+      # BUT: theoretically, the correct network should be:
+      # taxon -> real Ig+ -> fraction
+      # But this will require conditioning on `real Ig+` and knowing P(taxon | real Ig+)
+      # which is technically unavailable :(
+      #
+      # So this assumption is not totally justified theoretically, but is probably
+      # still better in case of low fraction purity (?) - to verify!
+      #
+      # P(real Ig+ | taxon) =
+      #   (   P(taxon | Ig+ fraction) * P(real Ig+ | Ig+ fraction) * P(Ig+ fraction)
+      #     + P(taxon | Ig- fraction) * P(real Ig+ | Ig- fraction) * P(Ig- fraction)
+      #    ) / P(taxon)
+      (pos_abund *
+        pos_purity *
+        pos_fraction +
+        neg_abund * neg_impurity * neg_fraction) /
+        pre_abund
+    },
+    purity_corrected_prob_ratio = {
+      # TODO: verify!
+      prob <- pos_abund *
+        pos_purity *
+        pos_fraction +
+        neg_abund * neg_impurity * neg_fraction
+      log2(prob / (1 - prob))
+    }
+  )
 
   score[is.nan(score) | is.infinite(score)] <- NA
 
@@ -874,7 +922,36 @@ agglomPhyloIgSeq <- function(
   return(phyloigseq_obj)
 }
 
-#' Convert Ig Scores to Longer Format
+#' Convert Ig Scores to Wide (Sample x Taxon) Format
+#'
+#' Pivots a long-format `ig_coating` (or agglomerated `ig_coating`) data frame — one row
+#' per sample/taxon/score — into one wide sample-by-taxon matrix per score, suitable for
+#' export or for feeding into ordination/heatmap functions that expect a taxa-by-samples
+#' or samples-by-taxa table.
+#'
+#' @param ig_coating_agglom A data frame with (at least) `sample_id`, `taxon_id`, and one
+#'   column per score, such as the `ig_coating` slot of a [PhyloIgSeq-class] object (see
+#'   [getPhyloIgSeq()]/[agglomPhyloIgSeq()]).
+#' @param scores Character vector of score column names to pivot, one wide data frame
+#'   produced per score. Defaults to `NULL`, meaning every column of `ig_coating_agglom`
+#'   also present in `IG_SCORES`.
+#' @param shared_by Minimum fraction (in `[0, 1]`) of samples that must have a non-`NA`
+#'   value for a taxon for that taxon's column to be kept in the output; taxa below this
+#'   threshold are dropped. Defaults to `NULL`, meaning `0` (keep every taxon).
+#'
+#' @return A named list, one element per entry of `scores`, each a wide data frame with
+#'   one row per `sample_id` and one column per `taxon_id` (plus `sample_id` itself)
+#'   holding that score's values.
+#'
+#' @examples
+#' ig_coating_agglom <- data.frame(
+#'   sample_id = rep(paste0("sample_", 1:3), each = 2),
+#'   taxon_id = rep(c("taxon_1", "taxon_2"), times = 3),
+#'   slide_z = rnorm(6),
+#'   palm = runif(6)
+#' )
+#' to_wider_ig_score(ig_coating_agglom, scores = c("slide_z", "palm"))
+#'
 #' @export
 to_wider_ig_score <- function(
   ig_coating_agglom,

@@ -2,7 +2,7 @@
 % Please edit documentation in R/ig_score.R
 \name{compute_ig_score}
 \alias{compute_ig_score}
-\title{Compute Other Ig Scores}
+\title{Compute Ig-Coating Scores From Sort-Fraction Abundances}
 \usage{
 compute_ig_score(
   method = c("palm", "kau", "prob_index", "prob_ratio", "purity_corrected_prob_index",
@@ -17,6 +17,61 @@ compute_ig_score(
   neg_fraction = NULL
 )
 }
+\arguments{
+\item{method}{One of \code{"palm"}, \code{"kau"}, \code{"prob_index"}, \code{"prob_ratio"},
+\code{"purity_corrected_prob_index"}, \code{"purity_corrected_prob_ratio"}. See Details.}
+
+\item{pos}{Numeric vector of Ig+ fraction counts or relative abundances, one value per
+taxon.}
+
+\item{neg}{Numeric vector of Ig- fraction counts or relative abundances, same length
+as \code{pos}. Required by \code{"palm"}, \code{"kau"}, \code{"prob_ratio"}, and the \verb{purity_corrected_*}
+methods.}
+
+\item{pre}{Numeric vector of pre-sort counts or relative abundances, same length as
+\code{pos}. Required by \code{"prob_index"} and the \verb{purity_corrected_*} methods.}
+
+\item{ig_freq}{Single probability in \verb{[0, 1]}, the total frequency of real Ig+
+bacteria (P(Ig+)). Required by \code{"prob_index"}/\code{"prob_ratio"}.}
+
+\item{pos_purity}{Single probability in \verb{[0, 1]}, P(real Ig+ | Ig+ fraction). Required
+by the \verb{purity_corrected_*} methods.}
+
+\item{neg_impurity}{Single probability in \verb{[0, 1]}, P(real Ig+ | Ig- fraction).
+Required by the \verb{purity_corrected_*} methods.}
+
+\item{pos_fraction}{Single probability in \verb{[0, 1]}, P(Ig+ fraction). Required by the
+\verb{purity_corrected_*} methods.}
+
+\item{neg_fraction}{Single probability in \verb{[0, 1]}, P(Ig- fraction). Required by the
+\verb{purity_corrected_*} methods.}
+}
+\value{
+A numeric vector of the same length as \code{pos}, one score per taxon. \code{NaN}/
+infinite values (e.g. from a zero-abundance taxon in a denominator) are converted to
+\code{NA}.
+}
 \description{
-Compute Other Ig Scores
+Computes a per-taxon immunoglobulin(Ig)-coating score from Ig+/Ig- (and optionally
+pre-sort) fraction abundances, using one of several closed-form indices. Unlike
+\code{\link[=get_slide_z]{get_slide_z()}}'s sliding Z-score, these are classical, non-windowed scores computed
+directly from the pos/neg(/pre) abundance vectors. See \code{IG_SCORES} for the set of
+method names used elsewhere in the package's pipeline.
+}
+\details{
+\code{"purity_corrected_prob_index"}/\code{"purity_corrected_prob_ratio"} are experimental:
+their derivation (see the inline comments in the source) is not yet fully verified and
+they are not part of \code{IG_SCORES}/the main \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} pipeline. They remain
+available here for direct use while under development.
+}
+\examples{
+pos <- c(50, 30, 20, 5)
+neg <- c(5, 10, 40, 45)
+pre <- c(20, 20, 20, 40)
+
+compute_ig_score(method = "palm", pos = pos, neg = neg)
+compute_ig_score(method = "kau", pos = pos, neg = neg)
+compute_ig_score(method = "prob_index", pos = pos, pre = pre, ig_freq = 0.3)
+compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, ig_freq = 0.3)
+
 }

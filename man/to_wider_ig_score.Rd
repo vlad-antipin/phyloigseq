@@ -2,10 +2,41 @@
 % Please edit documentation in R/ig_score.R
 \name{to_wider_ig_score}
 \alias{to_wider_ig_score}
-\title{Convert Ig Scores to Longer Format}
+\title{Convert Ig Scores to Wide (Sample x Taxon) Format}
 \usage{
 to_wider_ig_score(ig_coating_agglom, scores = NULL, shared_by = NULL)
 }
+\arguments{
+\item{ig_coating_agglom}{A data frame with (at least) \code{sample_id}, \code{taxon_id}, and one
+column per score, such as the \code{ig_coating} slot of a \link[=PhyloIgSeq-class]{PhyloIgSeq} object (see
+\code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}/\code{\link[=agglomPhyloIgSeq]{agglomPhyloIgSeq()}}).}
+
+\item{scores}{Character vector of score column names to pivot, one wide data frame
+produced per score. Defaults to \code{NULL}, meaning every column of \code{ig_coating_agglom}
+also present in \code{IG_SCORES}.}
+
+\item{shared_by}{Minimum fraction (in \verb{[0, 1]}) of samples that must have a non-\code{NA}
+value for a taxon for that taxon's column to be kept in the output; taxa below this
+threshold are dropped. Defaults to \code{NULL}, meaning \code{0} (keep every taxon).}
+}
+\value{
+A named list, one element per entry of \code{scores}, each a wide data frame with
+one row per \code{sample_id} and one column per \code{taxon_id} (plus \code{sample_id} itself)
+holding that score's values.
+}
 \description{
-Convert Ig Scores to Longer Format
+Pivots a long-format \code{ig_coating} (or agglomerated \code{ig_coating}) data frame — one row
+per sample/taxon/score — into one wide sample-by-taxon matrix per score, suitable for
+export or for feeding into ordination/heatmap functions that expect a taxa-by-samples
+or samples-by-taxa table.
+}
+\examples{
+ig_coating_agglom <- data.frame(
+  sample_id = rep(paste0("sample_", 1:3), each = 2),
+  taxon_id = rep(c("taxon_1", "taxon_2"), times = 3),
+  slide_z = rnorm(6),
+  palm = runif(6)
+)
+to_wider_ig_score(ig_coating_agglom, scores = c("slide_z", "palm"))
+
 }
