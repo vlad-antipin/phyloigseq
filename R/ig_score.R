@@ -1357,149 +1357,270 @@ to_wider_ig_score <- function(
   return(score_list)
 }
 
-#' Convert Ig scores from PhyloIgSeq object to phyloseq
-#' @export
-PhyloIgSeq_to_phyloseq <-
-  function(
-    phyloigseq_obj,
-    score_name,
-    shared_by = NULL, # what fraction of samples has this taxon
-    imputation_method = NULL,
-    central_tendency = NULL, # "mean", "median" or "mode"
-    nb_neighbors = 5,
-    svd_rank = 50L, # rank.max for softImpute (SVD path only)
-    svd_lambda = 1 # regularization lambda for softImpute (SVD path only)
-  ) {
-    # --- SVD path: build incomplete_otu_table without materialising a dense matrix ---
-    if (identical(imputation_method, "SVD")) {
-      eff_shared_by <- if (is.null(shared_by)) 0 else shared_by
+#' Extract `sample_data`/`tax_table` from a `PhyloIgSeq` object for `phyloseq` export
+#'
+#' Shared by both [PhyloIgSeq_to_phyloseq()] code paths: drops the `sample_id` column
+#' from `sample_data` (moved to rownames instead, as `phyloseq` expects) and the
+#' `taxon_id` column from `tax_table` (likewise moved to rownames), after dropping any
+#' `tax_table` row with a missing `taxon_id`.
+#'
+#' @param phyloigseq_obj A `PhyloIgSeq` object.
+#' @return A list with elements `sample_data` and `tax_table`, both matrices/data
+#'   frames ready to pass to `phyloseq::sample_data()`/`phyloseq::tax_table()`.
+#' @noRd
+.phyloigseq_export_metadata <- function(phyloigseq_obj) {
+  sample_data_ig_score <- phyloigseq_obj@sample_data[,
+    !colnames(phyloigseq_obj@sample_data) %in% "sample_id",
+    drop = FALSE
+  ]
+  rownames(sample_data_ig_score) <- phyloigseq_obj@sample_data$sample_id
 
-      ig_obs <- stats::na.omit(
-        phyloigseq_obj@ig_coating[, c("sample_id", "taxon_id", score_name)]
-      )
+  tax_table_ig_score <- as.matrix(phyloigseq_obj@tax_table)
+  tax_table_ig_score <- tax_table_ig_score[
+    !is.na(tax_table_ig_score[, "taxon_id"]), ,
+    drop = FALSE
+  ]
+  rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
+  tax_table_ig_score <- tax_table_ig_score[,
+    colnames(tax_table_ig_score) != "taxon_id",
+    drop = FALSE
+  ]
 
-      samp_lvls <- phyloigseq_obj@sample_data$sample_id
-      taxa_lvls <- unique(ig_obs$taxon_id)
+  list(sample_data = sample_data_ig_score, tax_table = tax_table_ig_score)
+}
 
-      if (eff_shared_by > 0) {
-        n_samp <- length(samp_lvls)
-        obs_frac <- tapply(ig_obs$sample_id, ig_obs$taxon_id, function(s) {
-          length(unique(s)) / n_samp
-        })
-        taxa_lvls <- names(obs_frac[obs_frac >= eff_shared_by])
-        ig_obs <- ig_obs[ig_obs$taxon_id %in% taxa_lvls, , drop = FALSE]
-      }
+#' SVD/`incomplete_otu_table` path for [PhyloIgSeq_to_phyloseq()]
+#'
+#' Builds an [incomplete_otu_table-class] directly from the observed
+#' (sample, taxon, score) triples, without ever materialising a dense samples-by-taxa
+#' matrix, then fits a low-rank `softImpute::softImpute()` approximation used to impute
+#' on demand.
+#'
+#' @inheritParams PhyloIgSeq_to_phyloseq
+#' @return A `phyloseq` object whose `otu_table` is an [incomplete_otu_table-class].
+#' @noRd
+.PhyloIgSeq_to_phyloseq_svd <- function(
+  phyloigseq_obj,
+  score_name,
+  shared_by,
+  svd_rank,
+  svd_lambda
+) {
+  eff_shared_by <- if (is.null(shared_by)) 0 else shared_by
 
-      i_idx <- match(ig_obs$sample_id, samp_lvls)
-      j_idx <- match(ig_obs$taxon_id, taxa_lvls)
+  ig_obs <- stats::na.omit(
+    phyloigseq_obj@ig_coating[, c("sample_id", "taxon_id", score_name)]
+  )
 
-      X_inc <- softImpute::Incomplete(i_idx, j_idx, ig_obs[[score_name]])
-      dimnames(X_inc) <- list(samp_lvls, taxa_lvls)
+  samp_lvls <- phyloigseq_obj@sample_data$sample_id
+  taxa_lvls <- unique(ig_obs$taxon_id)
 
-      # Dense NA matrix for softImpute (passing Incomplete directly is slower)
-      n_s <- length(samp_lvls)
-      n_t <- length(taxa_lvls)
-      X_dense <- matrix(
-        NA_real_,
-        nrow = n_s,
-        ncol = n_t,
-        dimnames = list(samp_lvls, taxa_lvls)
-      )
-      if (length(X_inc@x) > 0L) {
-        col_idx <- rep(seq_len(n_t), diff(X_inc@p))
-        row_idx <- X_inc@i + 1L
-        X_dense[cbind(row_idx, col_idx)] <- X_inc@x
-      }
-
-      col_means <- colMeans(X_dense, na.rm = TRUE)
-      col_means[is.nan(col_means)] <- 0
-      X_centered <- sweep(X_dense, 2, col_means, "-")
-
-      fit <- softImpute::softImpute(
-        X_centered,
-        rank.max = svd_rank,
-        lambda = svd_lambda,
-        type = "svd"
-      )
-
-      ot_ig <- incomplete_otu_table(
-        X_inc = X_inc,
-        svd_fit = list(u = fit$u, d = fit$d, v = fit$v),
-        col_means = col_means
-      )
-
-      # Sample data
-      sample_data_ig_score <- phyloigseq_obj@sample_data[,
-        !colnames(phyloigseq_obj@sample_data) %in% "sample_id",
-        drop = FALSE
-      ]
-      rownames(sample_data_ig_score) <- phyloigseq_obj@sample_data$sample_id
-
-      # Taxonomy table
-      tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
-      tax_table_ig_score <- tax_table_ig_score[
-        !is.na(tax_table_ig_score[, "taxon_id"]), ,
-        drop = FALSE
-      ]
-      rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
-      tax_table_ig_score <- tax_table_ig_score[,
-        colnames(tax_table_ig_score) != "taxon_id",
-        drop = FALSE
-      ]
-
-      return(phyloseq(
-        ot_ig,
-        phyloseq::sample_data(sample_data_ig_score),
-        phyloseq::tax_table(tax_table_ig_score)
-      ))
-    }
-
-    # --- Legacy path (NULL / "KNN" / "Central Tendency" / "Replace NA with 0") ---
-    igseq_df <-
-      PhyloIgSeq::to_wider_ig_score(
-        ig_coating_agglom = phyloigseq_obj@ig_coating,
-        scores = score_name,
-        shared_by = shared_by
-      )[[score_name]]
-
-    # "OTU table" - Ig scores instead of abundances
-    otu_table_ig_score <- igseq_df
-    otu_table_ig_score <- as.matrix(otu_table_ig_score[
-      ,
-      !colnames(otu_table_ig_score) %in% c("sample_id", "NA")
-    ])
-    rownames(otu_table_ig_score) <- igseq_df$sample_id
-    if (!is.null(imputation_method)) {
-      otu_table_ig_score <- PhyloIgSeq::dataImpute(
-        otu_table_ig_score,
-        method = imputation_method,
-        central.tendency = central_tendency,
-        nb.neighbors = nb_neighbors
-      )
-    }
-
-    # Sample data
-    sample_data_ig_score <- phyloigseq_obj@sample_data[,
-      !colnames(phyloigseq_obj@sample_data) %in% c("sample_id"),
-      drop = FALSE
-    ]
-    rownames(sample_data_ig_score) <- phyloigseq_obj@sample_data$sample_id
-
-    # Taxonomy table
-    tax_table_ig_score <- phyloigseq_obj@tax_table %>% as.matrix()
-    tax_table_ig_score <- tax_table_ig_score[
-      !is.na(tax_table_ig_score[, "taxon_id"]),
-    ]
-    rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
-    tax_table_ig_score <- tax_table_ig_score[
-      ,
-      colnames(tax_table_ig_score) != "taxon_id"
-    ]
-
-    # Put all in one phyloseq object
-    return(phyloseq(
-      otu_table(otu_table_ig_score, taxa_are_rows = FALSE),
-      sample_data(sample_data_ig_score),
-      tax_table(tax_table_ig_score)
-    ))
+  if (eff_shared_by > 0) {
+    n_samp <- length(samp_lvls)
+    obs_frac <- tapply(ig_obs$sample_id, ig_obs$taxon_id, function(s) {
+      length(unique(s)) / n_samp
+    })
+    taxa_lvls <- names(obs_frac[obs_frac >= eff_shared_by])
+    ig_obs <- ig_obs[ig_obs$taxon_id %in% taxa_lvls, , drop = FALSE]
   }
+
+  i_idx <- match(ig_obs$sample_id, samp_lvls)
+  j_idx <- match(ig_obs$taxon_id, taxa_lvls)
+
+  X_inc <- softImpute::Incomplete(i_idx, j_idx, ig_obs[[score_name]])
+  dimnames(X_inc) <- list(samp_lvls, taxa_lvls)
+
+  # Dense NA matrix for softImpute (passing Incomplete directly is slower)
+  n_s <- length(samp_lvls)
+  n_t <- length(taxa_lvls)
+  X_dense <- matrix(
+    NA_real_,
+    nrow = n_s,
+    ncol = n_t,
+    dimnames = list(samp_lvls, taxa_lvls)
+  )
+  if (length(X_inc@x) > 0L) {
+    col_idx <- rep(seq_len(n_t), diff(X_inc@p))
+    row_idx <- X_inc@i + 1L
+    X_dense[cbind(row_idx, col_idx)] <- X_inc@x
+  }
+
+  col_means <- colMeans(X_dense, na.rm = TRUE)
+  col_means[is.nan(col_means)] <- 0
+  X_centered <- sweep(X_dense, 2, col_means, "-")
+
+  fit <- softImpute::softImpute(
+    X_centered,
+    rank.max = svd_rank,
+    lambda = svd_lambda,
+    type = "svd"
+  )
+
+  ot_ig <- incomplete_otu_table(
+    X_inc = X_inc,
+    svd_fit = list(u = fit$u, d = fit$d, v = fit$v),
+    col_means = col_means
+  )
+
+  metadata <- .phyloigseq_export_metadata(phyloigseq_obj)
+
+  phyloseq(
+    ot_ig,
+    phyloseq::sample_data(metadata$sample_data),
+    phyloseq::tax_table(metadata$tax_table)
+  )
+}
+
+#' Dense-matrix path for [PhyloIgSeq_to_phyloseq()]
+#'
+#' Pivots `score_name` to a dense samples-by-taxa matrix via [to_wider_ig_score()] and
+#' (unless `imputation_method` is `NULL`) imputes its `NA`s with [dataImpute()].
+#'
+#' @inheritParams PhyloIgSeq_to_phyloseq
+#' @return A `phyloseq` object with a standard dense `otu_table`.
+#' @noRd
+.PhyloIgSeq_to_phyloseq_dense <- function(
+  phyloigseq_obj,
+  score_name,
+  shared_by,
+  imputation_method,
+  central_tendency,
+  nb_neighbors
+) {
+  igseq_df <- PhyloIgSeq::to_wider_ig_score(
+    ig_coating_agglom = phyloigseq_obj@ig_coating,
+    scores = score_name,
+    shared_by = shared_by
+  )[[score_name]]
+
+  # "OTU table" - Ig scores instead of abundances
+  otu_table_ig_score <- as.matrix(igseq_df[,
+    !colnames(igseq_df) %in% c("sample_id", "NA")
+  ])
+  rownames(otu_table_ig_score) <- igseq_df$sample_id
+  if (!is.null(imputation_method)) {
+    otu_table_ig_score <- PhyloIgSeq::dataImpute(
+      otu_table_ig_score,
+      method = imputation_method,
+      central.tendency = central_tendency,
+      nb.neighbors = nb_neighbors
+    )
+  }
+
+  metadata <- .phyloigseq_export_metadata(phyloigseq_obj)
+
+  phyloseq(
+    otu_table(otu_table_ig_score, taxa_are_rows = FALSE),
+    sample_data(metadata$sample_data),
+    tax_table(metadata$tax_table)
+  )
+}
+
+#' Convert Ig Scores From A PhyloIgSeq Object To A phyloseq Object
+#'
+#' Reshapes one score column of `phyloigseq_obj@ig_coating` (long: one row per
+#' sample/taxon) into a samples-by-taxa "OTU table" holding score values instead of
+#' abundances, then wraps it together with `phyloigseq_obj`'s `sample_data`/`tax_table`
+#' into a standard `phyloseq` object — so downstream `phyloseq`-ecosystem analyses
+#' (ordination, heatmaps, etc.) can be run directly on Ig-coating scores. Used, for
+#' example, to feed a `PhyloIgSeq` object's scores into [get_alpha_diversity()]/
+#' [get_beta_diversity()].
+#'
+#' Two independent code paths exist because `imputation_method = "SVD"` uses a
+#' fundamentally different representation of the score matrix than the others:
+#' \itemize{
+#'   \item `"SVD"` never densifies. Missing (sample, taxon) score entries are kept as
+#'     structurally missing (not zero) in an [incomplete_otu_table-class] backed by
+#'     `softImpute::Incomplete()`, and `softImpute::softImpute()` fits a low-rank
+#'     approximation used to impute on demand. Suitable when most (sample, taxon) pairs
+#'     are unobserved, e.g. a raw ASV/OTU-level score matrix.
+#'   \item Any other value (`NULL`, `"KNN"`, `"Central Tendency"`, `"Replace NA with 0"`,
+#'     the values [dataImpute()] understands) pivots to a dense samples-by-taxa matrix
+#'     via [to_wider_ig_score()] first, then (unless `NULL`) imputes the resulting `NA`s
+#'     with [dataImpute()].
+#' }
+#'
+#' @param phyloigseq_obj A `PhyloIgSeq` object, e.g. from [getPhyloIgSeq()]/
+#'   [agglomPhyloIgSeq()].
+#' @param score_name Name of one column of `phyloigseq_obj@ig_coating` (e.g.
+#'   `"slide_z"`) to convert into the returned object's `otu_table`.
+#' @param shared_by Minimum fraction (in `[0, 1]`) of samples that must have a non-`NA`
+#'   `score_name` value for a taxon to be kept; taxa below this threshold are dropped.
+#'   Defaults to `NULL`, meaning `0` (keep every taxon with at least one observed
+#'   value).
+#' @param imputation_method One of `NULL` (no imputation — the returned `otu_table`
+#'   keeps its missing entries), `"SVD"` (see Details), `"KNN"`, `"Central Tendency"`,
+#'   or `"Replace NA with 0"` (the latter three implemented by [dataImpute()]).
+#'   Defaults to `NULL`.
+#' @param central_tendency Passed through to [dataImpute()]'s `central.tendency` when
+#'   `imputation_method = "Central Tendency"`: one of `"mean"`, `"median"`, `"mode"`.
+#'   Ignored otherwise.
+#' @param nb_neighbors Passed through to [dataImpute()]'s `nb.neighbors` when
+#'   `imputation_method = "KNN"`: number of neighbors used by `VIM::kNN()`. Ignored
+#'   otherwise. Defaults to `5`, a common rule-of-thumb starting point for k-NN
+#'   imputation — tune for your data.
+#' @param svd_rank `rank.max` passed to `softImpute::softImpute()`: maximum rank of the
+#'   low-rank approximation. Only used when `imputation_method = "SVD"`. Defaults to
+#'   `50L`, an arbitrary-but-generous default — lower it for small taxa counts or to
+#'   speed up fitting, tune higher only if cross-validation supports it.
+#' @param svd_lambda `lambda` (nuclear-norm regularization strength) passed to
+#'   `softImpute::softImpute()`. Only used when `imputation_method = "SVD"`. Defaults
+#'   to `1`, `softImpute::softImpute()`'s own default — tune for your data.
+#'
+#' @return A `phyloseq` object whose `otu_table` holds `score_name` values (samples as
+#'   rows): an [incomplete_otu_table-class] when `imputation_method = "SVD"`, otherwise
+#'   a standard dense `phyloseq::otu_table`.
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   second_negative_fraction_name = "Neg2",
+#'   scores = c("slide_z", "palm")
+#' )
+#' ps_svd <- PhyloIgSeq_to_phyloseq(
+#'   pis,
+#'   score_name = "slide_z",
+#'   imputation_method = "SVD",
+#'   svd_rank = 5L
+#' )
+#' ps_dense <- PhyloIgSeq_to_phyloseq(
+#'   pis,
+#'   score_name = "palm",
+#'   imputation_method = "Replace NA with 0"
+#' )
+#'
+#' @export
+PhyloIgSeq_to_phyloseq <- function(
+  phyloigseq_obj,
+  score_name,
+  shared_by = NULL,
+  imputation_method = NULL,
+  central_tendency = NULL,
+  nb_neighbors = 5,
+  svd_rank = 50L,
+  svd_lambda = 1
+) {
+  if (identical(imputation_method, "SVD")) {
+    .PhyloIgSeq_to_phyloseq_svd(
+      phyloigseq_obj = phyloigseq_obj,
+      score_name = score_name,
+      shared_by = shared_by,
+      svd_rank = svd_rank,
+      svd_lambda = svd_lambda
+    )
+  } else {
+    .PhyloIgSeq_to_phyloseq_dense(
+      phyloigseq_obj = phyloigseq_obj,
+      score_name = score_name,
+      shared_by = shared_by,
+      imputation_method = imputation_method,
+      central_tendency = central_tendency,
+      nb_neighbors = nb_neighbors
+    )
+  }
+}

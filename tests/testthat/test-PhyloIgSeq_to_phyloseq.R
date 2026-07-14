@@ -229,3 +229,65 @@ test_that("imputation_method = 'Replace NA with 0' returns standard dense otu_ta
   mat_r0 <- as(ot_r0, "matrix")
   expect_false(anyNA(mat_r0))
 })
+
+# `f$pis` includes one all-NA-taxon row ("T_NA") specifically to exercise `na.omit()`
+# on the SVD path (see above); on the dense path that produces an all-NA otu_table
+# column, which VIM::kNN() errors on ungracefully ("subscript out of bounds") rather
+# than skipping. That's a pre-existing dataImpute()/VIM fragility, not something to
+# paper over here, so the KNN/Central Tendency tests below use a fixture with that row
+# excluded, keeping them focused on the imputation branch itself.
+pis_no_na_taxon <- f$pis
+pis_no_na_taxon@ig_coating <- pis_no_na_taxon@ig_coating[
+  pis_no_na_taxon@ig_coating$taxon_id != "T_NA",
+]
+
+test_that("imputation_method = 'KNN' returns standard dense otu_table with no NAs", {
+  ps_knn <- PhyloIgSeq_to_phyloseq(
+    pis_no_na_taxon,
+    score_name = "slide_z",
+    imputation_method = "KNN",
+    nb_neighbors = 3
+  )
+  ot_knn <- phyloseq::otu_table(ps_knn)
+  expect_s4_class(ot_knn, "otu_table")
+  expect_false(is(ot_knn, "incomplete_otu_table"))
+  mat_knn <- as(ot_knn, "matrix")
+  expect_false(anyNA(mat_knn))
+  # Observed entries are untouched by kNN imputation
+  for (k in seq_along(f$i)) {
+    si <- f$samp_nms[f$i[k]]
+    ti <- f$taxa_nms[f$j[k]]
+    expect_equal(mat_knn[si, ti], f$vals[k])
+  }
+})
+
+test_that("imputation_method = 'Central Tendency' fills NAs with the per-taxon median", {
+  ps_ct <- PhyloIgSeq_to_phyloseq(
+    pis_no_na_taxon,
+    score_name = "slide_z",
+    imputation_method = "Central Tendency",
+    central_tendency = "median"
+  )
+  ot_ct <- phyloseq::otu_table(ps_ct)
+  expect_s4_class(ot_ct, "otu_table")
+  expect_false(is(ot_ct, "incomplete_otu_table"))
+  mat_ct <- as(ot_ct, "matrix")
+  expect_false(anyNA(mat_ct))
+
+  # Every unobserved (sample, taxon) cell gets filled with that taxon's observed median
+  observed_by_taxon <- split(f$vals, f$taxa_nms[f$j])
+  for (ti in f$taxa_nms) {
+    expected_median <- median(observed_by_taxon[[ti]])
+    unobserved_samples <- setdiff(
+      f$samp_nms,
+      f$samp_nms[f$i[f$taxa_nms[f$j] == ti]]
+    )
+    for (si in unobserved_samples) {
+      expect_equal(
+        mat_ct[si, ti],
+        expected_median,
+        label = paste0("mat_ct[", si, ",", ti, "]")
+      )
+    }
+  }
+})

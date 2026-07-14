@@ -2,7 +2,7 @@
 % Please edit documentation in R/ig_score.R
 \name{PhyloIgSeq_to_phyloseq}
 \alias{PhyloIgSeq_to_phyloseq}
-\title{Convert Ig scores from PhyloIgSeq object to phyloseq}
+\title{Convert Ig Scores From A PhyloIgSeq Object To A phyloseq Object}
 \usage{
 PhyloIgSeq_to_phyloseq(
   phyloigseq_obj,
@@ -15,6 +15,91 @@ PhyloIgSeq_to_phyloseq(
   svd_lambda = 1
 )
 }
+\arguments{
+\item{phyloigseq_obj}{A \code{PhyloIgSeq} object, e.g. from \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}/
+\code{\link[=agglomPhyloIgSeq]{agglomPhyloIgSeq()}}.}
+
+\item{score_name}{Name of one column of \code{phyloigseq_obj@ig_coating} (e.g.
+\code{"slide_z"}) to convert into the returned object's \code{otu_table}.}
+
+\item{shared_by}{Minimum fraction (in \verb{[0, 1]}) of samples that must have a non-\code{NA}
+\code{score_name} value for a taxon to be kept; taxa below this threshold are dropped.
+Defaults to \code{NULL}, meaning \code{0} (keep every taxon with at least one observed
+value).}
+
+\item{imputation_method}{One of \code{NULL} (no imputation — the returned \code{otu_table}
+keeps its missing entries), \code{"SVD"} (see Details), \code{"KNN"}, \code{"Central Tendency"},
+or \code{"Replace NA with 0"} (the latter three implemented by \code{\link[=dataImpute]{dataImpute()}}).
+Defaults to \code{NULL}.}
+
+\item{central_tendency}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{central.tendency} when
+\code{imputation_method = "Central Tendency"}: one of \code{"mean"}, \code{"median"}, \code{"mode"}.
+Ignored otherwise.}
+
+\item{nb_neighbors}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{nb.neighbors} when
+\code{imputation_method = "KNN"}: number of neighbors used by \code{VIM::kNN()}. Ignored
+otherwise. Defaults to \code{5}, a common rule-of-thumb starting point for k-NN
+imputation — tune for your data.}
+
+\item{svd_rank}{\code{rank.max} passed to \code{softImpute::softImpute()}: maximum rank of the
+low-rank approximation. Only used when \code{imputation_method = "SVD"}. Defaults to
+\code{50L}, an arbitrary-but-generous default — lower it for small taxa counts or to
+speed up fitting, tune higher only if cross-validation supports it.}
+
+\item{svd_lambda}{\code{lambda} (nuclear-norm regularization strength) passed to
+\code{softImpute::softImpute()}. Only used when \code{imputation_method = "SVD"}. Defaults
+to \code{1}, \code{softImpute::softImpute()}'s own default — tune for your data.}
+}
+\value{
+A \code{phyloseq} object whose \code{otu_table} holds \code{score_name} values (samples as
+rows): an \link[=incomplete_otu_table-class]{incomplete_otu_table} when \code{imputation_method = "SVD"}, otherwise
+a standard dense \code{phyloseq::otu_table}.
+}
 \description{
-Convert Ig scores from PhyloIgSeq object to phyloseq
+Reshapes one score column of \code{phyloigseq_obj@ig_coating} (long: one row per
+sample/taxon) into a samples-by-taxa "OTU table" holding score values instead of
+abundances, then wraps it together with \code{phyloigseq_obj}'s \code{sample_data}/\code{tax_table}
+into a standard \code{phyloseq} object — so downstream \code{phyloseq}-ecosystem analyses
+(ordination, heatmaps, etc.) can be run directly on Ig-coating scores. Used, for
+example, to feed a \code{PhyloIgSeq} object's scores into \code{\link[=get_alpha_diversity]{get_alpha_diversity()}}/
+\code{\link[=get_beta_diversity]{get_beta_diversity()}}.
+}
+\details{
+Two independent code paths exist because \code{imputation_method = "SVD"} uses a
+fundamentally different representation of the score matrix than the others:
+\itemize{
+\item \code{"SVD"} never densifies. Missing (sample, taxon) score entries are kept as
+structurally missing (not zero) in an \link[=incomplete_otu_table-class]{incomplete_otu_table} backed by
+\code{softImpute::Incomplete()}, and \code{softImpute::softImpute()} fits a low-rank
+approximation used to impute on demand. Suitable when most (sample, taxon) pairs
+are unobserved, e.g. a raw ASV/OTU-level score matrix.
+\item Any other value (\code{NULL}, \code{"KNN"}, \code{"Central Tendency"}, \code{"Replace NA with 0"},
+the values \code{\link[=dataImpute]{dataImpute()}} understands) pivots to a dense samples-by-taxa matrix
+via \code{\link[=to_wider_ig_score]{to_wider_ig_score()}} first, then (unless \code{NULL}) imputes the resulting \code{NA}s
+with \code{\link[=dataImpute]{dataImpute()}}.
+}
+}
+\examples{
+data(ps_igseq)
+pis <- getPhyloIgSeq(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  scores = c("slide_z", "palm")
+)
+ps_svd <- PhyloIgSeq_to_phyloseq(
+  pis,
+  score_name = "slide_z",
+  imputation_method = "SVD",
+  svd_rank = 5L
+)
+ps_dense <- PhyloIgSeq_to_phyloseq(
+  pis,
+  score_name = "palm",
+  imputation_method = "Replace NA with 0"
+)
+
 }
