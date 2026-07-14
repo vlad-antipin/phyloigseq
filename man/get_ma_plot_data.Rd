@@ -2,7 +2,7 @@
 % Please edit documentation in R/ma_plot.R
 \name{get_ma_plot_data}
 \alias{get_ma_plot_data}
-\title{Get Data for Ig-Seq MA plot}
+\title{Build MA-Plot Data Across Zero-Handling Strategies}
 \usage{
 get_ma_plot_data(
   sorted_sample_df,
@@ -12,6 +12,63 @@ get_ma_plot_data(
   zero_treatments = c("keep_zeros")
 )
 }
+\arguments{
+\item{sorted_sample_df}{A data frame for one biological sample, as
+produced by \code{\link[=group_sorted_samples]{group_sorted_samples()}}, with one row per taxon and one
+column per fraction.}
+
+\item{positive_fraction_name}{Name of the column in \code{sorted_sample_df}
+holding the positive (Ig+) fraction abundance.}
+
+\item{first_negative_fraction_name}{Name of the column holding the
+primary negative fraction abundance (e.g. 9/10 of the whole negative
+fraction for IgSeq).}
+
+\item{second_negative_fraction_name}{Name of the column holding a second
+negative fraction abundance (e.g. the remaining 1/10), used to build an
+empirical null distribution, or \code{NULL} (default) to skip it.}
+
+\item{zero_treatments}{Character vector of \code{\link[=impute_zeros]{impute_zeros()}} \code{method}
+values to compute MA coordinates for; each contributes one
+\code{zero_treatment} level to the returned \code{plot_data}. Default
+\code{"keep_zeros"} (zeros left as-is, no imputation).}
+}
+\value{
+A list with:
+\describe{
+\item{\code{sample_id}}{The biological sample id
+(\code{sorted_sample_df$sample_id[1]}).}
+\item{\code{nb_zero_taxa}}{Number of taxa with a zero abundance in at
+least one compared fraction, before imputation.}
+\item{\code{plot_data}}{A long-format data frame (\code{M}, \code{A}, \code{comparison},
+\code{taxon_id}, \code{zero_treatment}) ready for \code{\link[=plot_ma]{plot_ma()}}.}
+\item{\code{imputed_taxa}}{The union, across all \code{zero_treatments}, of
+\code{taxon_id}s imputed under that treatment (see \code{\link[=impute_zeros]{impute_zeros()}}).}
+}
+}
 \description{
-Get Data for Ig-Seq MA plot
+Wraps \code{\link[=get_ma_coordinates]{get_ma_coordinates()}} to build a plotting-ready long-format MA-plot
+data frame for one biological sample, across one or more zero-count
+handling strategies (see \code{\link[=impute_zeros]{impute_zeros()}}). Comparing several
+\code{zero_treatments} side by side (e.g. via \code{\link[=plot_ma]{plot_ma()}}) shows how sensitive
+the resulting MA-plot is to the choice of zero-handling method.
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+ma_plot_data <- get_ma_plot_data(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  zero_treatments = c("keep_zeros", "pseudo_count")
+)
+head(ma_plot_data$plot_data)
+
 }

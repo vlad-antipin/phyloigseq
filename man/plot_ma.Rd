@@ -2,10 +2,48 @@
 % Please edit documentation in R/ma_plot.R
 \name{plot_ma}
 \alias{plot_ma}
-\title{Ig-Seq MA plot}
+\title{Plot an Ig-Seq MA Plot}
 \usage{
-plot_ma(ma_plot_data, ellipses = FALSE, type = "facet")
+plot_ma(ma_plot_data, ellipses = FALSE, type = c("facet", "superposed"))
+}
+\arguments{
+\item{ma_plot_data}{A list as returned by \code{\link[=get_ma_plot_data]{get_ma_plot_data()}}.}
+
+\item{ellipses}{If \code{TRUE}, overlay a 95\% normal-theory confidence ellipse
+per \code{comparison} (only applies when \code{type = "facet"}). Default \code{FALSE}.}
+
+\item{type}{One of \code{"facet"} (default; facet by \code{zero_treatment}, color
+by \code{comparison}) or \code{"superposed"} (facet by \code{comparison}, color by
+\code{zero_treatment}, comparing zero-handling strategies within the same
+panel).}
+}
+\value{
+A \code{ggplot} object.
 }
 \description{
-Ig-Seq MA plot
+Draws the MA-plot coordinates produced by \code{\link[=get_ma_plot_data]{get_ma_plot_data()}} for one
+biological sample: log-abundance (\code{A}) on the x-axis, log-ratio (\code{M}) on
+the y-axis. Taxa with a zero abundance in at least one compared fraction
+(\code{ma_plot_data$imputed_taxa}) are drawn separately, jittered just past the
+plot's x-range rather than placed at their imputed/undefined \code{A} value.
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+ma_plot_data <- get_ma_plot_data(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  zero_treatments = c("keep_zeros", "pseudo_count")
+)
+plot_ma(ma_plot_data)
+plot_ma(ma_plot_data, type = "superposed")
+
 }

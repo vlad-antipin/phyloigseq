@@ -2,7 +2,7 @@
 % Please edit documentation in R/ma_plot.R
 \name{get_ma_coordinates}
 \alias{get_ma_coordinates}
-\title{Get MA Coordinates}
+\title{Compute MA-Plot Coordinates Between Ig-Seq Fractions}
 \usage{
 get_ma_coordinates(
   sorted_sample_df,
@@ -11,6 +11,54 @@ get_ma_coordinates(
   second_negative_fraction_name = NULL
 )
 }
+\arguments{
+\item{sorted_sample_df}{A data frame for one biological sample, as
+produced by \code{\link[=group_sorted_samples]{group_sorted_samples()}}, with one row per taxon and one
+column per fraction.}
+
+\item{positive_fraction_name}{Name of the column in \code{sorted_sample_df}
+holding the positive (Ig+) fraction abundance.}
+
+\item{first_negative_fraction_name}{Name of the column holding the
+primary negative fraction abundance (e.g. 9/10 of the whole negative
+fraction for IgSeq).}
+
+\item{second_negative_fraction_name}{Name of the column holding a second
+negative fraction abundance (e.g. the remaining 1/10), used to build an
+empirical null distribution, or \code{NULL} (default) to skip it.}
+}
+\value{
+A data frame with one row per taxon: \code{taxon_id}, \code{sample_id}, the
+original fraction abundances (\code{pos}, \code{neg1}, \code{neg2}; \code{neg2} is \code{NA} when
+\code{second_negative_fraction_name} is \code{NULL}), the observed coordinates
+(\code{obs_abundance}, \code{obs_change}, positive vs. first negative fraction),
+and, when a second negative fraction is supplied, the empirical-null
+coordinates (\code{null_abundance}, \code{null_change}, first vs. second negative
+fraction); otherwise \code{NA}.
+}
 \description{
-Get MA Coordinates
+Computes MA-plot-style coordinates (borrowed from microarray analysis: \code{M}
+= log-ratio, \code{A} = log-abundance) between a positive Ig-Seq fraction and a
+negative fraction, per taxon. If a second negative fraction is supplied,
+the same coordinates are also computed between the two negative
+fractions, to serve as an empirical null distribution (see
+\code{\link[=get_slide_z]{get_slide_z()}}).
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+ma_coords <- get_ma_coordinates(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2"
+)
+head(ma_coords)
+
 }
