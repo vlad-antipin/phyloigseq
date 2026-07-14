@@ -2,7 +2,7 @@
 % Please edit documentation in R/slide_z.R
 \name{get_slide_z}
 \alias{get_slide_z}
-\title{Get Slide Z score from Ig Fractions Data}
+\title{Get the Sliding Z-Score for One Biological Sample}
 \usage{
 get_slide_z(
   sorted_sample_df,
@@ -15,6 +15,90 @@ get_slide_z(
   imputed_taxa = NULL
 )
 }
+\arguments{
+\item{sorted_sample_df}{A data frame for one biological sample, as
+produced by \code{\link[=group_sorted_samples]{group_sorted_samples()}}, with one row per taxon and one
+column per fraction.}
+
+\item{positive_fraction_name}{Name of the column holding the positive
+(Ig+) fraction abundance.}
+
+\item{first_negative_fraction_name}{Name of the column holding the
+primary negative fraction abundance.}
+
+\item{second_negative_fraction_name}{Name of the column holding a second
+negative fraction abundance, used to model the null distribution
+empirically (Ig-.1 vs Ig-.2) instead of theoretically (Ig+ vs Ig-.1).
+\code{NULL} disables the empirical null even if \code{empirical_null_distribution = TRUE} (a warning is issued and \code{empirical_null_distribution} is
+forced to \code{FALSE}).}
+
+\item{window_size}{Number of taxa (ranked by abundance) per sliding
+window used to estimate the local null mean/sd; smaller windows track
+local abundance-dependent variance more closely at the cost of
+noisier estimates. Default \code{50}; exposed to end users as an adjustable
+parameter in the companion Shiny app.}
+
+\item{empirical_null_distribution}{If \code{TRUE} (default), center/scale
+each taxon's observed log-ratio against the local Ig-.1 vs Ig-.2 null;
+if \code{FALSE}, center/scale against the local Ig+ vs Ig-.1 distribution
+itself. Forced to \code{FALSE} when \code{second_negative_fraction_name} is
+\code{NULL}.}
+
+\item{confidence_levels}{Optional numeric vector of confidence levels
+(e.g. \code{c(0.95, 0.99, 0.999)}) to build confidence ellipses for; \code{NULL}
+(default) skips ellipse construction.}
+
+\item{imputed_taxa}{Optional vector of \code{taxon_id}s to score separately
+from the sliding-window scheme (see \code{\link[=compute_slide_z]{compute_slide_z()}}), typically
+the taxa \code{\link[=impute_zeros]{impute_zeros()}} filled in for this sample.}
+}
+\value{
+A list:
+\describe{
+\item{\code{slide_z}}{Numeric vector of per-taxon sliding Z-scores, in
+\code{sorted_sample_df}'s original row order.}
+\item{\code{ma_coords}}{The MA-plot coordinates data frame from
+\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}.}
+\item{\code{ellipse_level}}{Per-taxon maximum confidence level outside
+which the taxon falls (see \code{\link[=get_ellipse_data]{get_ellipse_data()}}), or \code{NULL} if
+\code{confidence_levels} is \code{NULL}.}
+\item{\code{ellipse_coords}}{Data frame of confidence ellipse boundary
+coordinates, or an empty data frame if \code{confidence_levels} is
+\code{NULL}.}
+}
+If \code{sorted_sample_df} is missing one of the three fraction columns,
+this issues a \code{warning()} and returns \code{list(slide_z = NA, ma_coords = data.frame(), ellipse_level = NA, ellipse_coords = data.frame())}
+instead of erroring, so that callers processing many samples (e.g.
+\code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}) can skip the failing one rather than abort the
+whole batch — callers are expected to check for this rather than
+assume every sample succeeded.
+}
 \description{
-Get Slide Z score from Ig Fractions Data
+Orchestrates the package's sliding Z-score, its novel Ig-Seq scoring
+statistic: computes MA-plot coordinates (\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}) between
+the positive and (first) negative fraction of one biological sample,
+estimates a \emph{local} null distribution along the abundance axis
+(\code{\link[=compute_slide_z]{compute_slide_z()}}) rather than assuming one global null, and
+optionally builds per-taxon confidence ellipses/levels
+(\code{\link[=get_ellipse_data]{get_ellipse_data()}}).
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+result <- get_slide_z(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  confidence_levels = c(0.95, 0.99)
+)
+head(result$slide_z)
+head(result$ellipse_coords)
+
 }

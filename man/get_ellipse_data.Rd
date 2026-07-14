@@ -11,6 +11,71 @@ get_ellipse_data(
   confidence_levels
 )
 }
+\arguments{
+\item{sorted_sample_df}{MA-plot coordinates for one biological sample —
+either the output of \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}, or \code{ma_coords} as returned
+inside \code{\link[=get_slide_z]{get_slide_z()}}'s result list (\code{taxon_id}, \code{obs_abundance},
+\code{obs_change}, and, if \code{empirical_null_distribution}, \code{null_abundance}/
+\code{null_change}).}
+
+\item{imputed_taxa}{Optional vector of \code{taxon_id}s to exclude from the
+ellipse fit and leave with an \code{NA} confidence level (they are scored
+separately elsewhere, see \code{\link[=compute_slide_z]{compute_slide_z()}}).}
+
+\item{empirical_null_distribution}{If \code{TRUE} (default), fit the ellipse
+over the empirical null (Ig-.1 vs Ig-.2) coordinates; if \code{FALSE}, or if
+\code{sorted_sample_df} has no usable \code{null_abundance}/\code{null_change} values,
+fit over the observed (Ig+ vs Ig-.1) coordinates instead (a \code{warning()}
+is issued in the latter case when \code{empirical_null_distribution} was
+requested).}
+
+\item{confidence_levels}{Numeric vector of confidence levels (e.g.
+\code{c(0.95, 0.99, 0.999)}) to build nested ellipses for.}
+}
+\value{
+A list:
+\describe{
+\item{\code{levels}}{A factor, one entry per row of \code{sorted_sample_df}
+(named by \code{rownames(sorted_sample_df)}), giving each taxon's
+highest confidence level whose ellipse it falls outside of (as a
+character level, e.g. \code{"0.99"}), \code{"ns"} ("not significant" — inside
+every ellipse), or \code{NA} for taxa in \code{imputed_taxa} or with a
+missing \code{obs_abundance}/\code{obs_change}. \code{NULL} instead if there
+weren't enough points (\verb{> 2}) to fit an ellipse at all.}
+\item{\code{coords}}{A data frame of ellipse boundary coordinates (\code{x},
+\code{y}, \code{ellipse_level}, \code{sample_id}), one block of rows per
+confidence level, ready for overlaying on an MA-plot; empty if
+ellipses couldn't be fit.}
+}
+}
 \description{
-Get Confidence Ellipse Coordinates and Taxa Confidence Levels
+Builds normal-theory confidence ellipses (via \code{car::dataEllipse()}) over
+the MA-plot coordinates of one biological sample — one nested ellipse per
+entry of \code{confidence_levels} — and, for each taxon, reports the highest
+confidence level whose ellipse it falls outside of. Used by
+\code{\link[=get_slide_z]{get_slide_z()}} to turn \code{confidence_levels} into a per-taxon
+significance call independent of the sliding Z-score itself.
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+ma_coords <- get_ma_coordinates(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2"
+)
+ellipse_data <- get_ellipse_data(
+  sorted_sample_df = ma_coords,
+  confidence_levels = c(0.95, 0.99)
+)
+table(ellipse_data$levels)
+head(ellipse_data$coords)
+
 }

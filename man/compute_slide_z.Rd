@@ -2,7 +2,7 @@
 % Please edit documentation in R/slide_z.R
 \name{compute_slide_z}
 \alias{compute_slide_z}
-\title{Compute Slide Z from MA coordinates}
+\title{Compute the Sliding Z-Score From MA-Plot Coordinates}
 \usage{
 compute_slide_z(
   ma_coords,
@@ -11,6 +11,53 @@ compute_slide_z(
   empirical_null_distribution = TRUE
 )
 }
+\arguments{
+\item{ma_coords}{MA-plot coordinates for one biological sample, as
+returned by \code{\link[=get_ma_coordinates]{get_ma_coordinates()}} (\code{taxon_id}, \code{obs_abundance},
+\code{obs_change}, and, if \code{empirical_null_distribution}, \code{null_abundance}/
+\code{null_change}).}
+
+\item{was_imputed}{Optional logical vector, same length/row order as
+\code{ma_coords}, flagging which taxa had an imputed zero and should be
+scored separately from the sliding-window scheme.}
+
+\item{window_size}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{50}.}
+
+\item{empirical_null_distribution}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{TRUE}.}
+}
+\value{
+A numeric vector of per-taxon sliding Z-scores, in \code{ma_coords}'s
+original row order (or \code{NULL}, with a \code{warning()}, if \code{ma_coords} has
+zero non-imputed rows).
+}
 \description{
-Compute Slide Z from MA coordinates
+The core sliding-window statistic behind \code{\link[=get_slide_z]{get_slide_z()}}: rather than
+assuming one global null distribution for the whole sample, taxa are
+ranked by observed abundance and processed in overlapping windows of
+\code{window_size} taxa, each window's own local mean/sd (of either the
+empirical null or the observed change, see \code{empirical_null_distribution})
+used to center/scale the Z-scores of the taxa in that window's non-
+overlapping "core". Taxa flagged via \code{was_imputed} are scored separately,
+against the null/observed distribution taken over \emph{all} imputed taxa at
+once rather than a local window (there are usually too few of them to
+window meaningfully).
+}
+\examples{
+data(ps_igseq)
+grouped <- group_sorted_samples(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  sample_ids = c("sample_1", "sample_2"),
+  fraction_id_name = "sorting_fraction",
+  fraction_ids = c("Pos", "Neg1", "Neg2")
+)
+ma_coords <- get_ma_coordinates(
+  sorted_sample_df = grouped[["sample_1"]],
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2"
+)
+z_scores <- compute_slide_z(ma_coords, window_size = 50)
+head(z_scores)
+
 }
