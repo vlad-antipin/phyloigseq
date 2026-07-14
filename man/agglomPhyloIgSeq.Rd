@@ -2,7 +2,7 @@
 % Please edit documentation in R/ig_score.R
 \name{agglomPhyloIgSeq}
 \alias{agglomPhyloIgSeq}
-\title{Agglomerate Ig Scores by Taxrank}
+\title{Agglomerate \code{ig_coating} Scores To A Taxonomic Rank, Optionally Filtering By Abundance}
 \usage{
 agglomPhyloIgSeq(
   phyloigseq_obj,
@@ -14,6 +14,76 @@ agglomPhyloIgSeq(
   min_rel_abundance = NULL
 )
 }
+\arguments{
+\item{phyloigseq_obj}{A \code{PhyloIgSeq} object, e.g. from \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}.}
+
+\item{abundance_fraction}{Optional name of an \code{ig_coating} fraction-abundance column (e.g.
+the positive/negative fraction name passed to \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}) to agglomerate (by sum)
+alongside the scores and, if supplied, to filter taxa by (see \code{abundance_quantile}/
+\code{min_rel_abundance}) and to weight by when \code{agglom_method = "weight_by_abund"}. Defaults
+to \code{NULL}, meaning no abundance column is carried through and no abundance filtering is
+applied.}
+
+\item{taxrank}{Column of \code{phyloigseq_obj@tax_table} to agglomerate to (e.g. \code{"Genus"}).
+Defaults to \code{NULL}, meaning \code{"taxon_id"} (no agglomeration across taxa — only samples'
+fraction-abundance replicates, if any, get summarized).}
+
+\item{make_unique_taxonomy}{Logical. Resolve non-unique taxonomy (e.g. shared genus names
+across different lineages) via \code{\link[=make_unique_taxa_table]{make_unique_taxa_table()}} before agglomerating, so taxa
+that only differ upstream of \code{taxrank} aren't incorrectly merged together.}
+
+\item{agglom_method}{One of \code{"mean"}, \code{"median"}, \code{"weight_by_abund"} (mean weighted by
+\code{abundance_fraction}, which must then be supplied). Defaults to \code{NULL}, meaning
+\code{"median"} with a \code{warning()} — pass an explicit value to silence it.}
+
+\item{abundance_quantile}{Single probability in \verb{[0, 1]}; taxa with (agglomerated)
+\code{abundance_fraction} below this quantile (per sample) are dropped. Only used when
+\code{abundance_fraction} is supplied. Defaults to \code{NULL}, meaning \code{0} (no quantile filter).}
+
+\item{min_rel_abundance}{Single proportion in \verb{[0, 1]}; taxa with (agglomerated)
+\code{abundance_fraction} below \code{min_rel_abundance * total_reads} (per sample) are dropped —
+see Details for how \code{total_reads} is determined. Only used when \code{abundance_fraction} is
+supplied. Defaults to \code{NULL}, meaning \code{0} (no relative-abundance filter).}
+}
+\value{
+\code{phyloigseq_obj}, with \code{ig_coating} (and \code{score_names}) replaced by the
+agglomerated/filtered version, \code{tax_table} collapsed to the ranks up to and including
+\code{taxrank}, and \code{total_reads} (if present) restricted to the samples remaining in
+\code{ig_coating}.
+}
 \description{
-Agglomerate Ig Scores by Taxrank
+Central-tendency-agglomerates every score in \code{phyloigseq_obj@ig_coating} (each column
+also listed in \code{phyloigseq_obj@score_names}) from one row per taxon/sample to one row per
+\code{taxrank} level/sample, and (optionally) drops low-abundance taxa afterward. Used, for
+example, before feeding a \code{PhyloIgSeq} object's scores into \code{\link[=PhyloIgSeq_to_phyloseq]{PhyloIgSeq_to_phyloseq()}} at a
+coarser taxonomic resolution than the raw ASV/OTU it was scored at.
+}
+\details{
+\code{min_rel_abundance} is evaluated against a per-sample \code{total_reads}: when
+\code{phyloigseq_obj@total_reads} was populated by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} (i.e. a
+\code{presorting_fraction_name} was supplied there) \emph{and} \code{abundance_fraction} is that same
+pre-sort fraction, \code{total_reads} is the true whole-fraction total. Otherwise it falls back
+to summing \code{abundance_fraction} over the taxa remaining in \code{ig_coating} at this point (after
+\code{taxrank} agglomeration, before the \code{abundance_quantile}/\code{min_rel_abundance} filter) — an
+approximation, not a true whole-fraction total, if taxa were already dropped upstream.
+}
+\examples{
+phyloigseq_obj <- getPhyloIgSeq(
+  ps_igseq,
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  scores = c("slide_z", "palm")
+)
+agglom <- agglomPhyloIgSeq(
+  phyloigseq_obj,
+  abundance_fraction = "Pos",
+  taxrank = "Genus",
+  agglom_method = "median",
+  abundance_quantile = 0.1,
+  min_rel_abundance = 0.001
+)
+head(agglom@ig_coating)
+
 }

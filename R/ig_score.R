@@ -526,6 +526,28 @@ plot_slide_z <- function(
   )
 }
 
+#' Central-Tendency Dispatch Shared by `agglomPhyloIgSeq()` and `.ig_score_agglomerate()`
+#'
+#' Internal. Collapses a numeric vector `x` to a single value via `method`: `"mean"`,
+#' `"median"`, or `"weight_by_abund"` (a `weights`-weighted mean; `weights` is required in
+#' that case). `NA`s are always dropped from `x` (and `weights`, for `"weight_by_abund"`).
+#'
+#' @noRd
+.central_tendency <- function(x, method, weights = NULL) {
+  switch(
+    method,
+    mean = mean(x, na.rm = TRUE),
+    median = median(x, na.rm = TRUE),
+    weight_by_abund = {
+      if (is.null(weights)) {
+        stop("Need abundance fraction to compute weighted score")
+      }
+      weighted.mean(x, weights, na.rm = TRUE)
+    },
+    stop("wrong agglomeration method")
+  )
+}
+
 #' Two-Level Central-Tendency Agglomeration For `plot_ig_score()`
 #'
 #' Internal. Collapses `plot_data` (one row per taxon/sample) to one row per
@@ -533,6 +555,8 @@ plot_slide_z <- function(
 #' (`first_score_agglom_for_each = "both"`) or in two stages: first within each sample (or each
 #' taxon), then across the remaining dimension. `"sample"`/`"taxon"`/`"both"` only give different
 #' results when `score_agglom_fn` is non-linear across the intermediate step (e.g. `"median"`).
+#' Central tendency itself is computed via the shared `.central_tendency()` (`score_agglom_fn`
+#' is always `"mean"`/`"median"` here, never `"weight_by_abund"`).
 #'
 #' @noRd
 .ig_score_agglomerate <- function(
@@ -559,7 +583,7 @@ plot_slide_z <- function(
       # - for all values in intersections formed by these groupings
       group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
       mutate(
-        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
+        agglom_score = .central_tendency(.data[[score_name]], score_agglom_fn)
       ) %>%
       select(all_of(keep_cols)) %>%
       distinct() %>%
@@ -581,7 +605,7 @@ plot_slide_z <- function(
       # grouping by a taxrank (or sample group)
       group_by(.data[[first_id]], .data[[first_agglom]]) %>%
       mutate(
-        agglom_score = get(score_agglom_fn)(.data[[score_name]], na.rm = TRUE)
+        agglom_score = .central_tendency(.data[[score_name]], score_agglom_fn)
       ) %>%
       # ungroup and get rid of duplications, otherwise the central tendency will be false!
       ungroup() %>%
@@ -591,7 +615,7 @@ plot_slide_z <- function(
       # tendencies for each sample per taxrank (or for each taxon per sample group)
       group_by(.data[[group_score]], .data[[taxrank_score]]) %>%
       mutate(
-        agglom_score = get(score_agglom_fn)(agglom_score, na.rm = TRUE)
+        agglom_score = .central_tendency(agglom_score, score_agglom_fn)
       ) %>%
       ungroup()
   }
@@ -1014,25 +1038,89 @@ plot_ig_score <- function(
     )
 }
 
-#' Agglomerate Ig Scores by Taxrank
+#' Agglomerate `ig_coating` Scores To A Taxonomic Rank, Optionally Filtering By Abundance
+#'
+#' Central-tendency-agglomerates every score in `phyloigseq_obj@ig_coating` (each column
+#' also listed in `phyloigseq_obj@score_names`) from one row per taxon/sample to one row per
+#' `taxrank` level/sample, and (optionally) drops low-abundance taxa afterward. Used, for
+#' example, before feeding a `PhyloIgSeq` object's scores into [PhyloIgSeq_to_phyloseq()] at a
+#' coarser taxonomic resolution than the raw ASV/OTU it was scored at.
+#'
+#' @param phyloigseq_obj A `PhyloIgSeq` object, e.g. from [getPhyloIgSeq()].
+#' @param abundance_fraction Optional name of an `ig_coating` fraction-abundance column (e.g.
+#'   the positive/negative fraction name passed to [getPhyloIgSeq()]) to agglomerate (by sum)
+#'   alongside the scores and, if supplied, to filter taxa by (see `abundance_quantile`/
+#'   `min_rel_abundance`) and to weight by when `agglom_method = "weight_by_abund"`. Defaults
+#'   to `NULL`, meaning no abundance column is carried through and no abundance filtering is
+#'   applied.
+#' @param taxrank Column of `phyloigseq_obj@tax_table` to agglomerate to (e.g. `"Genus"`).
+#'   Defaults to `NULL`, meaning `"taxon_id"` (no agglomeration across taxa — only samples'
+#'   fraction-abundance replicates, if any, get summarized).
+#' @param make_unique_taxonomy Logical. Resolve non-unique taxonomy (e.g. shared genus names
+#'   across different lineages) via [make_unique_taxa_table()] before agglomerating, so taxa
+#'   that only differ upstream of `taxrank` aren't incorrectly merged together.
+#' @param agglom_method One of `"mean"`, `"median"`, `"weight_by_abund"` (mean weighted by
+#'   `abundance_fraction`, which must then be supplied). Defaults to `NULL`, meaning
+#'   `"median"` with a `warning()` — pass an explicit value to silence it.
+#' @param abundance_quantile Single probability in `[0, 1]`; taxa with (agglomerated)
+#'   `abundance_fraction` below this quantile (per sample) are dropped. Only used when
+#'   `abundance_fraction` is supplied. Defaults to `NULL`, meaning `0` (no quantile filter).
+#' @param min_rel_abundance Single proportion in `[0, 1]`; taxa with (agglomerated)
+#'   `abundance_fraction` below `min_rel_abundance * total_reads` (per sample) are dropped —
+#'   see Details for how `total_reads` is determined. Only used when `abundance_fraction` is
+#'   supplied. Defaults to `NULL`, meaning `0` (no relative-abundance filter).
+#'
+#' @details
+#' `min_rel_abundance` is evaluated against a per-sample `total_reads`: when
+#' `phyloigseq_obj@total_reads` was populated by [getPhyloIgSeq()] (i.e. a
+#' `presorting_fraction_name` was supplied there) *and* `abundance_fraction` is that same
+#' pre-sort fraction, `total_reads` is the true whole-fraction total. Otherwise it falls back
+#' to summing `abundance_fraction` over the taxa remaining in `ig_coating` at this point (after
+#' `taxrank` agglomeration, before the `abundance_quantile`/`min_rel_abundance` filter) — an
+#' approximation, not a true whole-fraction total, if taxa were already dropped upstream.
+#'
+#' @return `phyloigseq_obj`, with `ig_coating` (and `score_names`) replaced by the
+#'   agglomerated/filtered version, `tax_table` collapsed to the ranks up to and including
+#'   `taxrank`, and `total_reads` (if present) restricted to the samples remaining in
+#'   `ig_coating`.
+#'
+#' @examples
+#' phyloigseq_obj <- getPhyloIgSeq(
+#'   ps_igseq,
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "Pos",
+#'   first_negative_fraction_name = "Neg1",
+#'   scores = c("slide_z", "palm")
+#' )
+#' agglom <- agglomPhyloIgSeq(
+#'   phyloigseq_obj,
+#'   abundance_fraction = "Pos",
+#'   taxrank = "Genus",
+#'   agglom_method = "median",
+#'   abundance_quantile = 0.1,
+#'   min_rel_abundance = 0.001
+#' )
+#' head(agglom@ig_coating)
+#'
 #' @export
 agglomPhyloIgSeq <- function(
   phyloigseq_obj,
   abundance_fraction = NULL,
   taxrank = NULL,
   make_unique_taxonomy = TRUE,
-  agglom_method = NULL, # mean, median or weighted average by abundance
-  # TODO: add total reads by sample (in the whole fraction)
+  agglom_method = NULL,
   abundance_quantile = NULL,
   min_rel_abundance = NULL
 ) {
   scores <- intersect(colnames(phyloigseq_obj@ig_coating), IG_SCORES)
-
-  for (score in scores) {
-    if (all(is.na(phyloigseq_obj@ig_coating[[score]]))) {
-      scores <- scores[scores != score]
-    }
-  }
+  scores <- scores[
+    !vapply(
+      scores,
+      function(score) all(is.na(phyloigseq_obj@ig_coating[[score]])),
+      logical(1)
+    )
+  ]
 
   if (is.null(taxrank)) {
     taxrank <- "taxon_id"
@@ -1051,119 +1139,30 @@ agglomPhyloIgSeq <- function(
     warning("agglomeration method is set to median")
   }
 
-  agglom_fn <- function(score, abundances, agglom_method) {
-    if (agglom_method == "mean") {
-      return(mean(score, na.rm = TRUE))
-    } else if (agglom_method == "median") {
-      return(median(score, na.rm = TRUE))
-    } else if (agglom_method == "weight_by_abund") {
-      if (is.null(abundances)) {
-        stop("Need abundance fraction to compute weighted score")
-      }
-      return(weighted.mean(score, abundances, na.rm = TRUE))
-    } else {
-      stop("wrong agglomeration method")
-    }
-  }
-
   if (make_unique_taxonomy) {
     phyloigseq_obj@tax_table <- PhyloIgSeq::make_unique_taxa_table(
       phyloigseq_obj@tax_table
     )
   }
 
-  # Agglomerate scores
-  ig_coating_agglom <- phyloigseq_obj@ig_coating %>%
-    select(all_of(c("sample_id", "taxon_id", scores, abundance_fraction))) %>%
-    {
-      if (taxrank == "taxon_id") {
-        .
-      } else {
-        merge(
-          .,
-          phyloigseq_obj@tax_table[,
-            unique(c("taxon_id", taxrank)),
-            drop = FALSE
-          ],
-          by = "taxon_id"
-        )
-      }
-    } %>%
-    group_by(sample_id, .data[[taxrank]])
+  ig_coating_agglom <- .agglomerate_ig_coating(
+    ig_coating = phyloigseq_obj@ig_coating,
+    tax_table = phyloigseq_obj@tax_table,
+    scores = scores,
+    taxrank = taxrank,
+    abundance_fraction = abundance_fraction,
+    agglom_method = agglom_method
+  )
 
-  for (score in scores) {
-    ig_coating_agglom <- ig_coating_agglom %>%
-      mutate(
-        !!score := agglom_fn(
-          .data[[score]],
-          if (is.null(abundance_fraction)) {
-            NULL
-          } else {
-            .data[[abundance_fraction]]
-          },
-          agglom_method
-        )
-      )
-  }
-
-  ig_coating_agglom <- ig_coating_agglom %>%
-    {
-      if (!is.null(abundance_fraction)) {
-        mutate(
-          .,
-          !!abundance_fraction := if (all(is.na(.data[[abundance_fraction]]))) {
-            NA
-          } else {
-            sum(.data[[abundance_fraction]], na.rm = TRUE)
-          }
-        )
-      } else {
-        .
-      }
-    } %>%
-    ungroup() %>%
-    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction))) %>%
-    distinct() %>%
-    {
-      if (!is.null(abundance_fraction)) {
-        if (
-          !is.null(phyloigseq_obj@total_reads) &&
-            abundance_fraction %in% names(phyloigseq_obj@total_reads)
-        ) {
-          total_reads_df <- phyloigseq_obj@total_reads
-          names(total_reads_df)[2] <- "total_reads"
-          merge(., total_reads_df, by = "sample_id") %>%
-            # mutate(., total_reads = phyloigseq_obj@total_reads[[abundance_fraction]][phyloigseq_obj@total_reads[["sample_id"]] == sample_id] )
-            group_by(., sample_id)
-        } else {
-          group_by(., sample_id) %>%
-            mutate(
-              .,
-              total_reads = sum(.data[[abundance_fraction]], na.rm = TRUE)
-            )
-        }
-      } else {
-        .
-      }
-    } %>%
-    {
-      if (!is.null(abundance_fraction)) {
-        filter(
-          .,
-          .data[[abundance_fraction]] >=
-            quantile(
-              .data[[abundance_fraction]],
-              abundance_quantile,
-              na.rm = TRUE
-            ),
-          .data[[abundance_fraction]] >= min_rel_abundance * total_reads
-        )
-      } else {
-        .
-      }
-    } %>%
-    ungroup() %>%
-    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction)))
+  ig_coating_agglom <- .filter_agglomerated_by_abundance(
+    ig_coating_agglom = ig_coating_agglom,
+    total_reads = phyloigseq_obj@total_reads,
+    taxrank = taxrank,
+    scores = scores,
+    abundance_fraction = abundance_fraction,
+    abundance_quantile = abundance_quantile,
+    min_rel_abundance = min_rel_abundance
+  )
 
   phyloigseq_obj@ig_coating <- ig_coating_agglom
   phyloigseq_obj@score_names <- scores
@@ -1175,7 +1174,7 @@ agglomPhyloIgSeq <- function(
   # Update taxonomy
   phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[
     ,
-    1:which(colnames(phyloigseq_obj@tax_table) == taxrank)
+    seq_len(which(colnames(phyloigseq_obj@tax_table) == taxrank))
   ] %>%
     distinct()
 
@@ -1191,6 +1190,112 @@ agglomPhyloIgSeq <- function(
   }
 
   return(phyloigseq_obj)
+}
+
+#' Build The Per-`taxrank`/Sample Agglomerated `ig_coating` For `agglomPhyloIgSeq()`
+#'
+#' Internal. Agglomerates every column of `scores` (and, if supplied, `abundance_fraction`) to
+#' one row per (`taxrank`, `sample_id`) via `.central_tendency()`/summation. Does not yet
+#' attach `total_reads` or apply the abundance filter — see `.filter_agglomerated_by_abundance()`.
+#'
+#' @noRd
+.agglomerate_ig_coating <- function(
+  ig_coating,
+  tax_table,
+  scores,
+  taxrank,
+  abundance_fraction,
+  agglom_method
+) {
+  agglom_data <- ig_coating %>%
+    select(all_of(c("sample_id", "taxon_id", scores, abundance_fraction)))
+
+  if (taxrank != "taxon_id") {
+    agglom_data <- merge(
+      agglom_data,
+      tax_table[, unique(c("taxon_id", taxrank)), drop = FALSE],
+      by = "taxon_id"
+    )
+  }
+
+  agglom_data <- agglom_data %>%
+    group_by(sample_id, .data[[taxrank]])
+
+  for (score in scores) {
+    agglom_data <- agglom_data %>%
+      mutate(
+        !!score := .central_tendency(
+          .data[[score]],
+          agglom_method,
+          weights = if (is.null(abundance_fraction)) {
+            NULL
+          } else {
+            .data[[abundance_fraction]]
+          }
+        )
+      )
+  }
+
+  if (!is.null(abundance_fraction)) {
+    agglom_data <- agglom_data %>%
+      mutate(
+        !!abundance_fraction := if (all(is.na(.data[[abundance_fraction]]))) {
+          NA
+        } else {
+          sum(.data[[abundance_fraction]], na.rm = TRUE)
+        }
+      )
+  }
+
+  agglom_data %>%
+    ungroup() %>%
+    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction))) %>%
+    distinct()
+}
+
+#' Attach `total_reads` and Apply The Abundance Filter For `agglomPhyloIgSeq()`
+#'
+#' Internal. No-op when `abundance_fraction` is `NULL`. Otherwise attaches a per-sample
+#' `total_reads` (from `total_reads` when it covers `abundance_fraction`, else a fallback sum
+#' — see `agglomPhyloIgSeq()`'s `@details`) and drops taxa below `abundance_quantile`/
+#' `min_rel_abundance`.
+#'
+#' @noRd
+.filter_agglomerated_by_abundance <- function(
+  ig_coating_agglom,
+  total_reads,
+  taxrank,
+  scores,
+  abundance_fraction,
+  abundance_quantile,
+  min_rel_abundance
+) {
+  if (is.null(abundance_fraction)) {
+    return(ig_coating_agglom)
+  }
+
+  has_matching_total_reads <-
+    !is.null(total_reads) && abundance_fraction %in% names(total_reads)
+
+  if (has_matching_total_reads) {
+    total_reads_df <- total_reads
+    names(total_reads_df)[2] <- "total_reads"
+    ig_coating_agglom <- merge(ig_coating_agglom, total_reads_df, by = "sample_id") %>%
+      group_by(sample_id)
+  } else {
+    ig_coating_agglom <- ig_coating_agglom %>%
+      group_by(sample_id) %>%
+      mutate(total_reads = sum(.data[[abundance_fraction]], na.rm = TRUE))
+  }
+
+  ig_coating_agglom %>%
+    filter(
+      .data[[abundance_fraction]] >=
+        quantile(.data[[abundance_fraction]], abundance_quantile, na.rm = TRUE),
+      .data[[abundance_fraction]] >= min_rel_abundance * total_reads
+    ) %>%
+    ungroup() %>%
+    select(all_of(c(taxrank, "sample_id", scores, abundance_fraction)))
 }
 
 #' Convert Ig Scores to Wide (Sample x Taxon) Format

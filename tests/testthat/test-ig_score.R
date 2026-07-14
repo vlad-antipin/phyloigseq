@@ -666,3 +666,224 @@ test_that("plot_ig_score accepts taxrank_facet/group_facet without error", {
   )
   expect_s3_class(plt, "ggplot")
 })
+
+# ---- .central_tendency ----
+
+test_that(".central_tendency computes mean/median with NAs dropped", {
+  x <- c(1, 2, 3, NA)
+  expect_equal(.central_tendency(x, "mean"), mean(x, na.rm = TRUE))
+  expect_equal(.central_tendency(x, "median"), median(x, na.rm = TRUE))
+})
+
+test_that(".central_tendency weight_by_abund computes a weighted mean and requires weights", {
+  x <- c(1, 3)
+  w <- c(10, 20)
+  expect_equal(.central_tendency(x, "weight_by_abund", weights = w), weighted.mean(x, w))
+  expect_error(
+    .central_tendency(x, "weight_by_abund"),
+    "Need abundance fraction"
+  )
+})
+
+test_that(".central_tendency errors on an unrecognized method", {
+  expect_error(.central_tendency(1:3, "bogus"), "wrong agglomeration method")
+})
+
+# ---- agglomPhyloIgSeq ----
+
+make_agglom_fixture <- function(total_reads = NULL) {
+  ig_coating <- data.frame(
+    taxon_id = rep(1:4, times = 2),
+    sample_id = rep(c("s1", "s2"), each = 4),
+    # taxa 1-2 -> Genus G1, taxa 3-4 -> Genus G2 (see tax_table below)
+    slide_z = c(1, 3, 5, 7, 2, 4, 6, 8),
+    palm = NA_real_, # all-NA -> should be dropped from score_names/output
+    Pos = c(10, 20, 30, 5, 15, 25, 35, 10)
+  )
+  tax_table <- data.frame(
+    Kingdom = "Bacteria",
+    Genus = c("G1", "G1", "G2", "G2"),
+    taxon_id = 1:4
+  )
+  new(
+    "PhyloIgSeq",
+    ig_coating = ig_coating,
+    score_names = c("slide_z", "palm"),
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    tax_table = tax_table,
+    total_reads = total_reads
+  )
+}
+
+test_that("agglomPhyloIgSeq drops score columns that are all-NA from score_names and ig_coating", {
+  agg <- agglomPhyloIgSeq(make_agglom_fixture(), taxrank = "Genus", agglom_method = "median")
+
+  expect_equal(agg@score_names, "slide_z")
+  expect_false("palm" %in% colnames(agg@ig_coating))
+})
+
+test_that("agglomPhyloIgSeq agglomerates scores per (taxrank, sample_id) via median/mean", {
+  agg_median <- agglomPhyloIgSeq(
+    make_agglom_fixture(),
+    taxrank = "Genus",
+    agglom_method = "median"
+  )
+  d <- as.data.frame(agg_median@ig_coating)
+  d <- d[order(d$sample_id, d$taxon_id), ]
+
+  expect_equal(d$taxon_id, c("G1", "G2", "G1", "G2"))
+  expect_equal(d$sample_id, c("s1", "s1", "s2", "s2"))
+  # medians of {1, 3}, {5, 7}, {2, 4}, {6, 8}
+  expect_equal(d$slide_z, c(2, 6, 3, 7))
+
+  agg_mean <- agglomPhyloIgSeq(make_agglom_fixture(), taxrank = "Genus", agglom_method = "mean")
+  d_mean <- as.data.frame(agg_mean@ig_coating)
+  d_mean <- d_mean[order(d_mean$sample_id, d_mean$taxon_id), ]
+  expect_equal(d_mean$slide_z, c(2, 6, 3, 7))
+})
+
+test_that("agglomPhyloIgSeq weight_by_abund weights by the pre-agglomeration abundance_fraction", {
+  agg <- agglomPhyloIgSeq(
+    make_agglom_fixture(),
+    taxrank = "Genus",
+    abundance_fraction = "Pos",
+    agglom_method = "weight_by_abund"
+  )
+  d <- as.data.frame(agg@ig_coating)
+  d <- d[order(d$sample_id, d$taxon_id), ]
+
+  # G1/s1: values c(1, 3), weights c(10, 20); G2/s1: values c(5, 7), weights c(30, 5)
+  expect_equal(
+    d$slide_z,
+    c(
+      weighted.mean(c(1, 3), c(10, 20)),
+      weighted.mean(c(5, 7), c(30, 5)),
+      weighted.mean(c(2, 4), c(15, 25)),
+      weighted.mean(c(6, 8), c(35, 10))
+    )
+  )
+  # abundance_fraction column itself is agglomerated by sum, not by agglom_method
+  expect_equal(d$Pos, c(30, 35, 40, 45))
+})
+
+test_that("agglomPhyloIgSeq rejects an unrecognized agglom_method", {
+  expect_error(
+    agglomPhyloIgSeq(make_agglom_fixture(), taxrank = "Genus", agglom_method = "bogus"),
+    "wrong agglomeration method"
+  )
+})
+
+test_that("agglomPhyloIgSeq defaults agglom_method to median with a warning when NULL", {
+  expect_warning(
+    agg <- agglomPhyloIgSeq(make_agglom_fixture(), taxrank = "Genus"),
+    "agglomeration method is set to median"
+  )
+  d <- as.data.frame(agg@ig_coating)
+  d <- d[order(d$sample_id, d$taxon_id), ]
+  expect_equal(d$slide_z, c(2, 6, 3, 7))
+})
+
+test_that("agglomPhyloIgSeq drops taxa below abundance_quantile", {
+  agg <- agglomPhyloIgSeq(
+    make_agglom_fixture(),
+    taxrank = "Genus",
+    abundance_fraction = "Pos",
+    agglom_method = "mean",
+    abundance_quantile = 0.5
+  )
+  d <- as.data.frame(agg@ig_coating)
+
+  # per sample, only the higher-abundance Genus (G2: 35 vs G1: 30 for s1; 45 vs 40 for s2)
+  # clears the per-sample median quantile threshold
+  expect_true(all(d$taxon_id == "G2"))
+  expect_equal(sort(d$sample_id), c("s1", "s2"))
+})
+
+test_that("agglomPhyloIgSeq's min_rel_abundance uses the matching total_reads slot over the fallback sum", {
+  # total_reads covers "Pos" (the chosen abundance_fraction) with values far above the
+  # per-taxon abundances, so every taxon fails a 0.5 threshold -> 0 rows
+  pis_with_total_reads <- make_agglom_fixture(
+    total_reads = data.frame(sample_id = c("s1", "s2"), Pos = c(1000, 2000))
+  )
+  agg_matching <- agglomPhyloIgSeq(
+    pis_with_total_reads,
+    taxrank = "Genus",
+    abundance_fraction = "Pos",
+    agglom_method = "mean",
+    min_rel_abundance = 0.5
+  )
+  expect_equal(nrow(agg_matching@ig_coating), 0)
+
+  # without a matching total_reads, the fallback sums the (already taxrank-agglomerated)
+  # abundance_fraction column itself, so G2 (35/45) clears 0.5 * (30+35)/(40+45) while G1 doesn't
+  agg_fallback <- agglomPhyloIgSeq(
+    make_agglom_fixture(),
+    taxrank = "Genus",
+    abundance_fraction = "Pos",
+    agglom_method = "mean",
+    min_rel_abundance = 0.5
+  )
+  d <- as.data.frame(agg_fallback@ig_coating)
+  expect_true(all(d$taxon_id == "G2"))
+})
+
+test_that("agglomPhyloIgSeq restricts total_reads to samples remaining in the agglomerated ig_coating", {
+  pis_with_total_reads <- make_agglom_fixture(
+    total_reads = data.frame(sample_id = c("s1", "s2"), Pos = c(1000, 2000))
+  )
+  agg <- agglomPhyloIgSeq(
+    pis_with_total_reads,
+    taxrank = "Genus",
+    abundance_fraction = "Pos",
+    agglom_method = "mean",
+    min_rel_abundance = 0.5 # drops every taxon for both samples, see test above
+  )
+
+  expect_equal(nrow(agg@total_reads), 0)
+})
+
+test_that("agglomPhyloIgSeq defaults taxrank to taxon_id (no cross-taxon agglomeration)", {
+  agg <- agglomPhyloIgSeq(make_agglom_fixture(), agglom_method = "mean")
+  d <- as.data.frame(agg@ig_coating)
+
+  expect_equal(nrow(d), 8)
+  expect_setequal(d$taxon_id, as.character(1:4))
+})
+
+test_that("agglomPhyloIgSeq's make_unique_taxonomy disambiguates colliding taxon names before agglomerating", {
+  tax_table <- data.frame(
+    Kingdom = c("Bacteria", "Archaea"), # different lineages, same Genus name below
+    Genus = c("Foo", "Foo"),
+    taxon_id = 1:2
+  )
+  pis <- new(
+    "PhyloIgSeq",
+    ig_coating = data.frame(
+      taxon_id = c(1, 2),
+      sample_id = c("s1", "s1"),
+      slide_z = c(1, 5)
+    ),
+    score_names = "slide_z",
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    tax_table = tax_table
+  )
+
+  agg_unique <- agglomPhyloIgSeq(
+    pis,
+    taxrank = "Genus",
+    agglom_method = "mean",
+    make_unique_taxonomy = TRUE
+  )
+  expect_setequal(agg_unique@ig_coating$taxon_id, c("Foo", "Foo.1"))
+
+  agg_not_unique <- agglomPhyloIgSeq(
+    pis,
+    taxrank = "Genus",
+    agglom_method = "mean",
+    make_unique_taxonomy = FALSE
+  )
+  expect_equal(nrow(agg_not_unique@ig_coating), 1)
+  expect_equal(agg_not_unique@ig_coating$slide_z, mean(c(1, 5)))
+})
