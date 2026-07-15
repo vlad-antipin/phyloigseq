@@ -2,19 +2,70 @@
 % Please edit documentation in R/heatmap.R
 \name{get_phylo_heatmap}
 \alias{get_phylo_heatmap}
-\title{Prepare Data for Heatmap from Phyloseq Object}
+\title{Prepare Data for a Phylogenetic Heatmap}
 \usage{
 get_phylo_heatmap(
-  physeq = physeq,
+  physeq,
   fraction_id_name = NULL,
   fraction_ids = NULL,
-  taxrank.for.heatmap = NULL,
-  taxrank.for.hclust = NULL,
-  transform.abundances = "identity",
+  taxrank_for_heatmap = NULL,
+  taxrank_for_hclust = NULL,
+  transform_abundances = "identity",
   distance = "bray",
-  vars.to.remove.na = c()
+  vars_to_remove_na = c()
 )
 }
+\arguments{
+\item{physeq}{A \code{phyloseq} object.}
+
+\item{fraction_id_name}{Name of a \code{sample_data} variable used, together
+with \code{fraction_ids}, to keep only a subset of samples (e.g. a
+sorting-fraction indicator). \code{NULL} (default) keeps all samples.}
+
+\item{fraction_ids}{Values of \code{fraction_id_name} to keep. Ignored if
+\code{fraction_id_name} is \code{NULL}.}
+
+\item{taxrank_for_heatmap}{Taxonomic rank to agglomerate to (via
+\code{\link[=tax_glom]{tax_glom()}}) before building the heatmap matrix. \code{NULL} (default) keeps
+the original taxa.}
+
+\item{taxrank_for_hclust}{Taxonomic rank to agglomerate to before
+computing the sample distance/dendrogram; independent of
+\code{taxrank_for_heatmap} so clustering and display can use different
+resolutions. \code{NULL} (default) keeps the original taxa.}
+
+\item{transform_abundances}{Abundance transform applied before both the
+heatmap matrix and the clustering distance are computed, forwarded to
+\code{\link[microbiome:transform]{microbiome::transform()}} (e.g. \code{"clr"}, \code{"hellinger"}). \code{"identity"}
+(default) applies no transform.}
+
+\item{distance}{Distance method forwarded to \code{\link[=sparse_distance]{sparse_distance()}} for the
+sample dendrogram. Falls back to \code{"bray"} (with a message) if \code{NULL}, or
+if a UniFrac-family method is requested without a \code{phy_tree} in
+\code{physeq}.}
+
+\item{vars_to_remove_na}{Character vector of \code{sample_data} variable names;
+samples with \code{NA} in any of them are dropped before clustering. This is
+done here rather than at plot time because the dendrogram would
+otherwise need to be rebuilt whenever samples are excluded.}
+}
+\value{
+A list with:
+\item{heat_matrix}{Abundance matrix, taxa as rows, samples as columns.}
+\item{taxa_sorted_by_abundance}{Taxa names ordered by decreasing total
+abundance.}
+\item{sample_data}{Sample metadata as a \code{data.frame}.}
+\item{dendrogram}{A \code{\link[stats:as.dendrogram]{stats::as.dendrogram()}} object from clustering
+samples.}
+}
 \description{
-Prepare Data for Heatmap from Phyloseq Object
+Builds the abundance matrix, sample metadata, taxa ordering, and sample
+dendrogram consumed by \code{\link[=plot_phylo_heatmap]{plot_phylo_heatmap()}}.
+}
+\examples{
+data(ps_16s_refinement)
+heatmap_data <- get_phylo_heatmap(ps_16s_refinement)
+dim(heatmap_data$heat_matrix)
+length(heatmap_data$taxa_sorted_by_abundance)
+
 }

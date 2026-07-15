@@ -32,6 +32,7 @@
 #' @importFrom car dataEllipse
 #' @import sp
 #' @importFrom ComplexHeatmap Heatmap HeatmapAnnotation anno_text
+#' @importFrom grid gpar unit
 #' @import ragg
 #' @import gganimate
 #' @import gifski

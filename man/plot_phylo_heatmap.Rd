@@ -2,10 +2,10 @@
 % Please edit documentation in R/heatmap.R
 \name{plot_phylo_heatmap}
 \alias{plot_phylo_heatmap}
-\title{Plot ComplexHeatmap}
+\title{Plot a Phylogenetic Heatmap}
 \usage{
 plot_phylo_heatmap(
-  heatmap.data,
+  heatmap_data,
   sort_taxa_by_diff_abundance = FALSE,
   var_for_diff_abundance = NULL,
   scale_cols = FALSE,
@@ -18,6 +18,51 @@ plot_phylo_heatmap(
   label_names_par = gpar(fontsize = 15, fontface = "bold")
 )
 }
+\arguments{
+\item{heatmap_data}{A list as returned by \code{\link[=get_phylo_heatmap]{get_phylo_heatmap()}}.}
+
+\item{sort_taxa_by_diff_abundance}{If \code{TRUE}, order taxa by variation
+(coefficient of variation) or by effect size against
+\code{var_for_diff_abundance}, instead of by total abundance.}
+
+\item{var_for_diff_abundance}{Name of a \code{sample_data} variable to sort
+taxa by effect size against: Kruskal-Wallis epsilon-squared for a
+character/factor variable, absolute Spearman correlation for a numeric
+one. \code{NULL} (default) sorts by coefficient of variation instead. Ignored
+if \code{sort_taxa_by_diff_abundance} is \code{FALSE}.}
+
+\item{scale_cols}{If \code{TRUE}, scale (z-score) each sample (column) after
+selecting the top taxa.}
+
+\item{nb_top_taxa}{Number of top-ranked taxa (per the sort above) to keep.}
+
+\item{top_annotation_vars}{Character vector of \code{sample_data} variable
+names to show as top column annotations.}
+
+\item{bottom_annotation_var}{Name of a single \code{sample_data} variable to
+show as a bottom text annotation.}
+
+\item{split}{If a number \verb{>= 2}, the number of clusters to split columns
+into (\code{column_split}); \code{NULL}/\verb{< 2} disables splitting.}
+
+\item{color_vector}{Vector of colors forwarded to \code{Heatmap(col = ...)}.}
+
+\item{taxa_names_par}{A \code{\link[grid:gpar]{grid::gpar()}} object for row (taxon) name text.}
+
+\item{label_names_par}{A \code{\link[grid:gpar]{grid::gpar()}} object for annotation label text.}
+}
+\value{
+A \link[ComplexHeatmap:Heatmap-class]{ComplexHeatmap::Heatmap} object.
+}
 \description{
-Plot ComplexHeatmap
+Renders the abundance matrix prepared by \code{\link[=get_phylo_heatmap]{get_phylo_heatmap()}} as a
+\code{\link[ComplexHeatmap:Heatmap]{ComplexHeatmap::Heatmap()}}, with samples clustered by the precomputed
+dendrogram and taxa ordered/limited to the top \code{nb_top_taxa}.
+}
+\examples{
+data(ps_16s_refinement)
+heatmap_data <- get_phylo_heatmap(ps_16s_refinement)
+heatmap <- plot_phylo_heatmap(heatmap_data, nb_top_taxa = 10)
+methods::is(heatmap, "Heatmap")
+
 }

@@ -25,6 +25,7 @@ Imports:
     ggtree,
     ggsci,
     gifski,
+    grid,
     gtools,
     htmlwidgets,
     latex2exp,
