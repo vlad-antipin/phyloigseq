@@ -1,43 +1,132 @@
-#' Get Valid Taxranks from Phyloseq Object
+#' Filter Taxa and Samples by Minimum Read Sum
+#'
+#' Removes taxa with fewer than `min_taxa_sum` total reads and samples with
+#' fewer than `min_sample_sum` total reads. Filtering order matters, since
+#' each side's sums are recomputed on whatever subset the other side's filter
+#' has already produced (see `taxa_first`).
+#'
+#' @param physeq A `phyloseq` object.
+#' @param min_sample_sum Numeric threshold; samples with total reads below
+#'   this value are removed. `NULL` skips read-count filtering entirely
+#'   (`physeq` is returned unfiltered, only reoriented/re-sparsified).
+#' @param min_taxa_sum Numeric threshold; taxa with total reads below this
+#'   value are removed. `NULL` skips read-count filtering entirely, same as
+#'   `min_sample_sum = NULL`.
+#' @param taxa_first Logical. If `TRUE` (default), taxa are filtered before
+#'   samples, so sample sums are computed on the taxon-filtered subset; if
+#'   `FALSE`, samples are filtered first and taxon sums are computed on the
+#'   sample-filtered subset.
+#'
+#' @return The filtered `phyloseq` object. `NULL` if `physeq` is not a
+#'   `phyloseq` object, or if filtering would remove every taxon or every
+#'   sample (a `warning()` is issued in that case naming which side emptied
+#'   out).
 #' @export
-valid_taxranks <- function(
-  seq_obj # phyloseq or PhyloIgSeq object
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' filtered <- filter_reads(
+#'   ps_16s_refinement,
+#'   min_sample_sum = 100,
+#'   min_taxa_sum = 5
+#' )
+#' phyloseq::ntaxa(filtered)
+#' phyloseq::nsamples(filtered)
+filter_reads <- function(
+  physeq,
+  min_sample_sum = 100,
+  min_taxa_sum = 2,
+  taxa_first = TRUE
 ) {
-  if (class(seq_obj) == "phyloseq") {
-    # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-    if (taxa_are_rows(seq_obj)) {
-      seq_obj <- t(seq_obj)
-    }
+  if (!is(physeq, "phyloseq")) {
+    return(NULL)
+  }
+  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
+  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
+  if (taxa_are_rows(physeq)) {
+    physeq <- t(physeq)
+  }
 
-    tax.df <- as.data.frame(tax_table(seq_obj))
-  } else if (class(seq_obj) == "PhyloIgSeq") {
-    tax.df <- seq_obj@tax_table
+  if (is.null(min_sample_sum) || is.null(min_taxa_sum)) {
+    if (sparse_input) {
+      physeq <- as_sparse_phyloseq(physeq)
+    }
+    return(physeq)
+  }
+
+  if (taxa_first) {
+    physeq <- .filter_taxa_by_sum(physeq, min_taxa_sum)
+    if (is.null(physeq)) {
+      return(NULL)
+    }
+    physeq <- .filter_samples_by_sum(physeq, min_sample_sum)
   } else {
+    physeq <- .filter_samples_by_sum(physeq, min_sample_sum)
+    if (is.null(physeq)) {
+      return(NULL)
+    }
+    physeq <- .filter_taxa_by_sum(physeq, min_taxa_sum)
+  }
+  if (is.null(physeq)) {
     return(NULL)
   }
 
-  # Get taxranks having at least one unique non-na value
-  # Count number of unique non-NA and non-empty values per column
-  unique.counts <- sapply(tax.df, function(col) {
-    length(unique(col[!is.na(col) & col != ""]))
-  })
-
-  # Keep only those columns with >1 unique valid entry
-  valid.ranks <- names(unique.counts[unique.counts > 1])
-
-  return(valid.ranks)
+  if (sparse_input) {
+    physeq <- as_sparse_phyloseq(physeq)
+  }
+  return(physeq)
 }
 
-#' Plot Read Counts by Samples/Taxa from Phyloseq Object
+# Keeps taxa with taxa_sums(physeq) >= min_taxa_sum, warning + returning NULL
+# if that empties the table. Uses prune_taxa() (accepts a logical vector
+# directly) rather than subset_taxa()'s NSE, which cannot see a variable
+# local to the caller's frame.
+.filter_taxa_by_sum <- function(physeq, min_taxa_sum) {
+  keep_taxa <- taxa_sums(physeq) >= min_taxa_sum
+  if (!any(keep_taxa)) {
+    warning("All taxa filtered out\n")
+    return(NULL)
+  }
+  prune_taxa(keep_taxa, physeq)
+}
+
+# Sample-side counterpart to .filter_taxa_by_sum().
+.filter_samples_by_sum <- function(physeq, min_sample_sum) {
+  keep_samples <- sample_sums(physeq) >= min_sample_sum
+  if (!any(keep_samples)) {
+    warning("All samples filtered out\n")
+    return(NULL)
+  }
+  prune_samples(keep_samples, physeq)
+}
+
+#' Plot Distributions of Total Read Counts by Sample and by Taxon
+#'
+#' Histograms of per-sample and per-taxon total read counts, faceted side by
+#' side, with an optional vertical reference line marking a filtering
+#' threshold on each facet.
+#'
+#' @param physeq A `phyloseq` object.
+#' @param min_sample_sum Numeric threshold to draw as a vertical reference
+#'   line on the sample-level histogram. `NA` (default) or `NULL` omits it.
+#' @param min_taxa_sum Numeric threshold to draw as a vertical reference line
+#'   on the taxon-level histogram. `NA` (default) or `NULL` omits it.
+#'
+#' @return A `ggplot` object faceted by level (`"Sample"`/`"Taxon"`). `NULL`
+#'   if `physeq` is not a `phyloseq` object.
 #' @export
-plotReads <- function(physeq, min.sample.sum = NA, min.taxa.sum = NA) {
-  if (is.null(min.sample.sum)) {
-    min.sample.sum <- NA
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' plot_reads(ps_16s_refinement, min_sample_sum = 100, min_taxa_sum = 5)
+plot_reads <- function(physeq, min_sample_sum = NA, min_taxa_sum = NA) {
+  if (is.null(min_sample_sum)) {
+    min_sample_sum <- NA
   }
-  if (is.null(min.taxa.sum)) {
-    min.taxa.sum <- NA
+  if (is.null(min_taxa_sum)) {
+    min_taxa_sum <- NA
   }
-  if (class(physeq) != "phyloseq") {
+  if (!is(physeq, "phyloseq")) {
     return(NULL)
   }
 
@@ -51,12 +140,12 @@ plotReads <- function(physeq, min.sample.sum = NA, min.taxa.sum = NA) {
     data.frame(
       TotalReads = sample_sums(physeq),
       Level = "Sample",
-      Threshold = min.sample.sum
+      Threshold = min_sample_sum
     ),
     data.frame(
       TotalReads = taxa_sums(physeq),
       Level = "Taxon",
-      Threshold = min.taxa.sum
+      Threshold = min_taxa_sum
     )
   )
 
@@ -71,7 +160,7 @@ plotReads <- function(physeq, min.sample.sum = NA, min.taxa.sum = NA) {
         mapping = aes(xintercept = Threshold),
         color = "darkred",
         linetype = "dashed",
-        size = 1
+        linewidth = 1
       )
   }
   plot <- plot +
@@ -87,226 +176,4 @@ plotReads <- function(physeq, min.sample.sum = NA, min.taxa.sum = NA) {
     )
 
   return(plot)
-}
-
-#' Filter Phyloseq Object by Sums of Reads by Samples and by Taxa
-#' @export
-filterReads <- function(
-  physeq,
-  min.sample.sum = 100,
-  min.taxa.sum = 2,
-  taxa.first = TRUE
-) {
-  if (class(physeq) != "phyloseq") {
-    return(NULL)
-  }
-  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
-  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-  if (taxa_are_rows(physeq)) {
-    physeq <- t(physeq)
-  }
-
-  if (any(is.null(c(min.sample.sum, min.taxa.sum)))) {
-    return(physeq)
-  }
-  # /!\ Attention: global assignment
-  if (taxa.first) {
-    keep_taxa <<- taxa_sums(physeq) >= min.taxa.sum
-    if (!any(keep_taxa)) {
-      warning("All taxa filtered out\n")
-      return(NULL)
-    }
-    physeq <- subset_taxa(
-      physeq,
-      keep_taxa
-    )
-
-    keep_samples <<- sample_sums(physeq) >= min.sample.sum
-    if (!any(keep_samples)) {
-      warning("All samples filtered out\n")
-      return(NULL)
-    }
-    physeq <- subset_samples(
-      physeq,
-      keep_samples
-    )
-  } else {
-    keep_samples <<- sample_sums(physeq) >= min.sample.sum
-    if (!any(keep_samples)) {
-      warning("All samples filtered out\n")
-      return(NULL)
-    }
-    physeq <- subset_samples(
-      physeq,
-      keep_samples
-    )
-
-    keep_taxa <<- taxa_sums(physeq) >= min.taxa.sum
-    if (!any(keep_taxa)) {
-      warning("All taxa filtered out\n")
-      return(NULL)
-    }
-    physeq <- subset_taxa(
-      physeq,
-      keep_taxa
-    )
-  }
-  if (sparse_input) {
-    physeq <- as_sparse_phyloseq(physeq)
-  }
-  return(physeq)
-}
-
-
-# TAKEN AS-IS FROM FEATURE SELECTOR
-#' Generate a vector of strings, each element of which is a logical
-#' expression corresponding to a filter passed to parameters as a list
-#' @export
-getFilterExpression <- function(
-  data,
-  filter.criteria # list of filter criteria (see example)
-) {
-  if (!is.null(filter.criteria) & !is.null(data)) {
-    filter.expression <- sapply(1:length(filter.criteria), function(i) {
-      # extract the criterion (one filter)
-      crit <- filter.criteria[[i]]
-      # If this criterion is numeric
-      if (is.numeric(data[[crit$var]])) {
-        # concatenate the values, separated by a comma
-        # Otherwise, if not numeric
-        values.str <- paste(crit$value, collapse = ",")
-        # set operator to "%in_interval%" (customized one)
-        operator <- "%in_interval%"
-      } else {
-        # concatenate the values, separated by a comma and surrounded by quote marks
-        # since those elements must be considered as strings (note: FALSE == "FALSE")
-        values.str <- paste(paste0("'", crit$value, "'"), collapse = ",")
-        # set operator to %in%
-        operator <- "%in%"
-      }
-
-      # Generate the complete expression, surround the variable name by backticks
-      # to account for possible special characters in the name (e.g. space)
-      if (i == 1) {
-        # don't include the logic for the first filter (it doesn't make sense)
-        paste(
-          crit$include,
-          paste0("`", crit$var, "`"),
-          operator,
-          "c(",
-          values.str,
-          ")"
-        )
-      } else {
-        paste(
-          crit$logic,
-          crit$include,
-          paste0("`", crit$var, "`"),
-          operator,
-          "c(",
-          values.str,
-          ")"
-        )
-      }
-    })
-
-    # Concatenate all filter expressions to get the full logical expression
-    filter.expression <- paste(filter.expression, collapse = " ")
-    return((filter.expression))
-  } else {
-    return(NULL)
-  }
-}
-
-
-#' Filter Phyloseq Object's Sample Data based on a Filter Expression
-#' @export
-filterSampleData <- function(
-  physeq, # phyloseq object to filter
-  filter.criteria = NULL # list of filter criteria (see example)
-) {
-  if (class(physeq) != "phyloseq") {
-    return(NULL)
-  }
-  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
-  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-  if (taxa_are_rows(physeq)) {
-    physeq <- t(physeq)
-  }
-
-  data <- data.frame(
-    sample_data(physeq),
-    check.names = FALSE,
-    stringsAsFactors = FALSE
-  )
-
-  filter.expression <<- getFilterExpression(
-    data = data,
-    filter.criteria = filter.criteria
-  )
-  # If filter criteria are provided
-  if (!is.null(filter.expression)) {
-    # Otherwise, if no filter criteria is given, return the original data
-    print(filter.expression) # /!\ temporary, to control the filters
-    # Parse the resulting string to get the real logical expression and
-    # filter the data
-    filtered.physeq <- physeq %>%
-      subset_samples(eval(parse(text = filter.expression)))
-  } else {
-    filtered.physeq <- physeq
-  }
-  if (sparse_input) {
-    filtered.physeq <- as_sparse_phyloseq(filtered.physeq)
-  }
-  return(filtered.physeq)
-}
-
-
-#' Filter Phyloseq Object's Taxonomic Table based on a Filter Expression
-#' @export
-filterTaxTable <- function(
-  physeq, # phyloseq object to filter
-  filter.criteria = NULL # list of filter criteria (see example)
-) {
-  if (class(physeq) != "phyloseq") {
-    return(NULL)
-  }
-  sparse_input <- is(otu_table(physeq), "sparse_otu_table")
-  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-  if (taxa_are_rows(physeq)) {
-    physeq <- t(physeq)
-  }
-  data <- data.frame(
-    .rowname = taxa_names(physeq),
-    tax_table(physeq),
-    check.names = FALSE,
-    stringsAsFactors = FALSE
-  )
-
-  # /!\ Attention: global assignment
-  filter.expression <<- getFilterExpression(
-    data = data,
-    filter.criteria = filter.criteria
-  )
-  # If filter criteria are provided
-  if (!is.null(filter.expression)) {
-    # Otherwise, if no filter criteria is given, return the original data
-    print(filter.expression) # /!\ temporary, to control the filters
-    # Temporarily add .rowname column so subset_taxa can filter by taxa name
-    tt_orig <- tax_table(physeq)
-    tax_table(physeq) <- cbind(.rowname = taxa_names(physeq), tt_orig)
-    filtered.physeq <- physeq %>%
-      subset_taxa(eval(parse(text = filter.expression)))
-    tt_f <- tax_table(filtered.physeq)
-    tax_table(filtered.physeq) <- tt_f[,
-      colnames(tt_f) != ".rowname",
-      drop = FALSE
-    ]
-  } else {
-    filtered.physeq <- physeq
-  }
-  if (sparse_input) {
-    filtered.physeq <- as_sparse_phyloseq(filtered.physeq)
-  }
-  return(filtered.physeq)
 }
