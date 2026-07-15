@@ -5,29 +5,6 @@
 #' analyze the Ig-Seq data, computing and plotting various Ig scores. The functions
 #' from this package are used in PhyloIgSeq Shiny Web application on
 #'  \url{https://www.immulab.fr/cms/index.php/team/tools/lab-tools}.
-"_PACKAGE"
-
-# Compute the optimal ncol for facet_wrap: minimize empty cells, prefer wider
-# (more columns) layouts. Avoids degenerate single-row/column results for n > 3.
-smart_facet_ncol <- function(n) {
-  if (n <= 3) {
-    return(n)
-  }
-  divisors <- which(n %% seq_len(n) == 0)
-  perfect_wide <- divisors[divisors >= sqrt(n) & divisors <= ceiling(n / 2)]
-  if (length(perfect_wide) > 0) {
-    return(min(perfect_wide))
-  }
-  nc_range <- seq(ceiling(sqrt(n)), ceiling(n / 2))
-  empties <- ceiling(n / nc_range) * nc_range - n
-  max(nc_range[empties == min(empties)])
-}
-
-
-#' Ig-Coating Score Names
-#'
-#' Character vector of the Ig-coating score names computable via \code{\link{compute_ig_score}}
-#' and requestable through \code{\link{getPhyloIgSeq}}'s \code{scores} argument.
 #'
 #' @import openxlsx
 #' @import DT
@@ -59,6 +36,39 @@ smart_facet_ncol <- function(n) {
 #' @import gganimate
 #' @import gifski
 #' @importFrom utils globalVariables
+"_PACKAGE"
+
+#' Optimal `facet_wrap()` Column Count
+#'
+#' Internal. Picks the number of columns for [ggplot2::facet_wrap()] that
+#' minimizes empty cells, preferring wider (more columns) layouts over
+#' taller ones when several column counts tie. Avoids degenerate
+#' single-row/single-column results for `n > 3`.
+#'
+#' @param n Integer. Number of facets/panels to lay out.
+#'
+#' @return Integer. Recommended `ncol` for `facet_wrap()`.
+#'
+#' @noRd
+smart_facet_ncol <- function(n) {
+  if (n <= 3) {
+    return(n)
+  }
+  divisors <- which(n %% seq_len(n) == 0)
+  perfect_wide <- divisors[divisors >= sqrt(n) & divisors <= ceiling(n / 2)]
+  if (length(perfect_wide) > 0) {
+    return(min(perfect_wide))
+  }
+  nc_range <- seq(ceiling(sqrt(n)), ceiling(n / 2))
+  empties <- ceiling(n / nc_range) * nc_range - n
+  max(nc_range[empties == min(empties)])
+}
+
+
+#' Ig-Coating Score Names
+#'
+#' Character vector of the Ig-coating score names computable via \code{\link{compute_ig_score}}
+#' and requestable through \code{\link{getPhyloIgSeq}}'s \code{scores} argument.
 #'
 #' @examples
 #' IG_SCORES
@@ -71,9 +81,13 @@ IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # Prevent R CMD check NOTE about undefined global variable
 utils::globalVariables("IG_SCORES")
 
-#' Similar to veganifyOTU from phyloseq.
-#' @keywords internal
-#' @export
+#' Reorient a Phyloseq OTU Table to Taxa-as-Columns
+#'
+#' Internal. Similar to `phyloseq`'s (unexported) `veganifyOTU()`. Transposes `physeq`
+#' so taxa are columns and samples are rows if not already, otherwise returns it
+#' unchanged.
+#'
+#' @noRd
 reverseASV <- function(physeq) {
   if (taxa_are_rows(physeq)) {
     physeq <- t(physeq)
@@ -81,9 +95,17 @@ reverseASV <- function(physeq) {
   return(physeq)
 }
 
-# Fix vertical jitter issue:
+#' `ggplot2::geom_jitter()` with Vertical Jitter Off by Default
+#'
+#' Internal. Shadows [ggplot2::geom_jitter()] within this package's namespace
+#' (unqualified `geom_jitter()` calls elsewhere in `R/*.R` resolve here, not to
+#' `ggplot2`) to default `height = 0`, since y-axis jitter is rarely wanted for
+#' this package's plots and `ggplot2::geom_jitter()`'s own default jitters both
+#' axes. Falls through to `ggplot2::geom_jitter(...)` untouched if `position` is
+#' explicitly supplied, since `height` conflicts with an explicit `position`.
+#'
+#' @noRd
 geom_jitter <- function(..., height = 0) {
-  # avoid conflicts with `position` argument if it was explicitly specified
   if (hasArg(position)) {
     ggplot2::geom_jitter(...)
   } else {
@@ -91,57 +113,72 @@ geom_jitter <- function(..., height = 0) {
   }
 }
 
-
-# Custom function, returns TRUE or FALSE depending on whether the number is in the
-# the interval given is a vector, e.g. 3.5 %in_interval% c(3,4) gives TRUE
+#' Is `x` Within `interval`?
+#'
+#' Internal. `TRUE`/`FALSE` for whether `x` falls within the closed range
+#' spanned by `interval` (`interval` need not be sorted; it is normalized via
+#' [range()]). E.g. `3.5 %in_interval% c(3, 4)` is `TRUE`. Referenced by name
+#' as a string from `filter.R`'s `eval(parse(...))`-based filter DSL, so it
+#' must stay resolvable as `PhyloIgSeq:::\`%in_interval%\`` even though it is
+#' not exported.
+#'
+#' @noRd
 `%in_interval%` <- function(x, interval) {
   interval <- range(interval, na.rm = TRUE)
   x >= interval[1] & x <= interval[2]
 }
 
-transform_abundances <-
-  function(
-    abundance_table, # matrix
-    transform = c("compositional", "hellinger"), # ,"clr", "log10", "log10p"),
-    taxa_are_rows = TRUE
-  ) {
-    # assumes taxa are rows
-    if (!taxa_are_rows) {
-      abundance_table <- t(abundance_table)
-    }
+#' Transform an Abundance Table
+#'
+#' Internal. Applies a compositional or Hellinger transform to `abundance_table`,
+#' column-wise (i.e. per sample).
+#'
+#' @param abundance_table A numeric matrix of abundances.
+#' @param transform Character. `"compositional"` (default; relative abundance,
+#'   each sample's values divided by its total) or `"hellinger"` (square root
+#'   of the compositional transform).
+#' @param taxa_are_rows Logical. Whether `abundance_table` has taxa as rows
+#'   (`TRUE`, default) or as columns (`FALSE`). The transform is always
+#'   applied column-wise internally; `abundance_table` is transposed before
+#'   and after when `FALSE`.
+#'
+#' @return A numeric matrix the same shape and orientation as `abundance_table`.
+#'
+#' @noRd
+transform_abundances <- function(
+  abundance_table,
+  transform = c("compositional", "hellinger"),
+  taxa_are_rows = TRUE
+) {
+  transform <- match.arg(transform)
 
-    if (transform == "compositional") {
-      abundance_table <- sweep(
-        abundance_table,
-        2,
-        colSums(abundance_table),
-        "/"
-      )
-    } else if (transform == "hellinger") {
-      abundance_table <- sqrt(sweep(
-        abundance_table,
-        2,
-        colSums(abundance_table),
-        "/"
-      ))
-    } else {
-      # TODO:
-      # else if(transform == "clr"){
-      #
-      # }else if(transform == "log10"){
-      #
-      # }else if(transform == "log10p"){
-      #
-      # }
-      stop("Wrong transformation method")
-    }
-
-    if (!taxa_are_rows) {
-      return(t(abundance_table))
-    } else {
-      return(abundance_table)
-    }
+  # assumes taxa are rows
+  if (!taxa_are_rows) {
+    abundance_table <- t(abundance_table)
   }
+
+  abundance_table <- switch(
+    transform,
+    compositional = sweep(
+      abundance_table,
+      2,
+      colSums(abundance_table),
+      "/"
+    ),
+    hellinger = sqrt(sweep(
+      abundance_table,
+      2,
+      colSums(abundance_table),
+      "/"
+    ))
+  )
+
+  if (!taxa_are_rows) {
+    return(t(abundance_table))
+  } else {
+    return(abundance_table)
+  }
+}
 
 #' Plot Rarefaction Curves
 #'
