@@ -2,10 +2,29 @@
 % Please edit documentation in R/utils.R
 \name{impute_with_central_tendency}
 \alias{impute_with_central_tendency}
-\title{Impute with central tendency}
+\title{Impute Missing Values With A Column's Central Tendency}
 \usage{
-impute_with_central_tendency(df, central.tendency = "median")
+impute_with_central_tendency(
+  df,
+  central_tendency = c("median", "mean", "mode")
+)
+}
+\arguments{
+\item{df}{A data frame (or matrix, coerced via \code{as.data.frame()}).}
+
+\item{central_tendency}{One of \code{"median"} (default), \code{"mean"}, or \code{"mode"}; only
+applies to numeric columns (factor columns always use the mode).}
+}
+\value{
+\code{df} (as a data frame) with \code{NA}s in numeric/factor columns imputed.
 }
 \description{
-Impute with central tendency
+Fills \code{NA}s column-wise: numeric columns with their mean/median/mode (per
+\code{central_tendency}), factor columns with their mode. Character columns are left
+untouched.
+}
+\examples{
+df <- data.frame(a = c(1, NA, 3, 4), b = c(10, 20, NA, 40))
+impute_with_central_tendency(df, central_tendency = "mean")
+
 }

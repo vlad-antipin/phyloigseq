@@ -17,7 +17,9 @@ also present in \code{IG_SCORES}.}
 
 \item{shared_by}{Minimum fraction (in \verb{[0, 1]}) of samples that must have a non-\code{NA}
 value for a taxon for that taxon's column to be kept in the output; taxa below this
-threshold are dropped. Defaults to \code{NULL}, meaning \code{0} (keep every taxon).}
+threshold are dropped. Defaults to \code{NULL}, meaning \code{0} (keep every taxon with at
+least one observed value — a taxon with zero observed values in any sample is
+always dropped regardless of \code{shared_by}, with a \code{warning()} naming it).}
 }
 \value{
 A named list, one element per entry of \code{scores}, each a wide data frame with

@@ -205,11 +205,24 @@ test_that("col_means has correct length and names", {
 
 # ---- Test 8: legacy imputation methods still work ----
 
+# `f$pis` includes one all-NA-taxon row ("T_NA") specifically to exercise `na.omit()`
+# on the SVD path (see above); on the dense path that used to produce an all-NA
+# otu_table column, which VIM::kNN() errored on ungracefully ("subscript out of
+# bounds") rather than skipping (known issue #8). `to_wider_ig_score()` now excludes
+# any all-NA-score taxon up front (with a `warning()` naming it, see its own tests in
+# test-ig_score.R), and `.PhyloIgSeq_to_phyloseq_dense()` keeps `tax_table` in sync
+# with that exclusion — so `f$pis` (T_NA included) can be used directly everywhere
+# below instead of a manually-pruned fixture, and the fixture-level workaround that
+# used to live here is gone.
+
 test_that("imputation_method = NULL returns standard phyloseq with dense otu_table", {
-  ps_null <- PhyloIgSeq_to_phyloseq(
-    f$pis,
-    score_name = "slide_z",
-    imputation_method = NULL
+  expect_warning(
+    ps_null <- PhyloIgSeq_to_phyloseq(
+      f$pis,
+      score_name = "slide_z",
+      imputation_method = NULL
+    ),
+    "T_NA"
   )
   ot_null <- phyloseq::otu_table(ps_null)
   expect_s4_class(ot_null, "otu_table")
@@ -217,10 +230,13 @@ test_that("imputation_method = NULL returns standard phyloseq with dense otu_tab
 })
 
 test_that("imputation_method = 'Replace NA with 0' returns standard dense otu_table", {
-  ps_r0 <- PhyloIgSeq_to_phyloseq(
-    f$pis,
-    score_name = "slide_z",
-    imputation_method = "Replace NA with 0"
+  expect_warning(
+    ps_r0 <- PhyloIgSeq_to_phyloseq(
+      f$pis,
+      score_name = "slide_z",
+      imputation_method = "Replace NA with 0"
+    ),
+    "T_NA"
   )
   ot_r0 <- phyloseq::otu_table(ps_r0)
   expect_s4_class(ot_r0, "otu_table")
@@ -230,23 +246,15 @@ test_that("imputation_method = 'Replace NA with 0' returns standard dense otu_ta
   expect_false(anyNA(mat_r0))
 })
 
-# `f$pis` includes one all-NA-taxon row ("T_NA") specifically to exercise `na.omit()`
-# on the SVD path (see above); on the dense path that produces an all-NA otu_table
-# column, which VIM::kNN() errors on ungracefully ("subscript out of bounds") rather
-# than skipping. That's a pre-existing dataImpute()/VIM fragility, not something to
-# paper over here, so the KNN/Central Tendency tests below use a fixture with that row
-# excluded, keeping them focused on the imputation branch itself.
-pis_no_na_taxon <- f$pis
-pis_no_na_taxon@ig_coating <- pis_no_na_taxon@ig_coating[
-  pis_no_na_taxon@ig_coating$taxon_id != "T_NA",
-]
-
 test_that("imputation_method = 'KNN' returns standard dense otu_table with no NAs", {
-  ps_knn <- PhyloIgSeq_to_phyloseq(
-    pis_no_na_taxon,
-    score_name = "slide_z",
-    imputation_method = "KNN",
-    nb_neighbors = 3
+  expect_warning(
+    ps_knn <- PhyloIgSeq_to_phyloseq(
+      f$pis,
+      score_name = "slide_z",
+      imputation_method = "KNN",
+      nb_neighbors = 3
+    ),
+    "T_NA"
   )
   ot_knn <- phyloseq::otu_table(ps_knn)
   expect_s4_class(ot_knn, "otu_table")
@@ -261,12 +269,26 @@ test_that("imputation_method = 'KNN' returns standard dense otu_table with no NA
   }
 })
 
-test_that("imputation_method = 'Central Tendency' fills NAs with the per-taxon median", {
-  ps_ct <- PhyloIgSeq_to_phyloseq(
-    pis_no_na_taxon,
+test_that("the all-NA taxon dropped by to_wider_ig_score() is also absent from tax_table", {
+  ps_knn <- suppressWarnings(PhyloIgSeq_to_phyloseq(
+    f$pis,
     score_name = "slide_z",
-    imputation_method = "Central Tendency",
-    central_tendency = "median"
+    imputation_method = "KNN",
+    nb_neighbors = 3
+  ))
+  expect_false("T_NA" %in% phyloseq::taxa_names(ps_knn))
+  expect_false("T_NA" %in% rownames(phyloseq::tax_table(ps_knn)))
+})
+
+test_that("imputation_method = 'Central Tendency' fills NAs with the per-taxon median", {
+  expect_warning(
+    ps_ct <- PhyloIgSeq_to_phyloseq(
+      f$pis,
+      score_name = "slide_z",
+      imputation_method = "Central Tendency",
+      central_tendency = "median"
+    ),
+    "T_NA"
   )
   ot_ct <- phyloseq::otu_table(ps_ct)
   expect_s4_class(ot_ct, "otu_table")

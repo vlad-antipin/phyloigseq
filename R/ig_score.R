@@ -1313,7 +1313,9 @@ agglomPhyloIgSeq <- function(
 #'   also present in `IG_SCORES`.
 #' @param shared_by Minimum fraction (in `[0, 1]`) of samples that must have a non-`NA`
 #'   value for a taxon for that taxon's column to be kept in the output; taxa below this
-#'   threshold are dropped. Defaults to `NULL`, meaning `0` (keep every taxon).
+#'   threshold are dropped. Defaults to `NULL`, meaning `0` (keep every taxon with at
+#'   least one observed value — a taxon with zero observed values in any sample is
+#'   always dropped regardless of `shared_by`, with a `warning()` naming it).
 #'
 #' @return A named list, one element per entry of `scores`, each a wide data frame with
 #'   one row per `sample_id` and one column per `taxon_id` (plus `sample_id` itself)
@@ -1344,14 +1346,39 @@ to_wider_ig_score <- function(
 
   score_list <- list()
   for (score in scores) {
-    score_list[[score]] <- ig_coating_agglom %>%
+    wide <- ig_coating_agglom %>%
       select(all_of(c("sample_id", "taxon_id", score))) %>%
       pivot_wider(
         names_from = taxon_id,
         values_from = !!score
       ) %>%
-      ungroup() %>%
-      select(where(~ mean(!is.na(.)) >= shared_by))
+      ungroup()
+
+    taxon_cols <- setdiff(colnames(wide), "sample_id")
+    observed_frac <- vapply(
+      wide[taxon_cols],
+      function(x) mean(!is.na(x)),
+      numeric(1)
+    )
+
+    # A taxon with zero observed values in any sample carries no information and
+    # would otherwise slip through when shared_by = 0 (mean(!is.na(.)) >= 0 is
+    # trivially TRUE) despite the "at least one observed value" documented intent.
+    all_na_taxa <- taxon_cols[observed_frac == 0]
+    if (length(all_na_taxa) > 0) {
+      warning(
+        "to_wider_ig_score: excluding ", length(all_na_taxa),
+        " taxon/taxa from '", score, "' with no observed value in any sample: ",
+        paste(all_na_taxa, collapse = ", "),
+        call. = FALSE
+      )
+    }
+
+    keep_cols <- c(
+      "sample_id",
+      taxon_cols[observed_frac > 0 & observed_frac >= shared_by]
+    )
+    score_list[[score]] <- wide[, keep_cols, drop = FALSE]
   }
 
   return(score_list)
@@ -1498,12 +1525,21 @@ to_wider_ig_score <- function(
     !colnames(igseq_df) %in% c("sample_id", "NA")
   ])
   rownames(otu_table_ig_score) <- igseq_df$sample_id
+
+  # to_wider_ig_score() may have dropped taxa with no observed score in any sample
+  # (see its own docs); keep tax_table in sync so it never claims a taxon that
+  # doesn't (or, after imputation below, no longer safely can) appear in otu_table.
+  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[
+    phyloigseq_obj@tax_table$taxon_id %in% colnames(otu_table_ig_score), ,
+    drop = FALSE
+  ]
+
   if (!is.null(imputation_method)) {
     otu_table_ig_score <- PhyloIgSeq::dataImpute(
       otu_table_ig_score,
       method = imputation_method,
-      central.tendency = central_tendency,
-      nb.neighbors = nb_neighbors
+      central_tendency = central_tendency,
+      nb_neighbors = nb_neighbors
     )
   }
 
@@ -1552,10 +1588,10 @@ to_wider_ig_score <- function(
 #'   keeps its missing entries), `"SVD"` (see Details), `"KNN"`, `"Central Tendency"`,
 #'   or `"Replace NA with 0"` (the latter three implemented by [dataImpute()]).
 #'   Defaults to `NULL`.
-#' @param central_tendency Passed through to [dataImpute()]'s `central.tendency` when
+#' @param central_tendency Passed through to [dataImpute()]'s `central_tendency` when
 #'   `imputation_method = "Central Tendency"`: one of `"mean"`, `"median"`, `"mode"`.
 #'   Ignored otherwise.
-#' @param nb_neighbors Passed through to [dataImpute()]'s `nb.neighbors` when
+#' @param nb_neighbors Passed through to [dataImpute()]'s `nb_neighbors` when
 #'   `imputation_method = "KNN"`: number of neighbors used by `VIM::kNN()`. Ignored
 #'   otherwise. Defaults to `5`, a common rule-of-thumb starting point for k-NN
 #'   imputation — tune for your data.

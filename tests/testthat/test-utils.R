@@ -290,3 +290,171 @@ test_that("rarefy_abundances leaves an all-zero sample all-zero rather than up-s
   result <- rarefy_abundances(mat, trim_samples = FALSE, silent_warnings = TRUE)
   expect_equal(unname(result[, "s4"]), c(0, 0, 0))
 })
+
+# ---- is_count_like ----
+
+test_that("is_count_like returns TRUE for a non-negative integer matrix", {
+  expect_true(is_count_like(matrix(1:6, nrow = 2)))
+})
+
+test_that("is_count_like returns FALSE for non-integer values", {
+  expect_false(is_count_like(matrix(c(0.5, 1, 2, 3), nrow = 2)))
+})
+
+test_that("is_count_like returns FALSE for negative values", {
+  expect_false(is_count_like(matrix(c(-1, 2, 3, 4), nrow = 2)))
+})
+
+test_that("is_count_like returns FALSE for non-numeric input", {
+  expect_false(is_count_like(matrix(c("a", "b", "c", "d"), nrow = 2)))
+})
+
+test_that("is_count_like ignores NAs by default and rejects them when allow_na = FALSE", {
+  mat <- matrix(c(1, NA, 3, 4), nrow = 2)
+  expect_true(is_count_like(mat))
+  expect_false(is_count_like(mat, allow_na = FALSE))
+})
+
+test_that("is_count_like works on a phyloseq otu_table", {
+  ot <- phyloseq::otu_table(
+    matrix(1:6, nrow = 2, dimnames = list(c("t1", "t2"), c("s1", "s2", "s3"))),
+    taxa_are_rows = TRUE
+  )
+  expect_true(is_count_like(ot))
+})
+
+test_that("is_count_like checks only stored (non-zero) values of a sparse_otu_table", {
+  mat <- matrix(
+    c(1L, 0L, 0L, 3L),
+    nrow = 2,
+    dimnames = list(c("t1", "t2"), c("s1", "s2"))
+  )
+  sp <- sparse_otu_table(phyloseq::otu_table(mat, taxa_are_rows = TRUE))
+  expect_true(is_count_like(sp))
+})
+
+test_that("is_count_like's consider_small_part subsamples large matrices; consider_small_part = FALSE checks everything", {
+  mat <- matrix(1L, nrow = 150, ncol = 150)
+  mat[150, 150] <- 0.5 # violation outside the checked 100x100 corner
+  expect_true(is_count_like(mat, consider_small_part = TRUE))
+  expect_false(is_count_like(mat, consider_small_part = FALSE))
+})
+
+# ---- make_unique_taxa_table ----
+
+test_that("make_unique_taxa_table leaves 'good' duplication (identical full lineage) untouched", {
+  taxa_table <- data.frame(
+    Genus = c("Bacteroides", "Bacteroides"),
+    Species = c("caccae", "caccae")
+  )
+  result <- make_unique_taxa_table(taxa_table)
+  expect_equal(result$Species, c("caccae", "caccae"))
+})
+
+test_that("make_unique_taxa_table disambiguates 'bad' duplication (same name, different lineage)", {
+  taxa_table <- data.frame(
+    Genus = c("Bacteroides", "Anaerostipes"),
+    Species = c("caccae", "caccae")
+  )
+  result <- make_unique_taxa_table(taxa_table)
+  expect_equal(result$Species, c("caccae", "caccae.1"))
+})
+
+test_that("make_unique_taxa_table replaces NA entries with the literal string 'NA'", {
+  taxa_table <- data.frame(
+    Genus = c("Bacteroides", NA),
+    Species = c("caccae", "unknown")
+  )
+  result <- make_unique_taxa_table(taxa_table)
+  expect_equal(result$Genus, c("Bacteroides", "NA"))
+})
+
+test_that("make_unique_taxa_table cascades correctly across three rank columns", {
+  taxa_table <- data.frame(
+    Phylum = c("P1", "P1", "P2"),
+    Genus = c("Bacteroides", "Bacteroides", "Anaerostipes"),
+    Species = c("caccae", "caccae", "caccae")
+  )
+  result <- make_unique_taxa_table(taxa_table)
+  expect_equal(result$Genus, c("Bacteroides", "Bacteroides", "Anaerostipes"))
+  expect_equal(result$Species, c("caccae", "caccae", "caccae.1"))
+})
+
+# ---- impute_with_central_tendency ----
+
+test_that("impute_with_central_tendency fills numeric NAs with the column mean/median", {
+  df <- data.frame(a = c(1, NA, 3, 4))
+  expect_equal(impute_with_central_tendency(df, "mean")$a, c(1, 8 / 3, 3, 4))
+  expect_equal(impute_with_central_tendency(df, "median")$a, c(1, 3, 3, 4))
+})
+
+test_that("impute_with_central_tendency mode imputation uses the most frequent value", {
+  df <- data.frame(a = c(1, 1, 2, NA))
+  result <- impute_with_central_tendency(df, "mode")
+  expect_equal(result$a, c(1, 1, 2, 1))
+})
+
+test_that("impute_with_central_tendency imputes factor columns with their mode, ignoring character columns", {
+  df <- data.frame(
+    fct = factor(c("x", "x", NA, "y")),
+    chr = c("a", NA, "c", "d"),
+    stringsAsFactors = FALSE
+  )
+  result <- impute_with_central_tendency(df)
+  expect_equal(as.character(result$fct), c("x", "x", "x", "y"))
+  expect_true(is.na(result$chr[2]))
+})
+
+test_that("impute_with_central_tendency errors clearly on an invalid central_tendency", {
+  df <- data.frame(a = c(1, NA, 3))
+  expect_error(impute_with_central_tendency(df, "bogus"), "should be one of")
+})
+
+# ---- dataImpute ----
+
+test_that("dataImpute 'Replace NA with 0' fills NAs with zero and passes exceptions through unchanged", {
+  df <- data.frame(id = 1:3, a = c(1, NA, 3), b = c(NA, 5, 6))
+  result <- dataImpute(df, exceptions = "id", method = "Replace NA with 0")
+  expect_equal(colnames(result), c("id", "a", "b"))
+  expect_equal(result$id, 1:3)
+  expect_equal(result$a, c(1, 0, 3))
+  expect_equal(result$b, c(0, 5, 6))
+})
+
+test_that("dataImpute 'Central Tendency' delegates to impute_with_central_tendency", {
+  df <- data.frame(a = c(1, NA, 3, 4))
+  result <- dataImpute(df, method = "Central Tendency", central_tendency = "median")
+  expect_equal(result$a, c(1, 3, 3, 4))
+})
+
+test_that("dataImpute 'KNN' fills NAs using neighboring rows", {
+  set.seed(1)
+  df <- data.frame(
+    a = c(1, 2, 1, 2, NA, 1, 2, 1, 2, 1),
+    b = c(10, 20, 10, 20, 10, 10, 20, 10, 20, 10)
+  )
+  result <- dataImpute(df, method = "KNN", nb_neighbors = 3)
+  expect_false(anyNA(result$a))
+})
+
+test_that("dataImpute errors clearly (not VIM's cryptic error) when method = 'KNN' hits an all-NA column", {
+  df <- data.frame(a = c(1, 2, 3), all_na_col = c(NA_real_, NA_real_, NA_real_))
+  expect_error(dataImpute(df, method = "KNN"), "all_na_col")
+})
+
+test_that("dataImpute's all-NA KNN guard ignores exceptions columns", {
+  df <- data.frame(
+    id = rep(NA_real_, 5),
+    a = c(1, 2, NA, 4, 5),
+    b = c(10, 9, 8, 7, 6)
+  )
+  expect_error(
+    dataImpute(df, exceptions = "id", method = "KNN", nb_neighbors = 2),
+    NA
+  )
+})
+
+test_that("dataImpute errors clearly on an invalid method", {
+  df <- data.frame(a = c(1, NA, 3))
+  expect_error(dataImpute(df, method = "bogus"), "should be one of")
+})

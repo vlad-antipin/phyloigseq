@@ -2,10 +2,42 @@
 % Please edit documentation in R/utils.R
 \name{make_unique_taxa_table}
 \alias{make_unique_taxa_table}
-\title{Make taxonomy names unique at all taxonomic rank levels}
+\title{Make Taxonomy Names Unique At Every Taxonomic Rank}
 \usage{
 make_unique_taxa_table(taxa_table)
 }
+\arguments{
+\item{taxa_table}{A taxonomy matrix/data frame (e.g. a \code{phyloseq::tax_table}), ranks
+as columns ordered from highest (leftmost) to lowest (rightmost), taxa as rows.}
+}
+\value{
+\code{taxa_table} with \code{NA}s replaced by \code{"NA"} and "bad duplication" names at
+every rank column made unique.
+}
 \description{
-Make taxonomy names unique at all taxonomic rank levels
+Disambiguates taxa whose name at a given rank is a duplicate of another taxon's name
+at that rank \emph{without} sharing the same higher-rank lineage ("bad duplication", see
+Details) by appending a \code{make.unique()}-style suffix (\code{.1}, \code{.2}, ...). Duplicate
+names that do share the same full higher-rank lineage ("good duplication") are left
+untouched. \code{NA} entries are replaced with the literal string \code{"NA"} first, so they
+participate in the same duplication logic as any other value.
+}
+\details{
+"Good duplication": low-rank names repeat because the whole lineage above them is
+identical (e.g. two ASVs both classified as genus \code{Bacteroides}, species \code{caccae}) —
+left unchanged, since collapsing them would lose real biological information (e.g.
+via \code{\link[=tax_glom]{tax_glom()}}).
+
+"Bad duplication": the same low-rank name is reached via two different higher-rank
+lineages (e.g. species \code{caccae} under both genus \code{Bacteroides} and genus
+\code{Anaerostipes}) — these represent two different taxa that happen to share a species
+name, so the second occurrence is renamed (e.g. \code{caccae.1}) to keep them distinguishable.
+}
+\examples{
+taxa_table <- data.frame(
+  Genus = c("Bacteroides", "Bacteroides", "Anaerostipes"),
+  Species = c("caccae", "caccae", "caccae")
+)
+make_unique_taxa_table(taxa_table)
+
 }

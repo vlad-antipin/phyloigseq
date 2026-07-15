@@ -466,9 +466,31 @@ rarefy_abundances <-
     return(abundance_table)
   }
 
-#' Check whether abundances look like counts
+#' Check Whether Abundances Look Like Counts
+#'
+#' Heuristically tests whether `x` holds non-negative integer (count-like) values, as
+#' opposed to already-transformed (relative abundance, log, etc.) data. For large
+#' inputs, only a subsample of values is checked by default (see `consider_small_part`).
+#'
+#' @param x A numeric matrix, `phyloseq::otu_table`, or [sparse_otu_table-class].
+#' @param allow_na Logical. If `TRUE` (default), `NA` values are ignored. If `FALSE`,
+#'   any `NA` makes the function return `FALSE`.
+#' @param consider_small_part Logical. If `TRUE` (default), only a subsample of `x` is
+#'   checked (the first 10000 stored values for a [sparse_otu_table-class], or the
+#'   top-left 100x100 corner otherwise) rather than every value, for speed on large
+#'   tables. Set `FALSE` to check every value.
+#'
+#' @return A single logical: `TRUE` if the checked values are all non-negative, finite
+#'   integers (`NA`s permitted/ignored per `allow_na`), `FALSE` otherwise (including
+#'   when `x` is not numeric).
+#'
+#' @examples
+#' is_count_like(matrix(1:6, nrow = 2))
+#' is_count_like(matrix(c(0.1, 0.2, 0.3, 0.4), nrow = 2))
+#' is_count_like(matrix(c(1, NA, 3, 4), nrow = 2), allow_na = FALSE)
+#'
 #' @export
-is.count.like <- function(x, allow.na = TRUE, consider.small.part = TRUE) {
+is_count_like <- function(x, allow_na = TRUE, consider_small_part = TRUE) {
   if (!is.numeric(x)) {
     return(FALSE)
   }
@@ -476,19 +498,19 @@ is.count.like <- function(x, allow.na = TRUE, consider.small.part = TRUE) {
   if (is(x, "sparse_otu_table")) {
     # Only check stored (non-zero) values; zero is trivially count-like.
     vals <- x@sparse_data@x
-    if (consider.small.part) vals <- head(vals, 10000L)
+    if (consider_small_part) vals <- head(vals, 10000L)
   } else {
     # Covers both otu_table and any subclass that is not sparse_otu_table.
     if (is(x, "otu_table")) {
       x <- as(x, "matrix")
     }
-    if (consider.small.part) {
+    if (consider_small_part) {
       x <- x[seq_len(min(100L, nrow(x))), seq_len(min(100L, ncol(x)))]
     }
     vals <- c(x)
   }
 
-  if (allow.na) {
+  if (allow_na) {
     vals <- vals[!is.na(vals)]
   } else if (anyNA(vals)) {
     return(FALSE)
@@ -497,7 +519,39 @@ is.count.like <- function(x, allow.na = TRUE, consider.small.part = TRUE) {
   all(vals >= 0 & is.finite(vals) & vals == floor(vals))
 }
 
-#' Make taxonomy names unique at all taxonomic rank levels
+#' Make Taxonomy Names Unique At Every Taxonomic Rank
+#'
+#' Disambiguates taxa whose name at a given rank is a duplicate of another taxon's name
+#' at that rank *without* sharing the same higher-rank lineage ("bad duplication", see
+#' Details) by appending a `make.unique()`-style suffix (`.1`, `.2`, ...). Duplicate
+#' names that do share the same full higher-rank lineage ("good duplication") are left
+#' untouched. `NA` entries are replaced with the literal string `"NA"` first, so they
+#' participate in the same duplication logic as any other value.
+#'
+#' @details
+#' "Good duplication": low-rank names repeat because the whole lineage above them is
+#' identical (e.g. two ASVs both classified as genus `Bacteroides`, species `caccae`) —
+#' left unchanged, since collapsing them would lose real biological information (e.g.
+#' via [tax_glom()]).
+#'
+#' "Bad duplication": the same low-rank name is reached via two different higher-rank
+#' lineages (e.g. species `caccae` under both genus `Bacteroides` and genus
+#' `Anaerostipes`) — these represent two different taxa that happen to share a species
+#' name, so the second occurrence is renamed (e.g. `caccae.1`) to keep them distinguishable.
+#'
+#' @param taxa_table A taxonomy matrix/data frame (e.g. a `phyloseq::tax_table`), ranks
+#'   as columns ordered from highest (leftmost) to lowest (rightmost), taxa as rows.
+#'
+#' @return `taxa_table` with `NA`s replaced by `"NA"` and "bad duplication" names at
+#'   every rank column made unique.
+#'
+#' @examples
+#' taxa_table <- data.frame(
+#'   Genus = c("Bacteroides", "Bacteroides", "Anaerostipes"),
+#'   Species = c("caccae", "caccae", "caccae")
+#' )
+#' make_unique_taxa_table(taxa_table)
+#'
 #' @export
 make_unique_taxa_table <- function(taxa_table) {
   taxa_table[is.na(taxa_table)] <- "NA"
@@ -557,73 +611,125 @@ make_unique_taxa_table <- function(taxa_table) {
   return(taxa_table)
 }
 
-#' Impute with central tendency
+#' Impute Missing Values With A Column's Central Tendency
+#'
+#' Fills `NA`s column-wise: numeric columns with their mean/median/mode (per
+#' `central_tendency`), factor columns with their mode. Character columns are left
+#' untouched.
+#'
+#' @param df A data frame (or matrix, coerced via `as.data.frame()`).
+#' @param central_tendency One of `"median"` (default), `"mean"`, or `"mode"`; only
+#'   applies to numeric columns (factor columns always use the mode).
+#'
+#' @return `df` (as a data frame) with `NA`s in numeric/factor columns imputed.
+#'
+#' @examples
+#' df <- data.frame(a = c(1, NA, 3, 4), b = c(10, 20, NA, 40))
+#' impute_with_central_tendency(df, central_tendency = "mean")
+#'
 #' @export
-impute_with_central_tendency <- function(df, central.tendency = "median") {
+impute_with_central_tendency <- function(
+  df,
+  central_tendency = c("median", "mean", "mode")
+) {
+  central_tendency <- match.arg(central_tendency)
   df <- as.data.frame(df)
-  # Function to calculate the mode
-  get.mode <- function(v) {
+  get_mode <- function(v) {
     v <- v[!is.na(v)]
     uniqv <- unique(v)
     uniqv[which.max(tabulate(match(v, uniqv)))]
   }
 
-  # Loop through each column in the data frame
   for (col in colnames(df)) {
-    # Impute numeric columns
     if (is.numeric(df[[col]])) {
-      if (central.tendency == "mean") {
-        df[[col]][is.na(df[[col]])] <- mean(df[[col]], na.rm = TRUE)
-      } else if (central.tendency == "median") {
-        df[[col]][is.na(df[[col]])] <- median(df[[col]], na.rm = TRUE)
-      } else if (central.tendency == "mode") {
-        df[[col]][is.na(df[[col]])] <- get.mode(df[[col]])
-      } else {
-        stop("Invalid method. Choose 'mean', 'median', or 'mode'.")
-      }
+      df[[col]][is.na(df[[col]])] <- switch(
+        central_tendency,
+        "mean" = mean(df[[col]], na.rm = TRUE),
+        "median" = median(df[[col]], na.rm = TRUE),
+        "mode" = get_mode(df[[col]])
+      )
       # Impute categorical columns, character columns are not affected /!\
     } else if (is.factor(df[[col]])) {
-      df[[col]][is.na(df[[col]])] <- get.mode(df[[col]])
+      df[[col]][is.na(df[[col]])] <- get_mode(df[[col]])
     }
   }
   return(df)
 }
 
 
-#' Impute Data with KNN, Central Tendency or Zero
+#' Impute Data With KNN, Central Tendency, Or Zero
+#'
+#' Imputes `NA`s in `data_tmp` (excluding any `exceptions` columns, which are passed
+#' through untouched) using one of three methods.
+#'
+#' @param data_tmp A data frame (or matrix) with `NA`s to impute.
+#' @param exceptions Character vector of `data_tmp` column names to exclude from
+#'   imputation and pass through unchanged. Defaults to `NULL` (no exceptions).
+#' @param method One of `"KNN"` (default; [VIM::kNN()]), `"Central Tendency"`
+#'   ([impute_with_central_tendency()]), or `"Replace NA with 0"`.
+#' @param central_tendency Passed to [impute_with_central_tendency()] when
+#'   `method = "Central Tendency"`: one of `"mean"`, `"median"`, or `"mode"`.
+#'   Ignored otherwise.
+#' @param nb_neighbors Number of neighbors passed to [VIM::kNN()]'s `k` when
+#'   `method = "KNN"`. A common rule-of-thumb range is 3-10. Ignored otherwise.
+#' @param add_imputation_indicators Logical, passed to [VIM::kNN()]'s `imp_var` when
+#'   `method = "KNN"`: whether to add a `TRUE`/`FALSE` indicator column per imputed
+#'   variable. Ignored otherwise.
+#'
+#' @return `data_tmp` with `NA`s in its non-`exceptions` columns imputed (`exceptions`
+#'   columns first, in their original order, followed by the imputed columns).
+#'
+#' @examples
+#' df <- data.frame(id = 1:4, a = c(1, NA, 3, 4), b = c(10, 20, NA, 40))
+#' dataImpute(df, exceptions = "id", method = "Replace NA with 0")
+#'
 #' @export
 dataImpute <- function(
-  data.tmp,
+  data_tmp,
   exceptions = NULL,
-  method = "KNN", # "KNN" or "Central Tendency"
-  central.tendency = "median", # "mean", "median" or "mode"
-  nb.neighbors = 5, # /!\ Find optimal usually it's between 3 and 10
-  add.imputation.indicators = FALSE
+  method = c("KNN", "Central Tendency", "Replace NA with 0"),
+  central_tendency = "median",
+  nb_neighbors = 5, # /!\ Find optimal usually it's between 3 and 10
+  add_imputation_indicators = FALSE
 ) {
+  method <- match.arg(method)
+  data_to_impute <- data_tmp[, !colnames(data_tmp) %in% exceptions, drop = FALSE]
+
   if (method == "KNN") {
-    data.imputed <-
-      VIM::kNN(
-        data.tmp[, !colnames(data.tmp) %in% exceptions],
-        k = nb.neighbors,
-        imp_var = add.imputation.indicators
+    all_na_cols <- colnames(data_to_impute)[
+      apply(data_to_impute, 2, function(col) all(is.na(col)))
+    ]
+    if (length(all_na_cols) > 0) {
+      stop(
+        "dataImpute: method = \"KNN\" cannot impute column(s) with no observed ",
+        "values: ", paste(all_na_cols, collapse = ", "),
+        ". Drop them first or choose a different `method`.",
+        call. = FALSE
       )
-  } else if (method == "Central Tendency") {
-    data.imputed <-
-      impute_with_central_tendency(
-        data.tmp[, !colnames(data.tmp) %in% exceptions],
-        central.tendency = central.tendency
-      )
-  } else if (method == "Replace NA with 0") {
-    data.imputed <- data.tmp
-    data.imputed[is.na(data.imputed)] <- 0
+    }
   }
 
-  data.imputed <- cbind(
-    data.tmp[, colnames(data.tmp) %in% exceptions, drop = FALSE],
-    data.imputed
+  data_imputed <- switch(
+    method,
+    "KNN" = VIM::kNN(
+      data_to_impute,
+      k = nb_neighbors,
+      imp_var = add_imputation_indicators
+    ),
+    "Central Tendency" = impute_with_central_tendency(
+      data_to_impute,
+      central_tendency = central_tendency
+    ),
+    "Replace NA with 0" = {
+      data_to_impute[is.na(data_to_impute)] <- 0
+      data_to_impute
+    }
   )
 
-  return(data.imputed)
+  cbind(
+    data_tmp[, colnames(data_tmp) %in% exceptions, drop = FALSE],
+    data_imputed
+  )
 }
 
 #' Plot Phylogenetic Tree from Phyloseq Object

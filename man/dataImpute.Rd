@@ -2,17 +2,47 @@
 % Please edit documentation in R/utils.R
 \name{dataImpute}
 \alias{dataImpute}
-\title{Impute Data with KNN, Central Tendency or Zero}
+\title{Impute Data With KNN, Central Tendency, Or Zero}
 \usage{
 dataImpute(
-  data.tmp,
+  data_tmp,
   exceptions = NULL,
-  method = "KNN",
-  central.tendency = "median",
-  nb.neighbors = 5,
-  add.imputation.indicators = FALSE
+  method = c("KNN", "Central Tendency", "Replace NA with 0"),
+  central_tendency = "median",
+  nb_neighbors = 5,
+  add_imputation_indicators = FALSE
 )
 }
+\arguments{
+\item{data_tmp}{A data frame (or matrix) with \code{NA}s to impute.}
+
+\item{exceptions}{Character vector of \code{data_tmp} column names to exclude from
+imputation and pass through unchanged. Defaults to \code{NULL} (no exceptions).}
+
+\item{method}{One of \code{"KNN"} (default; \code{\link[VIM:kNN]{VIM::kNN()}}), \code{"Central Tendency"}
+(\code{\link[=impute_with_central_tendency]{impute_with_central_tendency()}}), or \code{"Replace NA with 0"}.}
+
+\item{central_tendency}{Passed to \code{\link[=impute_with_central_tendency]{impute_with_central_tendency()}} when
+\code{method = "Central Tendency"}: one of \code{"mean"}, \code{"median"}, or \code{"mode"}.
+Ignored otherwise.}
+
+\item{nb_neighbors}{Number of neighbors passed to \code{\link[VIM:kNN]{VIM::kNN()}}'s \code{k} when
+\code{method = "KNN"}. A common rule-of-thumb range is 3-10. Ignored otherwise.}
+
+\item{add_imputation_indicators}{Logical, passed to \code{\link[VIM:kNN]{VIM::kNN()}}'s \code{imp_var} when
+\code{method = "KNN"}: whether to add a \code{TRUE}/\code{FALSE} indicator column per imputed
+variable. Ignored otherwise.}
+}
+\value{
+\code{data_tmp} with \code{NA}s in its non-\code{exceptions} columns imputed (\code{exceptions}
+columns first, in their original order, followed by the imputed columns).
+}
 \description{
-Impute Data with KNN, Central Tendency or Zero
+Imputes \code{NA}s in \code{data_tmp} (excluding any \code{exceptions} columns, which are passed
+through untouched) using one of three methods.
+}
+\examples{
+df <- data.frame(id = 1:4, a = c(1, NA, 3, 4), b = c(10, 20, NA, 40))
+dataImpute(df, exceptions = "id", method = "Replace NA with 0")
+
 }

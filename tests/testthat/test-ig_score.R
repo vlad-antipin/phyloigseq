@@ -185,6 +185,25 @@ test_that("to_wider_ig_score keeps every taxon when shared_by is NULL", {
   expect_true("taxon_rare" %in% colnames(result$slide_z))
 })
 
+test_that("to_wider_ig_score always excludes an all-NA taxon, warning about it, even when shared_by is NULL/0", {
+  ig_coating_agglom <- rbind(
+    make_ig_coating_agglom(),
+    data.frame(
+      sample_id = "sample_1",
+      taxon_id = "taxon_all_na",
+      slide_z = NA_real_,
+      palm = NA_real_,
+      not_a_score = 7
+    )
+  )
+
+  expect_warning(
+    result <- to_wider_ig_score(ig_coating_agglom, scores = "slide_z"),
+    "taxon_all_na"
+  )
+  expect_false("taxon_all_na" %in% colnames(result$slide_z))
+})
+
 # ---- plot_slide_z helpers ----
 
 test_that(".jitter_offset computes a jitter band below the value range", {

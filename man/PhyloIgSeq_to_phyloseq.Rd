@@ -32,11 +32,11 @@ keeps its missing entries), \code{"SVD"} (see Details), \code{"KNN"}, \code{"Cen
 or \code{"Replace NA with 0"} (the latter three implemented by \code{\link[=dataImpute]{dataImpute()}}).
 Defaults to \code{NULL}.}
 
-\item{central_tendency}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{central.tendency} when
+\item{central_tendency}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{central_tendency} when
 \code{imputation_method = "Central Tendency"}: one of \code{"mean"}, \code{"median"}, \code{"mode"}.
 Ignored otherwise.}
 
-\item{nb_neighbors}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{nb.neighbors} when
+\item{nb_neighbors}{Passed through to \code{\link[=dataImpute]{dataImpute()}}'s \code{nb_neighbors} when
 \code{imputation_method = "KNN"}: number of neighbors used by \code{VIM::kNN()}. Ignored
 otherwise. Defaults to \code{5}, a common rule-of-thumb starting point for k-NN
 imputation — tune for your data.}
