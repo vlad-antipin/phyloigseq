@@ -198,6 +198,10 @@ transform_abundances <- function(
 #'
 #' @seealso \code{\link[vegan]{rarecurve}}, \code{\link{plot_seq_depth}}
 #'
+#' @examples
+#' data(ps_16s_refinement)
+#' plot_rarefaction(ps_16s_refinement, step = 200)
+#'
 #' @export
 plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
   # Extract OTU table
@@ -211,30 +215,22 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
   # Remove samples with zero counts
   otu <- otu[rowSums(otu) > 0, ]
 
-  # Compute rarefaction curves
-  rare_df <- rarecurve(
+  # Compute rarefaction curves. col/lty are passed explicitly (unused by the
+  # tidy = TRUE code path) to stop rarecurve() from calling par("col")/
+  # par("lty") internally, which otherwise opens a graphics device as a side
+  # effect even though nothing is actually plotted here.
+  rare_df <- vegan::rarecurve(
     otu,
     step = step,
     xlab = "Reads",
     ylab = "Richness",
     tidy = TRUE,
-    label = FALSE
+    label = FALSE,
+    col = 1,
+    lty = 1
   )
   rare_df <- rare_df %>%
     rename(Reads = Sample, Richness = Species, Sample = Site)
-
-  # names(rare_list) <- row.names(ps@sam_data)
-  # # Convert rarecurve output to dataframe
-  # rare_df <- lapply(names(rare_list), function(sample) {
-  #   data.frame(
-  #     Sample = sample,
-  #     Reads = attr(rare_list[[sample]], "Subsample"),
-  #     Richness = rare_list[[sample]]
-  #   )
-  # }) %>%
-  #   bind_rows()
-
-  # print(head(rare_df))
 
   # Plot
   p <- ggplot(
@@ -242,7 +238,6 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
     aes(x = Reads, y = Richness, group = Sample, color = Sample)
   ) +
     geom_line(alpha = 0.8) +
-    theme_bw() +
     labs(
       x = "Sequencing depth",
       y = "Observed richness",
@@ -288,6 +283,11 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
 #'
 #' @seealso \code{\link{plot_rarefaction}}
 #'
+#' @examples
+#' data(ps_16s_refinement)
+#' plot_seq_depth(ps_16s_refinement)
+#' plot_seq_depth(ps_16s_refinement, type = "box", x_var = "Protocol")
+#'
 #' @export
 plot_seq_depth <- function(
   ps,
@@ -318,17 +318,15 @@ plot_seq_depth <- function(
       theme_bw() +
       labs(x = "Sample", y = "Sequencing depth") +
       theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  }
-
-  # -----------------------
-  # BOXPLOT + JITTER
-  # -----------------------
-  if (type == "box") {
+  } else {
+    # -----------------------
+    # BOXPLOT + JITTER
+    # -----------------------
     if (is.null(x_var)) {
       stop("For boxplot, please provide x_var (independent variable).")
     }
 
-    p <- ggplot(depth_df, aes_string(x = x_var, y = "Depth")) +
+    p <- ggplot(depth_df, aes(x = .data[[x_var]], y = Depth)) +
       geom_boxplot(outlier.shape = NA) +
       geom_jitter(width = 0.2, alpha = 0.7) +
       theme_bw() +
@@ -342,7 +340,42 @@ plot_seq_depth <- function(
   return(p)
 }
 
-#' Rarefy Abundances to Same Depth by multinomial resampling
+#' Rarefy Abundances to a Common Depth by Multinomial Resampling
+#'
+#' Subsamples each sample's counts down to a common total (\code{common_count_sum})
+#' by drawing from a multinomial distribution over taxa, so that per-sample totals
+#' become directly comparable. Samples below the target depth are optionally
+#' dropped rather than up-sampled.
+#'
+#' @param abundance_table A numeric matrix of counts, or a
+#'   \code{\link[phyloseq]{otu_table}}, oriented per \code{taxa_are_rows}.
+#' @param taxa_are_rows Logical. Whether \code{abundance_table} has taxa as rows
+#'   and samples as columns (\code{TRUE}, default) or the reverse (\code{FALSE}).
+#' @param common_count_sum Integer. Target depth every retained sample is
+#'   resampled to. Defaults to the smallest nonzero sample total in
+#'   \code{abundance_table}.
+#' @param trim_taxa Logical. Drop taxa left with zero counts across all samples
+#'   after rarefaction. Default \code{TRUE}.
+#' @param trim_samples Logical. Drop samples whose total is below
+#'   \code{common_count_sum} before rarefying (such samples cannot be rarefied
+#'   up to that depth). Default \code{TRUE}.
+#' @param silent_warnings Logical. Suppress the warning reporting how many
+#'   samples/taxa were trimmed. Default \code{FALSE}.
+#'
+#' @return A numeric matrix, oriented as \code{abundance_table}, with sample
+#'   totals rarefied to \code{common_count_sum} (and samples/taxa dropped per
+#'   \code{trim_samples}/\code{trim_taxa}).
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' otu <- as(phyloseq::otu_table(ps_16s_refinement), "matrix")
+#' rarefied <- rarefy_abundances(
+#'   otu,
+#'   taxa_are_rows = phyloseq::taxa_are_rows(ps_16s_refinement),
+#'   silent_warnings = TRUE
+#' )
+#' rowSums(rarefied)
+#'
 #' @export
 rarefy_abundances <-
   function(
@@ -356,23 +389,17 @@ rarefy_abundances <-
     if (taxa_are_rows) {
       sample_margin <- 2
       taxa_margin <- 1
-      sampleSums <- colSums
-      taxaSums <- rowSums
-      nsamples <- ncol
-      # assign_to_sample = function(sample, x) abundance_table[,sample ] <<- x
-      # sample_slice = function(sample) abundance_table[,sample]
+      sample_sums_fn <- colSums
+      taxa_sums_fn <- rowSums
     } else {
       sample_margin <- 1
       taxa_margin <- 2
-      sampleSums <- rowSums
-      taxaSums <- colSums
-      nsamples <- nrow
-      # assign_to_sample = function(sample, x) abundance_table[sample, ] <<- x
-      # sample_slice = function(sample) abundance_table[sample,]
+      sample_sums_fn <- rowSums
+      taxa_sums_fn <- colSums
     }
 
     if (is.null(common_count_sum)) {
-      common_count_sum <- min(setdiff(sampleSums(abundance_table), 0))
+      common_count_sum <- min(setdiff(sample_sums_fn(abundance_table), 0))
     }
 
     dims_orig <- dim(abundance_table)
@@ -380,26 +407,18 @@ rarefy_abundances <-
     if (trim_samples) {
       if (taxa_are_rows) {
         abundance_table <- abundance_table[,
-          sampleSums(abundance_table) >= common_count_sum,
+          sample_sums_fn(abundance_table) >= common_count_sum,
           drop = FALSE
         ]
       } else {
         abundance_table <- abundance_table[
-          sampleSums(abundance_table) >= common_count_sum, ,
+          sample_sums_fn(abundance_table) >= common_count_sum, ,
           drop = FALSE
         ]
       }
     }
 
-    # For each sample, draw counts from multinomial distribution over taxa
-    # for (sample in seq_len(nsamples(abundance_table))) {
-    #     sample_sum = sum(sample_slice(sample))
-    #     assign_to_sample( sample, if( sample_sum == 0){ 0 }else{
-    #       rmultinom(1, size = common_count_sum, prob = sample_slice(sample) / sample_sum)[, 1]
-    #       })
-    #
-    # }
-
+    # For each sample, draw counts from a multinomial distribution over taxa
     abundance_table <-
       apply(abundance_table, sample_margin, function(sample_counts) {
         if (sum(sample_counts) == 0) {
@@ -413,20 +432,19 @@ rarefy_abundances <-
       })
 
     if (sample_margin == 1) {
-      # apply() to rows puts them in columns, so have to transoose the matrix back
-
+      # apply() to rows puts them in columns, so transpose the matrix back
       abundance_table <- t(abundance_table)
     }
 
     if (trim_taxa) {
       if (taxa_are_rows) {
         abundance_table <- abundance_table[
-          taxaSums(abundance_table) > 0, ,
+          taxa_sums_fn(abundance_table) > 0, ,
           drop = FALSE
         ]
       } else {
         abundance_table <- abundance_table[,
-          taxaSums(abundance_table) > 0,
+          taxa_sums_fn(abundance_table) > 0,
           drop = FALSE
         ]
       }

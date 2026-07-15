@@ -132,3 +132,161 @@ test_that("transform_abundances errors clearly on an invalid transform", {
     "should be one of"
   )
 })
+
+# ---- plot_rarefaction / plot_seq_depth ----
+
+make_seq_depth_ps <- function() {
+  mat <- matrix(
+    c(
+      1, 20, 30, 40, 0,
+      5, 15, 25, 35, 0,
+      8, 12, 22, 32, 0
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(c("t1", "t2", "t3"), c("s1", "s2", "s3", "s4", "s5"))
+  )
+  sdata <- data.frame(
+    group = c("A", "A", "B", "B", "B"),
+    row.names = colnames(mat)
+  )
+  phyloseq::phyloseq(
+    phyloseq::otu_table(mat, taxa_are_rows = TRUE),
+    phyloseq::sample_data(sdata)
+  )
+}
+
+test_that("plot_rarefaction returns a ggplot excluding zero-count samples", {
+  ps <- make_seq_depth_ps()
+  p <- plot_rarefaction(ps, step = 5)
+  expect_s3_class(p, "ggplot")
+  expect_setequal(unique(p$data$Sample), c("s1", "s2", "s3", "s4"))
+})
+
+test_that("plot_rarefaction toggles the legend via show_legend", {
+  ps <- make_seq_depth_ps()
+  p_legend <- plot_rarefaction(ps, step = 5, show_legend = TRUE)
+  p_no_legend <- plot_rarefaction(ps, step = 5, show_legend = FALSE)
+  expect_equal(p_legend$theme$legend.position, "right")
+  expect_equal(p_no_legend$theme$legend.position, "none")
+})
+
+test_that("plot_rarefaction does not open a graphics device as a side effect", {
+  ps <- make_seq_depth_ps()
+  devs_before <- grDevices::dev.list()
+  plot_rarefaction(ps, step = 5)
+  expect_identical(grDevices::dev.list(), devs_before)
+})
+
+test_that("plot_seq_depth bar chart reports per-sample sequencing depth", {
+  ps <- make_seq_depth_ps()
+  p <- plot_seq_depth(ps)
+  expect_s3_class(p, "ggplot")
+  expect_equal(sort(p$data$Depth), sort(unname(phyloseq::sample_sums(ps))))
+})
+
+test_that("plot_seq_depth box type requires x_var", {
+  ps <- make_seq_depth_ps()
+  expect_error(plot_seq_depth(ps, type = "box"), "x_var")
+})
+
+test_that("plot_seq_depth box type facets when facet_var is supplied", {
+  ps <- make_seq_depth_ps()
+  p <- plot_seq_depth(ps, type = "box", x_var = "group")
+  expect_true(is.null(p$facet) || inherits(p$facet, "FacetNull"))
+  p_facet <- plot_seq_depth(ps, type = "box", x_var = "group", facet_var = "group")
+  expect_s3_class(p_facet$facet, "FacetWrap")
+})
+
+test_that("plot_seq_depth errors on an invalid type", {
+  ps <- make_seq_depth_ps()
+  expect_error(plot_seq_depth(ps, type = "pie"))
+})
+
+# ---- rarefy_abundances ----
+
+make_rarefy_matrix <- function() {
+  matrix(
+    c(
+      10, 20, 30, 0,
+      5, 15, 10, 0,
+      15, 25, 20, 0
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(c("t1", "t2", "t3"), c("s1", "s2", "s3", "s4"))
+  )
+}
+
+test_that("rarefy_abundances rarefies every retained sample to common_count_sum", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, silent_warnings = TRUE)
+  expect_true(all(colSums(result) == 30))
+})
+
+test_that("rarefy_abundances defaults common_count_sum to the smallest nonzero sample total", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, silent_warnings = TRUE)
+  expect_setequal(colnames(result), c("s1", "s2", "s3"))
+})
+
+test_that("rarefy_abundances drops under-depth samples by default", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, silent_warnings = TRUE)
+  expect_false("s4" %in% colnames(result))
+})
+
+test_that("rarefy_abundances keeps under-depth samples when trim_samples = FALSE", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, trim_samples = FALSE, silent_warnings = TRUE)
+  expect_true("s4" %in% colnames(result))
+  expect_equal(unname(colSums(result)["s4"]), 0)
+})
+
+test_that("rarefy_abundances honors an explicit common_count_sum", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, common_count_sum = 20, silent_warnings = TRUE)
+  expect_true(all(colSums(result) == 20))
+  expect_setequal(colnames(result), c("s1", "s2", "s3"))
+})
+
+test_that("rarefy_abundances trims taxa left all-zero after rarefaction by default", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, silent_warnings = TRUE)
+  expect_true(all(rowSums(result) > 0))
+})
+
+test_that("rarefy_abundances trim_taxa = FALSE preserves every taxon row", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, trim_taxa = FALSE, silent_warnings = TRUE)
+  expect_equal(nrow(result), nrow(mat))
+})
+
+test_that("rarefy_abundances handles taxa_are_rows = FALSE", {
+  set.seed(1)
+  mat <- t(make_rarefy_matrix())
+  result <- rarefy_abundances(mat, taxa_are_rows = FALSE, silent_warnings = TRUE)
+  expect_true(all(rowSums(result) == 30))
+  expect_false("s4" %in% rownames(result))
+})
+
+test_that("rarefy_abundances warns about trimmed samples/taxa unless silenced", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  expect_warning(rarefy_abundances(mat), "Trimmed")
+  expect_no_warning(rarefy_abundances(mat, silent_warnings = TRUE))
+})
+
+test_that("rarefy_abundances leaves an all-zero sample all-zero rather than up-sampling it", {
+  set.seed(1)
+  mat <- make_rarefy_matrix()
+  result <- rarefy_abundances(mat, trim_samples = FALSE, silent_warnings = TRUE)
+  expect_equal(unname(result[, "s4"]), c(0, 0, 0))
+})

@@ -25,6 +25,11 @@ per sample, coloured by sample name.
 Computes and plots rarefaction curves for all samples in a \code{phyloseq}
 object using \code{\link[vegan]{rarecurve}}.
 }
+\examples{
+data(ps_16s_refinement)
+plot_rarefaction(ps_16s_refinement, step = 200)
+
+}
 \seealso{
 \code{\link[vegan]{rarecurve}}, \code{\link{plot_seq_depth}}
 }

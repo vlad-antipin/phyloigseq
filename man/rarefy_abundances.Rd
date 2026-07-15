@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils.R
 \name{rarefy_abundances}
 \alias{rarefy_abundances}
-\title{Rarefy Abundances to Same Depth by multinomial resampling}
+\title{Rarefy Abundances to a Common Depth by Multinomial Resampling}
 \usage{
 rarefy_abundances(
   abundance_table,
@@ -13,6 +13,46 @@ rarefy_abundances(
   silent_warnings = FALSE
 )
 }
+\arguments{
+\item{abundance_table}{A numeric matrix of counts, or a
+\code{\link[phyloseq]{otu_table}}, oriented per \code{taxa_are_rows}.}
+
+\item{taxa_are_rows}{Logical. Whether \code{abundance_table} has taxa as rows
+and samples as columns (\code{TRUE}, default) or the reverse (\code{FALSE}).}
+
+\item{common_count_sum}{Integer. Target depth every retained sample is
+resampled to. Defaults to the smallest nonzero sample total in
+\code{abundance_table}.}
+
+\item{trim_taxa}{Logical. Drop taxa left with zero counts across all samples
+after rarefaction. Default \code{TRUE}.}
+
+\item{trim_samples}{Logical. Drop samples whose total is below
+\code{common_count_sum} before rarefying (such samples cannot be rarefied
+up to that depth). Default \code{TRUE}.}
+
+\item{silent_warnings}{Logical. Suppress the warning reporting how many
+samples/taxa were trimmed. Default \code{FALSE}.}
+}
+\value{
+A numeric matrix, oriented as \code{abundance_table}, with sample
+totals rarefied to \code{common_count_sum} (and samples/taxa dropped per
+\code{trim_samples}/\code{trim_taxa}).
+}
 \description{
-Rarefy Abundances to Same Depth by multinomial resampling
+Subsamples each sample's counts down to a common total (\code{common_count_sum})
+by drawing from a multinomial distribution over taxa, so that per-sample totals
+become directly comparable. Samples below the target depth are optionally
+dropped rather than up-sampled.
+}
+\examples{
+data(ps_16s_refinement)
+otu <- as(phyloseq::otu_table(ps_16s_refinement), "matrix")
+rarefied <- rarefy_abundances(
+  otu,
+  taxa_are_rows = phyloseq::taxa_are_rows(ps_16s_refinement),
+  silent_warnings = TRUE
+)
+rowSums(rarefied)
+
 }

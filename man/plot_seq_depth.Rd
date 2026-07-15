@@ -29,6 +29,12 @@ Visualises per-sample sequencing depth from a \code{\link[phyloseq]{phyloseq}}
 object as either a bar chart (one bar per sample) or a grouped boxplot with
 jittered points.
 }
+\examples{
+data(ps_16s_refinement)
+plot_seq_depth(ps_16s_refinement)
+plot_seq_depth(ps_16s_refinement, type = "box", x_var = "Protocol")
+
+}
 \seealso{
 \code{\link{plot_rarefaction}}
 }
