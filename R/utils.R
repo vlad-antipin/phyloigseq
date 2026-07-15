@@ -732,7 +732,58 @@ dataImpute <- function(
   )
 }
 
-#' Plot Phylogenetic Tree from Phyloseq Object
+#' Plot Phylogenetic Tree from a Phyloseq Object
+#'
+#' Draws a [ggtree::ggtree()] phylogenetic tree from a `phyloseq` object's `phy_tree`
+#' slot, optionally agglomerating taxa to a given rank first, restricting to a subset
+#' of sort fractions, labeling tips, and coloring tips by a taxonomy column.
+#'
+#' @param physeq A `phyloseq` object containing a `phy_tree`.
+#' @param taxrank `NULL` (default, no agglomeration) or a single taxonomic rank name
+#'   present in `tax_table(physeq)` (e.g. `"Genus"`). If supplied, `physeq` is
+#'   agglomerated to that rank via [tax_glom()] before plotting, and taxa are renamed
+#'   to their rank value (de-duplicated with [make.unique()]).
+#' @param fraction_id_name `NULL` (default) or the name of a `sample_data(physeq)`
+#'   column identifying sort fractions (e.g. `"sorting_fraction"`). Used together with
+#'   `fraction_ids` to restrict the tree to a subset of samples before plotting.
+#' @param fraction_ids `NULL` (default) or a character vector of values of
+#'   `fraction_id_name` to keep (via [phyloseq::prune_samples()]). Ignored unless
+#'   `fraction_id_name` is also supplied.
+#' @param layout Tree layout passed to [ggtree::ggtree()] (e.g. `"rectangular"`,
+#'   `"circular"`, `"fan"`). Default `"rectangular"`.
+#' @param tip_color `NULL` (default, no tip coloring) or the name of a
+#'   `tax_table(physeq)` column to color tips by (via [ggtree::geom_tippoint()] and
+#'   [ggsci::scale_color_igv()]). Silently ignored if the named column doesn't exist.
+#' @param label_tips Logical, default `FALSE`. If `TRUE`, tip labels are drawn (via
+#'   [ggtree::geom_tiplab()]); tip names are first truncated to 25 characters (with
+#'   [make.unique()] to keep them distinct) so long ASV/OTU hashes don't clutter the
+#'   plot.
+#' @param label_size Tip label font size, passed to [ggtree::geom_tiplab()]. Only used
+#'   when `label_tips = TRUE`. Default `2.5`.
+#' @param ladderize One of `"left"`, `"right"`, or `NULL` (leave the tree's existing
+#'   node order untouched). Default `"left"`. Passed through to [ggtree::ggtree()]'s
+#'   own `ladderize`/`right` arguments.
+#' @param ... Additional arguments passed on to [ggtree::ggtree()].
+#'
+#' @return A `ggtree`/`ggplot` object.
+#'
+#' @details If `phy_tree(physeq)` is unrooted, it is midpoint-rooted (via
+#'   [phytools::midpoint_root()], with a `warning()`) before plotting, mirroring
+#'   [sparse_unifrac()]'s handling of unrooted input. This matters for layouts that
+#'   visually imply a root-to-tip direction (`"rectangular"`, `"circular"`, `"fan"`,
+#'   ...); it is not relevant when using an explicitly unrooted `layout` such as
+#'   `"equal_angle"`/`"daylight"`.
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_phylum <- tax_glom(ps_16s_refinement, taxrank = "Phylum")
+#' plot_phylo_tree(ps_phylum, layout = "circular", tip_color = "Phylum")
+#' plot_phylo_tree(ps_phylum, label_tips = TRUE)
+#'
+#' # ps_16s_refinement's own tree is unrooted, so this midpoint-roots it first
+#' # (with a warning)
+#' plot_phylo_tree(ps_16s_refinement)
+#'
 #' @export
 plot_phylo_tree <- function(
   physeq,
@@ -741,16 +792,19 @@ plot_phylo_tree <- function(
   fraction_ids = NULL,
   layout = "rectangular",
   tip_color = NULL,
-  label.tips = NULL,
+  label_tips = FALSE,
   label_size = 2.5,
   ladderize = "left",
   ...
 ) {
-  if (is.null(physeq) || class(physeq) != "phyloseq") {
+  if (is.null(physeq) || !is(physeq, "phyloseq")) {
     stop("Need a phyloseq object")
   }
   if (is.null(access(physeq, "phy_tree"))) {
     stop("Phyloseq object has to contain a tree")
+  }
+  if (!is.null(ladderize) && !ladderize %in% c("left", "right")) {
+    stop('`ladderize` must be NULL, "left", or "right"')
   }
 
   if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
@@ -767,18 +821,25 @@ plot_phylo_tree <- function(
 
   # Truncate tip labels so long ASV hashes don't clutter the plot;
   # make.unique() prevents duplicate names after truncation
-  if (!is.null(label.tips)) {
+  if (isTRUE(label_tips)) {
     taxa_names(physeq) <- make.unique(substr(taxa_names(physeq), 1, 25))
   }
 
   tree_obj <- phy_tree(physeq)
-  if (!is.null(ladderize)) {
-    tree_obj <- ape::ladderize(tree_obj, right = (ladderize != "left"))
+  if (!ape::is.rooted(tree_obj)) {
+    tree_obj <- phytools::midpoint_root(tree_obj)
+    warning("Tree is unrooted, midpoint was set as root")
   }
 
-  p <- ggtree::ggtree(tree_obj, layout = layout)
+  p <- ggtree::ggtree(
+    tree_obj,
+    layout = layout,
+    ladderize = !is.null(ladderize),
+    right = identical(ladderize, "right"),
+    ...
+  )
 
-  if (!is.null(label.tips)) {
+  if (isTRUE(label_tips)) {
     p <- p + ggtree::geom_tiplab(size = label_size, align = FALSE)
   }
 

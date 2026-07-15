@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils.R
 \name{plot_phylo_tree}
 \alias{plot_phylo_tree}
-\title{Plot Phylogenetic Tree from Phyloseq Object}
+\title{Plot Phylogenetic Tree from a Phyloseq Object}
 \usage{
 plot_phylo_tree(
   physeq,
@@ -11,12 +11,73 @@ plot_phylo_tree(
   fraction_ids = NULL,
   layout = "rectangular",
   tip_color = NULL,
-  label.tips = NULL,
+  label_tips = FALSE,
   label_size = 2.5,
   ladderize = "left",
   ...
 )
 }
+\arguments{
+\item{physeq}{A \code{phyloseq} object containing a \code{phy_tree}.}
+
+\item{taxrank}{\code{NULL} (default, no agglomeration) or a single taxonomic rank name
+present in \code{tax_table(physeq)} (e.g. \code{"Genus"}). If supplied, \code{physeq} is
+agglomerated to that rank via \code{\link[=tax_glom]{tax_glom()}} before plotting, and taxa are renamed
+to their rank value (de-duplicated with \code{\link[=make.unique]{make.unique()}}).}
+
+\item{fraction_id_name}{\code{NULL} (default) or the name of a \code{sample_data(physeq)}
+column identifying sort fractions (e.g. \code{"sorting_fraction"}). Used together with
+\code{fraction_ids} to restrict the tree to a subset of samples before plotting.}
+
+\item{fraction_ids}{\code{NULL} (default) or a character vector of values of
+\code{fraction_id_name} to keep (via \code{\link[phyloseq:prune_samples]{phyloseq::prune_samples()}}). Ignored unless
+\code{fraction_id_name} is also supplied.}
+
+\item{layout}{Tree layout passed to \code{\link[ggtree:ggtree]{ggtree::ggtree()}} (e.g. \code{"rectangular"},
+\code{"circular"}, \code{"fan"}). Default \code{"rectangular"}.}
+
+\item{tip_color}{\code{NULL} (default, no tip coloring) or the name of a
+\code{tax_table(physeq)} column to color tips by (via \code{\link[ggtree:geom_tippoint]{ggtree::geom_tippoint()}} and
+\code{\link[ggsci:scale_color_igv]{ggsci::scale_color_igv()}}). Silently ignored if the named column doesn't exist.}
+
+\item{label_tips}{Logical, default \code{FALSE}. If \code{TRUE}, tip labels are drawn (via
+\code{\link[ggtree:geom_tiplab]{ggtree::geom_tiplab()}}); tip names are first truncated to 25 characters (with
+\code{\link[=make.unique]{make.unique()}} to keep them distinct) so long ASV/OTU hashes don't clutter the
+plot.}
+
+\item{label_size}{Tip label font size, passed to \code{\link[ggtree:geom_tiplab]{ggtree::geom_tiplab()}}. Only used
+when \code{label_tips = TRUE}. Default \code{2.5}.}
+
+\item{ladderize}{One of \code{"left"}, \code{"right"}, or \code{NULL} (leave the tree's existing
+node order untouched). Default \code{"left"}. Passed through to \code{\link[ggtree:ggtree]{ggtree::ggtree()}}'s
+own \code{ladderize}/\code{right} arguments.}
+
+\item{...}{Additional arguments passed on to \code{\link[ggtree:ggtree]{ggtree::ggtree()}}.}
+}
+\value{
+A \code{ggtree}/\code{ggplot} object.
+}
 \description{
-Plot Phylogenetic Tree from Phyloseq Object
+Draws a \code{\link[ggtree:ggtree]{ggtree::ggtree()}} phylogenetic tree from a \code{phyloseq} object's \code{phy_tree}
+slot, optionally agglomerating taxa to a given rank first, restricting to a subset
+of sort fractions, labeling tips, and coloring tips by a taxonomy column.
+}
+\details{
+If \code{phy_tree(physeq)} is unrooted, it is midpoint-rooted (via
+\code{\link[phytools:midpoint_root]{phytools::midpoint_root()}}, with a \code{warning()}) before plotting, mirroring
+\code{\link[=sparse_unifrac]{sparse_unifrac()}}'s handling of unrooted input. This matters for layouts that
+visually imply a root-to-tip direction (\code{"rectangular"}, \code{"circular"}, \code{"fan"},
+...); it is not relevant when using an explicitly unrooted \code{layout} such as
+\code{"equal_angle"}/\code{"daylight"}.
+}
+\examples{
+data(ps_16s_refinement)
+ps_phylum <- tax_glom(ps_16s_refinement, taxrank = "Phylum")
+plot_phylo_tree(ps_phylum, layout = "circular", tip_color = "Phylum")
+plot_phylo_tree(ps_phylum, label_tips = TRUE)
+
+# ps_16s_refinement's own tree is unrooted, so this midpoint-roots it first
+# (with a warning)
+plot_phylo_tree(ps_16s_refinement)
+
 }

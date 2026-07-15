@@ -458,3 +458,180 @@ test_that("dataImpute errors clearly on an invalid method", {
   df <- data.frame(a = c(1, NA, 3))
   expect_error(dataImpute(df, method = "bogus"), "should be one of")
 })
+
+# ---- plot_phylo_tree ----
+
+make_phylo_tree_ps <- function() {
+  n_taxa <- 6
+  taxa <- paste0("ASV", seq_len(n_taxa))
+  set.seed(1)
+  otu <- matrix(
+    sample(1:20, n_taxa * 4, replace = TRUE),
+    nrow = n_taxa,
+    dimnames = list(taxa, paste0("sample", 1:4))
+  )
+  tax <- matrix(
+    c(
+      rep("Bacteria", n_taxa),
+      rep(c("Firmicutes", "Bacteroidetes"), each = n_taxa / 2)
+    ),
+    nrow = n_taxa,
+    dimnames = list(taxa, c("Kingdom", "Phylum"))
+  )
+  sam <- data.frame(
+    fraction = rep(c("pos", "neg"), 2),
+    row.names = paste0("sample", 1:4)
+  )
+  tree <- ape::rtree(n_taxa, tip.label = taxa)
+  phyloseq::phyloseq(
+    phyloseq::otu_table(otu, taxa_are_rows = TRUE),
+    phyloseq::tax_table(tax),
+    phyloseq::sample_data(sam),
+    tree
+  )
+}
+
+test_that("plot_phylo_tree errors on a non-phyloseq input", {
+  expect_error(plot_phylo_tree(NULL), "Need a phyloseq object")
+  expect_error(plot_phylo_tree(list(a = 1)), "Need a phyloseq object")
+})
+
+test_that("plot_phylo_tree errors when physeq has no phy_tree", {
+  ps <- make_phylo_tree_ps()
+  ps_no_tree <- phyloseq::phyloseq(
+    phyloseq::otu_table(ps),
+    phyloseq::tax_table(ps),
+    phyloseq::sample_data(ps)
+  )
+  expect_error(plot_phylo_tree(ps_no_tree), "has to contain a tree")
+})
+
+test_that("plot_phylo_tree errors on an invalid ladderize value", {
+  ps <- make_phylo_tree_ps()
+  expect_error(
+    suppressWarnings(plot_phylo_tree(ps, ladderize = "up")),
+    '"left", or "right"'
+  )
+})
+
+test_that("plot_phylo_tree returns a ggtree object for a plain default call", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps))
+  expect_s3_class(p, "ggtree")
+})
+
+test_that("plot_phylo_tree accepts ladderize = NULL (no reordering)", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps, ladderize = NULL))
+  expect_s3_class(p, "ggtree")
+})
+
+test_that("plot_phylo_tree's ladderize = \"left\"/\"right\" produce different tip orders", {
+  ps <- make_phylo_tree_ps()
+  p_left <- suppressWarnings(plot_phylo_tree(ps, ladderize = "left"))
+  p_right <- suppressWarnings(plot_phylo_tree(ps, ladderize = "right"))
+  order_left <- p_left$data$label[order(p_left$data$y)]
+  order_right <- p_right$data$label[order(p_right$data$y)]
+  expect_false(identical(order_left, order_right))
+})
+
+test_that("plot_phylo_tree agglomerates to the requested taxrank", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps, taxrank = "Phylum"))
+  expect_equal(sum(p$data$isTip), 2)
+})
+
+test_that("plot_phylo_tree(label_tips = TRUE) truncates long tip names and adds labels", {
+  ps <- make_phylo_tree_ps()
+  # Distinguishing digit up front so truncation to 25 chars doesn't collapse
+  # every tip to the same prefix (which would force make.unique() to pad the
+  # truncated names back out past 25 chars, defeating the point of this test).
+  phyloseq::taxa_names(ps) <- paste0(
+    seq_len(phyloseq::ntaxa(ps)),
+    strrep("x", 30)
+  )
+  phyloseq::phy_tree(ps)$tip.label <- phyloseq::taxa_names(ps)
+  p <- suppressWarnings(plot_phylo_tree(ps, label_tips = TRUE))
+  tip_labels <- p$data$label[p$data$isTip]
+  expect_true(all(nchar(tip_labels) <= 25))
+  has_tiplab_layer <- any(vapply(
+    p$layers,
+    function(l) inherits(l$geom, "GeomText") || inherits(l$geom, "GeomLabel"),
+    logical(1)
+  ))
+  expect_true(has_tiplab_layer)
+})
+
+test_that("plot_phylo_tree(label_tips = FALSE) doesn't truncate tip names", {
+  ps <- make_phylo_tree_ps()
+  long_names <- paste0(strrep("x", 30), seq_len(phyloseq::ntaxa(ps)))
+  phyloseq::taxa_names(ps) <- long_names
+  phyloseq::phy_tree(ps)$tip.label <- long_names
+  p <- suppressWarnings(plot_phylo_tree(ps, label_tips = FALSE))
+  tip_labels <- p$data$label[p$data$isTip]
+  expect_true(any(nchar(tip_labels) > 25))
+})
+
+test_that("plot_phylo_tree colors tips by a valid tax_table column", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps, tip_color = "Phylum"))
+  expect_true("Phylum" %in% colnames(p$data))
+})
+
+test_that("plot_phylo_tree silently ignores an unknown tip_color column", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps, tip_color = "not_a_column"))
+  expect_s3_class(p, "ggtree")
+  expect_false("not_a_column" %in% colnames(p$data))
+})
+
+test_that("plot_phylo_tree restricts samples via fraction_id_name/fraction_ids without error", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(
+    plot_phylo_tree(
+      ps,
+      fraction_id_name = "fraction",
+      fraction_ids = "pos"
+    )
+  )
+  expect_s3_class(p, "ggtree")
+})
+
+test_that("plot_phylo_tree forwards ... to ggtree::ggtree()", {
+  ps <- make_phylo_tree_ps()
+  p <- suppressWarnings(plot_phylo_tree(ps, branch.length = "none"))
+  expect_s3_class(p, "ggtree")
+})
+
+.quiet_ggtree_cosmetics <- function(expr) {
+  withCallingHandlers(
+    expr,
+    warning = function(w) {
+      if (grepl("must be used|deprecated", conditionMessage(w))) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
+test_that("plot_phylo_tree midpoint-roots and warns on an unrooted tree", {
+  ps <- make_phylo_tree_ps()
+  phyloseq::phy_tree(ps) <- ape::unroot(phyloseq::phy_tree(ps))
+  expect_false(ape::is.rooted(phyloseq::phy_tree(ps)))
+
+  expect_warning(
+    p <- .quiet_ggtree_cosmetics(plot_phylo_tree(ps)),
+    "unrooted, midpoint was set as root"
+  )
+  expect_s3_class(p, "ggtree")
+  expect_setequal(
+    p$data$label[p$data$isTip],
+    phyloseq::taxa_names(ps)
+  )
+})
+
+test_that("plot_phylo_tree doesn't warn when the tree is already rooted", {
+  ps <- make_phylo_tree_ps()
+  expect_true(ape::is.rooted(phyloseq::phy_tree(ps)))
+  expect_no_warning(.quiet_ggtree_cosmetics(plot_phylo_tree(ps)))
+})
