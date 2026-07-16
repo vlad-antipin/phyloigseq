@@ -1319,26 +1319,47 @@ full_beta_diversity <- function(
 }
 
 #' Scree Plot from Eigenvalues
+#'
+#' Bar chart of the percentage of variability explained by each ordination
+#' axis, for judging how many components/axes to retain from an ordination
+#' (e.g. the `eigen.values` element returned by [get_beta_diversity()]).
+#'
+#' @param eigen_values Numeric vector of eigenvalues, one per ordination
+#'   axis, typically named (e.g. `"Axis.1"`, `"Axis.2"`, ...). Percentages
+#'   are computed against the sum of *positive* eigenvalues only; negative
+#'   eigenvalues (as can occur with PCoA on non-Euclidean distances) are
+#'   still plotted but excluded from that total.
+#' @param max_nb_comp Integer; maximum number of leading axes to plot.
+#'   Default `10`.
+#'
+#' @return A `ggplot` object (bar chart of percent variability explained per
+#'   axis), or `NULL` (with a `warning()`) if `eigen_values` is `NULL` or
+#'   empty.
+#'
 #' @export
-scree_plot <- function(eigen.values, max.nb.comp = 10) {
-  if (is.null(eigen.values)) {
+#'
+#' @examples
+#' eigen_values <- c(Axis.1 = 5, Axis.2 = 3, Axis.3 = 1, Axis.4 = 0.5)
+#' scree_plot(eigen_values)
+scree_plot <- function(eigen_values, max_nb_comp = 10) {
+  if (is.null(eigen_values) || length(eigen_values) == 0) {
     warning("No eigen values are furnished")
     return(NULL)
   }
-  total_var <- sum(eigen.values[eigen.values > 0])
-  eigen.values <- eigen.values[1:min(max.nb.comp, length(eigen.values))]
-  plot.data <- data.frame(
-    prop_var = eigen.values / total_var * 100,
-    dim = if (!is.null(names(eigen.values))) {
-      names(eigen.values)
+  total_var <- sum(eigen_values[eigen_values > 0])
+  eigen_values <- eigen_values[1:min(max_nb_comp, length(eigen_values))]
+  plot_data <- data.frame(
+    prop_var = eigen_values / total_var * 100,
+    dim = if (!is.null(names(eigen_values))) {
+      names(eigen_values)
     } else {
-      1:length(eigen.values)
+      1:length(eigen_values)
     }
   )
-  plot.data$dim <- factor(plot.data$dim, levels = plot.data$dim)
+  plot_data$dim <- factor(plot_data$dim, levels = plot_data$dim)
 
-  plot <-
-    ggplot(plot.data, aes(x = dim, y = prop_var)) +
+  plt <-
+    ggplot(plot_data, aes(x = dim, y = prop_var)) +
     geom_bar(stat = "identity", fill = "skyblue", color = "black") +
     xlab("Dimension") +
     ylab("% of variability explained") +
@@ -1349,7 +1370,7 @@ scree_plot <- function(eigen.values, max.nb.comp = 10) {
       plot.subtitle = element_text(size = 10, hjust = 0.5),
       legend.title = element_text(face = "bold", hjust = 0.5)
     )
-  return(plot)
+  return(plt)
 }
 
 

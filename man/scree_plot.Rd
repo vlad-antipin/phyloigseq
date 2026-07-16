@@ -4,8 +4,29 @@
 \alias{scree_plot}
 \title{Scree Plot from Eigenvalues}
 \usage{
-scree_plot(eigen.values, max.nb.comp = 10)
+scree_plot(eigen_values, max_nb_comp = 10)
+}
+\arguments{
+\item{eigen_values}{Numeric vector of eigenvalues, one per ordination
+axis, typically named (e.g. \code{"Axis.1"}, \code{"Axis.2"}, ...). Percentages
+are computed against the sum of \emph{positive} eigenvalues only; negative
+eigenvalues (as can occur with PCoA on non-Euclidean distances) are
+still plotted but excluded from that total.}
+
+\item{max_nb_comp}{Integer; maximum number of leading axes to plot.
+Default \code{10}.}
+}
+\value{
+A \code{ggplot} object (bar chart of percent variability explained per
+axis), or \code{NULL} (with a \code{warning()}) if \code{eigen_values} is \code{NULL} or
+empty.
 }
 \description{
-Scree Plot from Eigenvalues
+Bar chart of the percentage of variability explained by each ordination
+axis, for judging how many components/axes to retain from an ordination
+(e.g. the \code{eigen.values} element returned by \code{\link[=get_beta_diversity]{get_beta_diversity()}}).
+}
+\examples{
+eigen_values <- c(Axis.1 = 5, Axis.2 = 3, Axis.3 = 1, Axis.4 = 0.5)
+scree_plot(eigen_values)
 }
