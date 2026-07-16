@@ -1,53 +1,563 @@
-#' Get Beta-Diversity from Phyloseq Object
+#' Fill in NA coordinates for samples a model can't project, with a warning
+#'
+#' Shared tail of the "project fit-subset scores onto all samples" pattern
+#' used by every ordination method in [get_beta_diversity()] that cannot
+#' project new samples onto an existing fit (tSNE, UMAP, NMDS, DCA, dbRDA).
+#' Builds an all-sample matrix of `NA`, fills in the fit-subset rows, and
+#' warns that the rest are unprojected.
+#'
+#' @param method_label Method name to name in the warning message.
+#' @param all_sample_names Character vector of every sample name, used as the
+#'   row names (and row order) of the returned matrix.
+#' @param fit_sample_names Character vector of the fit-subset sample names.
+#' @param fit_scores Numeric matrix of scores for the fit-subset samples only
+#'   (rows named by `fit_sample_names`); its `colnames` are carried over.
+#' @return A numeric matrix with one row per `all_sample_names`, `NA` outside
+#'   `fit_sample_names`.
+#' @noRd
+.warn_and_na_fill <- function(
+  method_label,
+  all_sample_names,
+  fit_sample_names,
+  fit_scores
+) {
+  warning(paste0(
+    "Projection of non-fit samples is not supported for ",
+    method_label,
+    "; coordinates will be NA."
+  ))
+  all_scores <- matrix(
+    NA,
+    nrow = length(all_sample_names),
+    ncol = ncol(fit_scores),
+    dimnames = list(all_sample_names, colnames(fit_scores))
+  )
+  all_scores[fit_sample_names, ] <- fit_scores
+  all_scores
+}
+
+#' Distance-based ordination methods (PCoA, tSNE, UMAP)
+#'
+#' Handles the `get_beta_diversity()` methods that first reduce `physeq` to a
+#' sample x sample distance matrix, then ordinate that matrix. Distance
+#' matrices are the natural input for [sparse_distance()], so this is the one
+#' branch that can stay sparse until the ordination step itself.
+#'
+#' @inheritParams get_beta_diversity
+#' @param physeq_fit `physeq` pruned to the fit-subset samples (or identical
+#'   to `physeq` if no `fit_filter_name`/`fit_filter_values` was given).
+#' @param fit_sample_names Character vector of fit-subset sample names, or
+#'   `NULL` if all samples are used to fit.
+#' @return A list with elements `fit`, `coords`, `loadings`, `covariates`
+#'   (always `list()` here — these are unconstrained methods), `eigen_values`.
+#' @noRd
+.get_beta_diversity_from_distance <- function(
+  physeq,
+  physeq_fit,
+  dist,
+  method,
+  ndims,
+  fit_sample_names,
+  pca,
+  perplexity,
+  nb_neighbors,
+  min_dist
+) {
+  # Compute distance matrix for ALL samples first (needed for projection)
+  # NOTE: tSNE and UMAP can take as well a precomputed distance metric
+  if (is(otu_table(physeq), "incomplete_otu_table")) {
+    svd_emb <- otu_table(physeq)@svd_fit
+    emb <- svd_emb$u %*% diag(svd_emb$d)
+    rownames(emb) <- sample_names(physeq)
+    dist_matrix <- as.matrix(dist(emb))
+  } else if (is(dist, "dist")) {
+    # if distance matrix furnished directly (not recommended)
+    dist_matrix <- dist
+  } else {
+    if (
+      is.null(access(physeq, "phy_tree")) && dist %in% c("unifrac", "wunifrac")
+    ) {
+      message(
+        "No phylogenetic tree in this phyloseq object, bray-curtis distance selected."
+      )
+      dist_matrix <- phyloseq::distance(physeq, method = "bray")
+    } else {
+      # NOTE: euclidean and manhattan use z-score standardization (decostand "standardize")
+      # so that high-abundance taxa don't dominate the distance in ordination.
+      # This produces STANDARDIZED euclidean/manhattan, intentionally different from
+      # sparse_distance(ps, "euclidean"/"manhattan") which returns raw distances.
+      # The zero-variance filter (apply var > 0) prevents division-by-zero during
+      # z-score scaling; if sparse data leaves very few taxa, results may be degenerate.
+      # NOTE: if transform_abundances was applied above (e.g. CLR, Hellinger), this
+      # z-score step stacks on top of it. For CLR that is still useful (removes
+      # scale differences between taxa); for Hellinger it is redundant but harmless.
+      # TODO: consider routing through sparse_distance() once standardization can be
+      # done sparsely, to avoid materializing the full dense OTU matrix here.
+      if (!is.null(dist) && dist %in% c("euclidean", "manhattan")) {
+        otu_mat <- as(otu_table(physeq), "matrix")
+        dist_matrix <- vegdist(
+          decostand(
+            otu_mat[, apply(otu_mat, 2, var, na.rm = TRUE) > 0],
+            method = "standardize"
+          ),
+          method = dist
+        )
+      } else {
+        dist_matrix <- sparse_distance(physeq, method = dist)
+      }
+    }
+  }
+  dist_matrix <- as.matrix(dist_matrix)
+
+  # Subset distance matrix to fitting samples only
+  dist_matrix_fit <- if (!is.null(fit_sample_names)) {
+    dist_matrix[fit_sample_names, fit_sample_names]
+  } else {
+    dist_matrix
+  }
+
+  coords <- list()
+  loadings <- list()
+  eigen_values <- NULL
+
+  if (method == "pcoa") {
+    fit <- vegan::wcmdscale(dist_matrix_fit, eig = TRUE)
+
+    eigen_values <- vegan::eigenvals(fit)
+    n_axes <- min(ndims, length(eigen_values), ncol(fit$points))
+
+    # Project all samples using Gower's formula; falls back to scores() when no filter.
+    # Implemented directly (instead of predict.wcmdscale) to avoid vegan version issues
+    # and because we already have the distance matrices in scope.
+    # Derivation: score_i = B[i,] %*% V / sqrt(lambda)
+    #           = -0.5 * (d^2_i - delta_plus) %*% fit$points / lambda
+    # where delta_plus = colMeans(D^2_fit). Row-centering terms vanish when projected
+    # onto eigenvectors of the centered B matrix (they are orthogonal to the
+    # all-ones vector).
+    site_scores <- if (!is.null(fit_sample_names)) {
+      d_fit_sq <- dist_matrix_fit^2
+      delta <- colMeans(d_fit_sq)
+      d_all <- dist_matrix[, fit_sample_names, drop = FALSE]
+      f <- -0.5 * sweep(d_all^2, 2, delta, "-")
+      eig_k <- fit$eig[1:n_axes]
+      sc <- sweep(f %*% fit$points[, 1:n_axes, drop = FALSE], 2, eig_k, "/")
+      rownames(sc) <- rownames(dist_matrix)
+      colnames(sc) <- colnames(fit$points)[1:n_axes]
+      sc
+    } else {
+      scores(fit, display = "sites", choices = 1:n_axes, scaling = 1)
+    }
+    coords[[1]] <- site_scores
+    coords[[2]] <- site_scores # PCoA site scores are identical across scalings
+
+    # NOTE: we don't get loadings from the model but we can nevertheless
+    #       correlate abundances against axes - be careful when interpreting.
+    # We used to get these via envfit(), which fits a multiple regression of
+    # each taxon onto ALL requested axes. PCoA axes are orthogonal though, so
+    # that multiple regression reduces to a plain per-axis correlation -
+    # envfit's QR-based implementation doesn't exploit this and becomes very
+    # slow as the number of axes/taxa grows, so just correlate directly.
+    if (is(otu_table(physeq), "incomplete_otu_table")) {
+      svd_ld <- otu_table(physeq)@svd_fit
+      U <- svd_ld$u
+      V <- svd_ld$v
+      S <- coords[[1]]
+      B <- solve(crossprod(U), crossprod(U, S))
+      ld <- V %*% B
+      rownames(ld) <- taxa_names(physeq)
+      colnames(ld) <- colnames(S)
+      loadings[[1]] <- ld
+    } else {
+      loadings[[1]] <- suppressWarnings(cor(
+        as(otu_table(physeq), "matrix"),
+        coords[[1]]
+      ))
+    }
+    # TODO:for now same thing for both "scalings"
+    # loadings[[2]] = wascores(fit$points, otu_table(physeq)) ≈ scaling 2 ?
+  } else if (method == "tsne") {
+    max_perplexity <- floor((nrow(dist_matrix_fit) - 1) / 3)
+
+    if (is.null(perplexity)) {
+      perplexity <- 30
+    }
+
+    if (perplexity > max_perplexity) {
+      warning(
+        "Perplexity must not exceed 3 * perplexity < nrow(X) - 1, set to this value"
+      )
+      perplexity <- max_perplexity
+    }
+
+    fit <- Rtsne(
+      dist_matrix_fit,
+      pca = pca,
+      perplexity = perplexity,
+      is_distance = TRUE
+    )
+    site_scores <- if (!is.null(fit_sample_names)) {
+      .warn_and_na_fill(
+        "tSNE",
+        rownames(dist_matrix),
+        fit_sample_names,
+        fit$Y
+      )
+    } else {
+      fit$Y
+    }
+    coords[[1]] <- site_scores
+    coords[[2]] <- site_scores
+  } else if (method == "umap") {
+    umap_config <- umap::umap.defaults
+    if (!is.null(nb_neighbors)) {
+      umap_config$n_neighbors <- nb_neighbors
+    }
+
+    if (!is.null(min_dist)) {
+      umap_config$min_dist <- min_dist
+    }
+
+    umap_config$input <- "dist" # distance matrix as input
+
+    fit <- umap::umap(dist_matrix_fit, config = umap_config)
+
+    site_scores <- if (!is.null(fit_sample_names)) {
+      .warn_and_na_fill(
+        "UMAP",
+        rownames(dist_matrix),
+        fit_sample_names,
+        fit$layout
+      )
+    } else {
+      fit$layout
+    }
+    coords[[1]] <- site_scores
+    coords[[2]] <- site_scores
+  }
+
+  list(
+    fit = fit,
+    coords = coords,
+    loadings = loadings,
+    covariates = list(),
+    eigen_values = eigen_values
+  )
+}
+
+#' Unconstrained ordination directly on the abundance matrix (NMDS/PCA/CA/DCA)
+#'
+#' Handles the `get_beta_diversity()` methods that hand the (dense) abundance
+#' matrix straight to a `vegan` ordination, without a separate
+#' distance-matrix step.
+#'
+#' @inheritParams .get_beta_diversity_from_distance
+#' @noRd
+.get_beta_diversity_from_abundance <- function(
+  physeq,
+  physeq_fit,
+  dist,
+  method,
+  ndims,
+  fit_sample_names
+) {
+  otu_fit <- as(otu_table(reverseASV(physeq_fit)), "matrix")
+
+  if (method == "nmds") {
+    fit <- vegan::metaMDS(otu_fit, distance = dist)
+  } else if (method == "pca") {
+    # RDA without constraint = PCA
+    fit <- vegan::rda(otu_fit, scale = TRUE)
+  } else if (method == "ca") {
+    fit <- vegan::cca(otu_fit)
+  } else if (method == "dca") {
+    fit <- vegan::decorana(otu_fit)
+  }
+  # NMDS has no eigenvalues; its dimension count comes from fit$points directly
+  if (method == "nmds") {
+    eigen_values <- NULL
+    n_axes <- ncol(fit$points)
+  } else {
+    eigen_values <- vegan::eigenvals(fit)
+    n_axes <- min(ndims, length(eigen_values))
+  }
+
+  # Project all samples onto the fitted model if fit.filter is active.
+  # RDA (PCA) and CCA support predict(); NMDS and DCA do not.
+  get_site_coords <- function(scaling) {
+    fit_scores <- scores(
+      fit,
+      display = "sites",
+      choices = 1:n_axes,
+      scaling = scaling
+    )
+    if (is.null(fit_sample_names)) {
+      return(fit_scores)
+    }
+    if (inherits(fit, c("rda", "cca"))) {
+      otu_all <- as(otu_table(reverseASV(physeq)), "matrix")
+      wa <- predict(fit, newdata = otu_all, type = "wa")
+      return(wa[, 1:min(n_axes, ncol(wa)), drop = FALSE])
+    }
+    .warn_and_na_fill(method, sample_names(physeq), fit_sample_names, fit_scores)
+  }
+
+  coords <- list(get_site_coords(1), get_site_coords(2))
+
+  # NMDS/DCA may have no species scores; vegan 2.7.5 returns list() instead of
+  # NULL/error when scores are unavailable — validate result is a matrix.
+  valid_scores <- function(sc) {
+    if (is.matrix(sc) || is.data.frame(sc)) sc else NULL
+  }
+  loadings <- list(
+    valid_scores(tryCatch(
+      scores(fit, display = "species", choices = 1:n_axes, scaling = 1),
+      error = function(e) NULL
+    )),
+    valid_scores(tryCatch(
+      scores(fit, display = "species", choices = 1:n_axes, scaling = 2),
+      error = function(e) NULL
+    ))
+  )
+
+  list(
+    fit = fit,
+    coords = coords,
+    loadings = loadings,
+    covariates = list(),
+    eigen_values = eigen_values
+  )
+}
+
+#' Constrained/supervised ordination (CCA/RDA/dbRDA)
+#'
+#' Handles the `get_beta_diversity()` methods that fit the abundance matrix
+#' against a `sample_data` model formula.
+#'
+#' @inheritParams .get_beta_diversity_from_distance
+#' @param model String with the right-hand side of the model formula (e.g.
+#'   `"Var1+Var2"`).
+#' @param confounders Character vector of `sample_data` column names to
+#'   partial out via `vegan::Condition()`.
+#' @noRd
+.get_beta_diversity_constrained <- function(
+  physeq,
+  physeq_fit,
+  dist,
+  method,
+  model,
+  confounders,
+  ndims,
+  fit_sample_names
+) {
+  if (!is.null(confounders)) {
+    model <- paste0(
+      model,
+      " + ",
+      "Condition(",
+      paste(paste0("`", confounders, "`"), collapse = " + "),
+      ")"
+    )
+  }
+
+  formula <- as.formula(paste(
+    "as(otu_table(reverseASV(physeq_fit)), 'matrix')",
+    "~",
+    model
+  ))
+  df_fit <- as(sample_data(physeq_fit), "data.frame")
+
+  if (method == "cca") {
+    fit <- vegan::cca(formula, data = df_fit, na.action = na.exclude)
+  } else if (method == "rda") {
+    fit <- vegan::rda(formula, data = df_fit, na.action = na.exclude)
+  } else if (method == "dbrda") {
+    fit <- vegan::capscale(
+      formula,
+      data = df_fit,
+      na.action = na.exclude,
+      dist = dist
+    )
+  } else {
+    stop("Invalid method")
+  }
+
+  eigen_values <- vegan::eigenvals(fit)
+  n_axes <- min(ndims, length(eigen_values))
+
+  # For RDA/CCA project all samples using WA scores; dbRDA has no standard projection.
+  # capscale (dbRDA) inherits from "rda"/"cca" so check method name, not class.
+  get_constrained_coords <- function(scaling) {
+    if (!is.null(fit_sample_names) && method %in% c("rda", "cca")) {
+      otu_all <- as(otu_table(reverseASV(physeq)), "matrix")
+      # predict(type="wa") defaults to model="CCA" — constrained axes only.
+      # Explicitly fetch residual (CA) axes too and combine up to n_axes.
+      wa_cca <- predict(fit, newdata = otu_all, type = "wa", model = "CCA")
+      n_cca <- ncol(wa_cca)
+      n_ca_need <- max(0, n_axes - n_cca)
+      if (n_ca_need > 0 && !is.null(fit$CA) && fit$CA$rank > 0) {
+        wa_ca <- predict(fit, newdata = otu_all, type = "wa", model = "CA")
+        wa_ca <- wa_ca[, 1:min(n_ca_need, ncol(wa_ca)), drop = FALSE]
+        return(cbind(wa_cca, wa_ca))
+      }
+      return(wa_cca[, 1:min(n_axes, n_cca), drop = FALSE])
+    }
+    if (!is.null(fit_sample_names)) {
+      sc <- scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
+      return(.warn_and_na_fill("dbRDA", sample_names(physeq), fit_sample_names, sc))
+    }
+    scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
+  }
+
+  coords <- list(get_constrained_coords(1), get_constrained_coords(2))
+  loadings <- list(
+    scores(fit, display = "species", choices = 1:n_axes, scaling = 1),
+    scores(fit, display = "species", choices = 1:n_axes, scaling = 2)
+  )
+  covariates <- list(
+    scores(fit, display = "bp", choices = 1:n_axes, scaling = 1),
+    scores(fit, display = "bp", choices = 1:n_axes, scaling = 2)
+  )
+
+  list(
+    fit = fit,
+    coords = coords,
+    loadings = loadings,
+    covariates = covariates,
+    eigen_values = eigen_values,
+    model = model # possibly confounders-augmented; caller reports this, not its own copy
+  )
+}
+
+#' Compute a Beta-Diversity Ordination
+#'
+#' Ordinates a `phyloseq` object's samples by inter-sample dissimilarity, via
+#' one of three families of `vegan`/`Rtsne`/`umap` methods: distance-based
+#' (`"PCoA"`, `"tSNE"`, `"UMAP"`), direct-on-abundance (`"NMDS"`, `"PCA"`,
+#' `"CA"`, `"DCA"`), or constrained/supervised on a `sample_data` model
+#' formula (`"CCA"`, `"RDA"`, `"dbRDA"`). Optionally fits the model on a
+#' subset of samples (`fit_filter_name`/`fit_filter_values`) and projects the
+#' rest onto that fit; some methods have no such projection and fall back to
+#' `NA` coordinates with a `warning()` for the non-fit samples.
+#'
+#' @param physeq A `phyloseq` object.
+#' @param taxrank Taxonomic rank to agglomerate to before ordination (e.g.
+#'   `"Phylum"`), via [tax_glom()]. Default `NULL` (no agglomeration).
+#' @param fraction_id_name,fraction_ids Optionally restrict to the samples
+#'   where `sample_data(physeq)[[fraction_id_name]] %in% fraction_ids` (e.g.
+#'   selecting a single IgSeq sort fraction) before ordination. Both must be
+#'   supplied together; default `NULL` (no restriction).
+#' @param fit_filter_name,fit_filter_values Optionally fit the ordination
+#'   model only on the samples where
+#'   `sample_data(physeq)[[fit_filter_name]] %in% fit_filter_values`, then
+#'   project the remaining samples onto that fit. Both must be supplied
+#'   together; default `NULL` (fit on every sample).
+#' @param transform_abundances Abundance transform applied via
+#'   [microbiome::transform()] before computing distances/ordination (e.g.
+#'   `"compositional"`, `"clr"`, `"hellinger"`). Default `"identity"` (no
+#'   transform).
+#' @param dist Distance metric. Used directly for `method = "PCoA"`/`"tSNE"`/
+#'   `"UMAP"` (also accepts a precomputed `dist` object) and for
+#'   `method = "dbRDA"`; ignored by the other methods. Default `"bray"`.
+#' @param method Ordination method: `"PCoA"`, `"tSNE"`, `"UMAP"` (distance-
+#'   based); `"NMDS"`, `"PCA"`, `"CA"`, `"DCA"` (direct on abundances); or
+#'   `"CCA"`, `"RDA"`, `"dbRDA"` (constrained, require `model`).
+#'   Case-insensitive. Default `"PCoA"`.
+#' @param ndims Maximum number of ordination axes to retain in `coords`/
+#'   `loadings`/`covariates`. Models can have up to `nsamples - 1` axes, but
+#'   only a couple are ever plotted — keeping them all makes correlating
+#'   every taxon against every axis for `loadings` (and storing the
+#'   resulting matrices) far slower than necessary. Raise this if you need
+#'   to plot axes beyond the default range. Default `10`.
+#' @param model For constrained methods, a string with the right-hand side
+#'   of the model formula (e.g. `"Var1+Var2"`). Required when `method` is
+#'   `"CCA"`/`"RDA"`/`"dbRDA"`; ignored otherwise. Default `NULL`.
+#' @param confounders Character vector of `sample_data` column names to
+#'   partial out via `vegan::Condition()` in constrained models. Default
+#'   none.
+#' @param pca For `method = "tSNE"`, whether `Rtsne()` should run an initial
+#'   PCA step. Default `TRUE`.
+#' @param perplexity For `method = "tSNE"`, the perplexity parameter.
+#'   Default `NULL` (30, capped to `floor((n - 1) / 3)` with a `warning()`
+#'   if exceeded).
+#' @param nb_neighbors For `method = "UMAP"`, the number of neighbors.
+#'   Default `15`.
+#' @param min_dist For `method = "UMAP"`, the minimum distance. Default
+#'   `0.1`.
+#'
+#' @return A list:
+#'   \describe{
+#'     \item{fit}{The underlying model object returned by the `vegan`/
+#'       `Rtsne`/`umap` fitting function.}
+#'     \item{taxrank}{The `taxrank` argument, passed through.}
+#'     \item{coords}{Sample (site) scores: a length-2 list, `[[1]]` for
+#'       `vegan` scaling 1 (inter-sample distances) and `[[2]]` for scaling
+#'       2 (inter-taxon angles). Identical for methods with only one natural
+#'       scaling (PCoA, tSNE, UMAP).}
+#'     \item{loadings}{Taxon (species) scores, same `[[1]]`/`[[2]]` scaling
+#'       convention as `coords`. May be `NULL` per-scaling for methods that
+#'       don't provide them (e.g. NMDS, DCA).}
+#'     \item{covariates}{Constraint (biplot) scores, same scaling
+#'       convention. `list()` for unconstrained methods.}
+#'     \item{eigen_values}{Named numeric vector of eigenvalues (for scree
+#'       plots / percent-explained-variance), or `NULL` for methods without
+#'       them (NMDS).}
+#'     \item{dist}{The `dist` argument, passed through.}
+#'     \item{method}{`method`, in its original (non-lowercased) casing.}
+#'     \item{model}{The (possibly `confounders`-augmented) model formula
+#'       string, for constrained methods; `NULL` otherwise.}
+#'     \item{fit_filter}{`list(name = fit_filter_name, values =
+#'       fit_filter_values)`, or `NULL` if no fit filter was used.}
+#'     \item{fit_sample_names}{Character vector of the fit-subset sample
+#'       names, or `NULL` if all samples were used to fit.}
+#'     \item{sample_data}{`sample_data(physeq)` as a `data.frame`. Gains a
+#'       `.is_fit_sample` logical column when a fit filter was used.}
+#'     \item{tax_table}{`tax_table(physeq)` as a `data.frame`.}
+#'   }
+#'
+#' @seealso [scree_plot()], [stat_beta_diversity()], [plot_beta_diversity()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' bd <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
+#' head(bd$coords[[1]])
+#'
+#' # Constrained ordination against a sample_data variable, agglomerated to
+#' # genus level for speed
+#' bd_cca <- get_beta_diversity(
+#'   ps_16s_refinement,
+#'   taxrank = "Genus",
+#'   method = "CCA",
+#'   model = "Mechanical_Lyse"
+#' )
+#' bd_cca$eigen_values
+#'
 #' @export
 get_beta_diversity <- function(
   physeq,
-  taxrank = NULL, # taxrank to agglomerate by (e.g."Phylum")
+  taxrank = NULL,
   fraction_id_name = NULL,
   fraction_ids = NULL,
-  fit.filter.name = NULL, # column in sample_data used to select samples for fitting
-  fit.filter.values = NULL, # values of that column to include in the fit subset
-  transform.abundances = "identity",
-  dist = "bray", # for PCoA, NMDS or dbRDA
+  fit_filter_name = NULL,
+  fit_filter_values = NULL,
+  transform_abundances = "identity",
+  dist = "bray",
   method = "PCoA",
-  ndims = 10, # number of ordination axes to retain in coords/loadings/
-  # covariates. Models can have up to nsamples - 1 axes, but only a couple
-  # are ever plotted - keeping them all makes correlating every taxon
-  # against every axis for `loadings` (and storing the resulting matrices)
-  # far slower than necessary. Raise this if you need to plot axes beyond
-  # the default range.
-  model = NULL, # in case of constrained model,
-  # string with a part of the formula
-  # for covariates e.g. "Var1+Var2"
+  ndims = 10,
+  model = NULL,
   confounders = c(),
-  species = FALSE, # NOTE: this argument is not used, kept from the original function
-  # In case of tSNE method
-  pca = TRUE, # whether initial pca step should be performed
+  pca = TRUE,
   perplexity = NULL,
-  # In case of UMAP method
-  nb.neighbors = 15,
-  min.dist = 0.1
+  nb_neighbors = 15,
+  min_dist = 0.1
 ) {
-  method.orig <- method # keep method name with the original case (used later for plot title)
+  method_orig <- method # keep method name with the original case (used later for plot title)
   method <- tolower(method)
-  # Lists by scaling: [[1]] - vegan's scaling 1 -> interpretable distances between samples,
-  #                   [[2]] - interpretable angles between arrows (as correlations)
-  # Initiate species coordinates (arrows) to NULL still sometimes they're not availible
-  loadings <- list() # = species scores
-  # NOTE: term loadings is not really appropriate for all models,
-  # but it's used here for convenience
 
-  covariates <- list() # = covariate scores for biplot in case of constrained models
-
-  coords <- list()
-
-  eigen.values <- NULL # eventually for scree plots and % of explained variance
-
-  if (class(physeq) != "phyloseq") {
+  if (!is(physeq, "phyloseq")) {
     stop("Need a phyloseq or PhyloIgSeq object")
   }
 
-  if (!is.null(fraction_id_name) & !is.null(fraction_ids)) {
+  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
     physeq <- prune_samples(
       sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
       physeq
@@ -60,17 +570,15 @@ get_beta_diversity <- function(
   }
 
   # NOTE: agglomerate taxa BEFORE transforming the data
-
-  # Agglomerate taxa by taxrank
   if (!is.null(taxrank)) {
     physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
     taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank]) # NOTE: names of taxons are not necesserily unique!
   }
 
-  if (!is.null(transform.abundances) && transform.abundances != "identity") {
+  if (!is.null(transform_abundances) && transform_abundances != "identity") {
     physeq <- microbiome::transform(
       physeq,
-      transform = transform.abundances,
+      transform = transform_abundances,
       target = "OTU", # TODO: and still, clr will scale over samples
       shift = 0, # pseudocount added (shifts baseline)
       scale = 1, # if transform is "scale"
@@ -80,410 +588,91 @@ get_beta_diversity <- function(
   }
 
   # Determine samples used to fit the ordination model (after all preprocessing)
-  fit.sample.names <- NULL
-  if (!is.null(fit.filter.name) && !is.null(fit.filter.values)) {
-    fit.mask <- sample_data(physeq)[[fit.filter.name]] %in% fit.filter.values
-    physeq.fit <- prune_samples(fit.mask, physeq)
-    fit.sample.names <- sample_names(physeq.fit)
+  fit_sample_names <- NULL
+  if (!is.null(fit_filter_name) && !is.null(fit_filter_values)) {
+    fit_mask <- sample_data(physeq)[[fit_filter_name]] %in% fit_filter_values
+    physeq_fit <- prune_samples(fit_mask, physeq)
+    fit_sample_names <- sample_names(physeq_fit)
   } else {
-    physeq.fit <- physeq
+    physeq_fit <- physeq
   }
-
-  # Unconstrained ordination models
 
   if (method %in% c("pcoa", "tsne", "umap")) {
-    # Compute distance matrix for ALL samples first (needed for projection)
-    # NOTE: tSNE and UMAP can take as well a precomputed distance metric
-    if (is(otu_table(physeq), "incomplete_otu_table")) {
-      svd_emb <- otu_table(physeq)@svd_fit
-      emb <- svd_emb$u %*% diag(svd_emb$d)
-      rownames(emb) <- sample_names(physeq)
-      dist.matrix <- as.matrix(dist(emb))
-    } else if (class(dist) == "dist") {
-      # if distance matrix furnished directly (not recommended)
-      dist.matrix <- dist
-    } else {
-      if (
-        is.null(access(physeq, "phy_tree")) & dist %in% c("unifrac", "wunifrac")
-      ) {
-        print(
-          "No phylogenetic tree in this phyloseq object, bray-curtis distance selected."
-        )
-        dist.matrix <- phyloseq::distance(physeq, method = "bray")
-      } else {
-        # NOTE: euclidean and manhattan use z-score standardization (decostand "standardize")
-        # so that high-abundance taxa don't dominate the distance in ordination.
-        # This produces STANDARDIZED euclidean/manhattan, intentionally different from
-        # sparse_distance(ps, "euclidean"/"manhattan") which returns raw distances.
-        # The zero-variance filter (apply var > 0) prevents division-by-zero during
-        # z-score scaling; if sparse data leaves very few taxa, results may be degenerate.
-        # NOTE: if transform.abundances was applied above (e.g. CLR, Hellinger), this
-        # z-score step stacks on top of it. For CLR that is still useful (removes
-        # scale differences between taxa); for Hellinger it is redundant but harmless.
-        # TODO: consider routing through sparse_distance once standardization can be
-        # done sparsely, to avoid materializing the full dense OTU matrix here.
-        if (!is.null(dist) && dist %in% c("euclidean", "manhattan")) {
-          otu.mat <- as(otu_table(physeq), "matrix")
-          dist.matrix <- vegdist(
-            decostand(
-              otu.mat[, apply(otu.mat, 2, var, na.rm = TRUE) > 0],
-              method = "standardize"
-            ),
-            method = dist
-          )
-        } else {
-          dist.matrix <- sparse_distance(physeq, method = dist)
-        }
-      }
-    }
-    dist.matrix <- as.matrix(dist.matrix)
-
-    # Subset distance matrix to fitting samples only
-    dist.matrix.fit <- if (!is.null(fit.sample.names)) {
-      dist.matrix[fit.sample.names, fit.sample.names]
-    } else {
-      dist.matrix
-    }
-
-    if (method == "pcoa") {
-      fit <- vegan::wcmdscale(dist.matrix.fit, eig = TRUE)
-
-      eigen.values <- vegan::eigenvals(fit)
-      n.axes <- min(ndims, length(eigen.values), ncol(fit$points))
-
-      # Project all samples using Gower's formula; falls back to scores() when no filter.
-      # Implemented directly (instead of predict.wcmdscale) to avoid vegan version issues
-      # and because we already have the distance matrices in scope.
-      # Derivation: score_i = B[i,] %*% V / sqrt(lambda)
-      #           = -0.5 * (d^2_i - delta_plus) %*% fit$points / lambda
-      # where delta_plus = colMeans(D^2_fit). Row-centering terms vanish when projected
-      # onto eigenvectors of the centered B matrix (they are orthogonal to the
-      # all-ones vector).
-      site.scores <- if (!is.null(fit.sample.names)) {
-        d_fit_sq <- dist.matrix.fit^2
-        delta <- colMeans(d_fit_sq)
-        d_all <- dist.matrix[, fit.sample.names, drop = FALSE]
-        f <- -0.5 * sweep(d_all^2, 2, delta, "-")
-        eig_k <- fit$eig[1:n.axes]
-        sc <- sweep(f %*% fit$points[, 1:n.axes, drop = FALSE], 2, eig_k, "/")
-        rownames(sc) <- rownames(dist.matrix)
-        colnames(sc) <- colnames(fit$points)[1:n.axes]
-        sc
-      } else {
-        scores(fit, display = "sites", choices = 1:n.axes, scaling = 1)
-      }
-      coords[[1]] <- site.scores
-      coords[[2]] <- site.scores # PCoA site scores are identical across scalings
-
-      # NOTE: we don't get loadings from the model but we can nevertheless
-      #       correlate abundances against axes - be careful when interpreting.
-      # We used to get these via envfit(), which fits a multiple regression of
-      # each taxon onto ALL requested axes. PCoA axes are orthogonal though, so
-      # that multiple regression reduces to a plain per-axis correlation -
-      # envfit's QR-based implementation doesn't exploit this and becomes very
-      # slow as the number of axes/taxa grows, so just correlate directly.
-      if (is(otu_table(physeq), "incomplete_otu_table")) {
-        svd_ld <- otu_table(physeq)@svd_fit
-        U <- svd_ld$u
-        V <- svd_ld$v
-        S <- coords[[1]]
-        B <- solve(crossprod(U), crossprod(U, S))
-        ld <- V %*% B
-        rownames(ld) <- taxa_names(physeq)
-        colnames(ld) <- colnames(S)
-        loadings[[1]] <- ld
-      } else {
-        loadings[[1]] <- suppressWarnings(cor(
-          as(otu_table(physeq), "matrix"),
-          coords[[1]]
-        ))
-      }
-      # TODO:for now same thing for both "scalings"
-      # loadings[[2]] = wascores(fit$points, otu_table(physeq)) ≈ scaling 2 ?
-    } else if (method == "tsne") {
-      max.perplexity <- floor((nrow(dist.matrix.fit) - 1) / 3)
-
-      if (is.null(perplexity)) {
-        perplexity <- 30
-      }
-
-      if (perplexity > max.perplexity) {
-        warning(
-          "Perplexity must not exceed 3 * perplexity < nrow(X) - 1, set to this value"
-        )
-        perplexity <- max.perplexity
-      }
-
-      fit <- Rtsne(
-        dist.matrix.fit,
-        pca = pca,
-        perplexity = perplexity,
-        is_distance = TRUE
-      )
-      if (!is.null(fit.sample.names)) {
-        warning(
-          "Projection of non-fit samples is not supported for tSNE; coordinates will be NA."
-        )
-        all.coords <- matrix(
-          NA,
-          nrow = nrow(dist.matrix),
-          ncol = ncol(fit$Y),
-          dimnames = list(rownames(dist.matrix), NULL)
-        )
-        all.coords[fit.sample.names, ] <- fit$Y
-        coords[[1]] <- all.coords
-        coords[[2]] <- all.coords
-      } else {
-        coords[[1]] <- fit$Y
-        coords[[2]] <- fit$Y
-      }
-    } else if (method == "umap") {
-      umap.config <- umap::umap.defaults
-      if (!is.null(nb.neighbors)) {
-        umap.config$n_neighbors <- nb.neighbors
-      }
-
-      if (!is.null(min.dist)) {
-        umap.config$min_dist <- min.dist
-      }
-
-      umap.config$input <- "dist" # distance matrix as input
-
-      fit <- umap::umap(dist.matrix.fit, config = umap.config)
-
-      if (!is.null(fit.sample.names)) {
-        warning(
-          "Projection of non-fit samples is not supported for UMAP; coordinates will be NA."
-        )
-        all.coords <- matrix(
-          NA,
-          nrow = nrow(dist.matrix),
-          ncol = ncol(fit$layout),
-          dimnames = list(rownames(dist.matrix), NULL)
-        )
-        all.coords[fit.sample.names, ] <- fit$layout
-        coords[[1]] <- all.coords
-        coords[[2]] <- all.coords
-      } else {
-        coords[[1]] <- fit$layout
-        coords[[2]] <- fit$layout
-      }
-    }
+    ord <- .get_beta_diversity_from_distance(
+      physeq = physeq,
+      physeq_fit = physeq_fit,
+      dist = dist,
+      method = method,
+      ndims = ndims,
+      fit_sample_names = fit_sample_names,
+      pca = pca,
+      perplexity = perplexity,
+      nb_neighbors = nb_neighbors,
+      min_dist = min_dist
+    )
   } else if (method %in% c("nmds", "pca", "ca", "dca")) {
-    otu.fit <- as(otu_table(reverseASV(physeq.fit)), 'matrix')
-
-    if (method == "nmds") {
-      fit <- vegan::metaMDS(otu.fit, distance = dist)
-    } else if (method == "pca") {
-      # RDA without constraint = PCA
-      fit <- vegan::rda(otu.fit, scale = TRUE)
-    } else if (method == "ca") {
-      fit <- vegan::cca(otu.fit)
-    } else if (method == "dca") {
-      fit <- vegan::decorana(otu.fit)
-    }
-    # NMDS has no eigenvalues; its dimension count comes from fit$points directly
-    if (method == "nmds") {
-      eigen.values <- NULL
-      n.axes <- ncol(fit$points)
-    } else {
-      eigen.values <- vegan::eigenvals(fit)
-      n.axes <- min(ndims, length(eigen.values))
-    }
-
-    # Project all samples onto the fitted model if fit.filter is active.
-    # RDA (PCA) and CCA support predict(); NMDS and DCA do not.
-    get_site_coords <- function(scaling) {
-      fit.scores <- scores(
-        fit,
-        display = "sites",
-        choices = 1:n.axes,
-        scaling = scaling
-      )
-      if (is.null(fit.sample.names)) {
-        return(fit.scores)
-      }
-      if (inherits(fit, c("rda", "cca"))) {
-        otu.all <- as(otu_table(reverseASV(physeq)), 'matrix')
-        wa <- predict(fit, newdata = otu.all, type = "wa")
-        return(wa[, 1:min(n.axes, ncol(wa)), drop = FALSE])
-      }
-      warning(paste0(
-        "Projection of non-fit samples is not supported for ",
-        method,
-        "; coordinates will be NA."
-      ))
-      all.sc <- matrix(
-        NA,
-        nrow = nsamples(physeq),
-        ncol = ncol(fit.scores),
-        dimnames = list(sample_names(physeq), colnames(fit.scores))
-      )
-      all.sc[fit.sample.names, ] <- fit.scores
-      all.sc
-    }
-
-    coords[[1]] <- get_site_coords(1)
-    coords[[2]] <- get_site_coords(2)
-    # NMDS/DCA may have no species scores; vegan 2.7.5 returns list() instead of
-    # NULL/error when scores are unavailable — validate result is a matrix.
-    valid_scores <- function(sc) {
-      if (is.matrix(sc) || is.data.frame(sc)) sc else NULL
-    }
-    loadings[[1]] <- valid_scores(tryCatch(
-      scores(fit, display = "species", choices = 1:n.axes, scaling = 1),
-      error = function(e) NULL
-    ))
-    loadings[[2]] <- valid_scores(tryCatch(
-      scores(fit, display = "species", choices = 1:n.axes, scaling = 2),
-      error = function(e) NULL
-    ))
+    ord <- .get_beta_diversity_from_abundance(
+      physeq = physeq,
+      physeq_fit = physeq_fit,
+      dist = dist,
+      method = method,
+      ndims = ndims,
+      fit_sample_names = fit_sample_names
+    )
   } else if (!is.null(model)) {
-    # Constrained ordination models
-
-    if (!is.null(confounders)) {
-      model <- paste0(
-        model,
-        " + ",
-        "Condition(",
-        paste(paste0("`", confounders, "`"), collapse = " + "),
-        ")"
-      )
-    }
-
-    formula <- as.formula(paste(
-      "as(otu_table(reverseASV(physeq.fit)), 'matrix')",
-      "~",
-      model
-    ))
-    df.fit <- as(sample_data(physeq.fit), "data.frame")
-
-    if (method == "cca") {
-      fit <- vegan::cca(formula, data = df.fit, na.action = na.exclude)
-    } else if (method == "rda") {
-      fit <- vegan::rda(formula, data = df.fit, na.action = na.exclude)
-    } else if (method == "dbrda") {
-      fit <- vegan::capscale(
-        formula,
-        data = df.fit,
-        na.action = na.exclude,
-        dist = dist
-      )
-    } else {
-      stop("Invalid method")
-    }
-
-    eigen.values <- vegan::eigenvals(fit)
-    n.axes <- min(ndims, length(eigen.values))
-
-    # For RDA/CCA project all samples using WA scores; dbRDA has no standard projection.
-    # capscale (dbRDA) inherits from "rda"/"cca" so check method name, not class.
-    get_constrained_coords <- function(scaling) {
-      if (!is.null(fit.sample.names) && method %in% c("rda", "cca")) {
-        otu.all <- as(otu_table(reverseASV(physeq)), 'matrix')
-        # predict(type="wa") defaults to model="CCA" — constrained axes only.
-        # Explicitly fetch residual (CA) axes too and combine up to n.axes.
-        wa_cca <- predict(fit, newdata = otu.all, type = "wa", model = "CCA")
-        n_cca <- ncol(wa_cca)
-        n_ca_need <- max(0, n.axes - n_cca)
-        if (n_ca_need > 0 && !is.null(fit$CA) && fit$CA$rank > 0) {
-          wa_ca <- predict(fit, newdata = otu.all, type = "wa", model = "CA")
-          wa_ca <- wa_ca[, 1:min(n_ca_need, ncol(wa_ca)), drop = FALSE]
-          return(cbind(wa_cca, wa_ca))
-        }
-        return(wa_cca[, 1:min(n.axes, n_cca), drop = FALSE])
-      }
-      if (!is.null(fit.sample.names)) {
-        warning(
-          "Projection of non-fit samples is not supported for dbRDA; coordinates will be NA."
-        )
-        sc <- scores(
-          fit,
-          display = "sites",
-          choices = 1:n.axes,
-          scaling = scaling
-        )
-        all.sc <- matrix(
-          NA,
-          nrow = nsamples(physeq),
-          ncol = ncol(sc),
-          dimnames = list(sample_names(physeq), colnames(sc))
-        )
-        all.sc[fit.sample.names, ] <- sc
-        return(all.sc)
-      }
-      scores(fit, display = "sites", choices = 1:n.axes, scaling = scaling)
-    }
-
-    coords[[1]] <- get_constrained_coords(1)
-    coords[[2]] <- get_constrained_coords(2)
-    loadings[[1]] <- scores(
-      fit,
-      display = "species",
-      choices = 1:n.axes,
-      scaling = 1
+    ord <- .get_beta_diversity_constrained(
+      physeq = physeq,
+      physeq_fit = physeq_fit,
+      dist = dist,
+      method = method,
+      model = model,
+      confounders = confounders,
+      ndims = ndims,
+      fit_sample_names = fit_sample_names
     )
-    loadings[[2]] <- scores(
-      fit,
-      display = "species",
-      choices = 1:n.axes,
-      scaling = 2
-    )
-    covariates[[1]] <- scores(
-      fit,
-      display = "bp",
-      choices = 1:n.axes,
-      scaling = 1
-    )
-    covariates[[2]] <- scores(
-      fit,
-      display = "bp",
-      choices = 1:n.axes,
-      scaling = 2
-    )
+  } else if (method %in% c("cca", "rda", "dbrda")) {
+    stop("Model is required for constrained models")
   } else {
-    if (method %in% c("cca", "rda", "dbrda")) {
-      stop("Model is required for constrained models")
-    } else {
-      stop("Invalid method")
-    }
+    stop("Invalid method")
   }
 
-  if (length(eigen.values) == 1 && is.na(eigen.values)) {
-    eigen.values <- NULL
+  eigen_values <- ord$eigen_values
+  if (length(eigen_values) == 1 && is.na(eigen_values)) {
+    eigen_values <- NULL
   }
 
-  sample.data <- sample_data(physeq) %>% as("data.frame")
-  if (!is.null(fit.sample.names)) {
-    sample.data$.is.fit.sample <- rownames(sample.data) %in% fit.sample.names
+  sample_data_df <- sample_data(physeq) %>% as("data.frame")
+  if (!is.null(fit_sample_names)) {
+    sample_data_df$.is_fit_sample <- rownames(sample_data_df) %in%
+      fit_sample_names
   }
 
   return(list(
-    fit = fit,
+    fit = ord$fit,
     taxrank = taxrank,
 
     # lists: [[1]] - scaling 1, [[2]] - scaling 2 (see vegan's scaling)
-    coords = coords, # = sample (site) scores
-    loadings = loadings, # = variable (species) scores
-    covariates = covariates, # = covariate scores (if constrained model)
+    coords = ord$coords, # = sample (site) scores
+    loadings = ord$loadings, # = variable (species) scores
+    covariates = ord$covariates, # = covariate scores (if constrained model)
 
-    eigen.values = eigen.values, # NULL if no eigen values provided for this method
+    eigen_values = eigen_values, # NULL if no eigen values provided for this method
 
     dist = dist, # distance metric
-    method = method.orig, # name of ordination method
+    method = method_orig, # name of ordination method
     model = if (method %in% c("rda", "cca", "dbrda")) {
-      model
+      ord$model # confounders-augmented, from .get_beta_diversity_constrained()
     } else {
       NULL
     }, # formula with covariates
-    fit.filter = if (!is.null(fit.filter.name)) {
-      list(name = fit.filter.name, values = fit.filter.values)
+    fit_filter = if (!is.null(fit_filter_name)) {
+      list(name = fit_filter_name, values = fit_filter_values)
     } else {
       NULL
     },
-    fit.sample.names = fit.sample.names,
-    sample.data = sample.data,
-    tax.table = tax_table(physeq) %>% as.data.frame()
+    fit_sample_names = fit_sample_names,
+    sample_data = sample_data_df,
+    tax_table = tax_table(physeq) %>% as.data.frame()
   ))
 }
 
@@ -521,7 +710,7 @@ stat_beta_diversity <- function(
     NULL
   }
 
-  if (!label.name %in% colnames(beta.dispersion.fit$sample.data)) {
+  if (!label.name %in% colnames(beta.dispersion.fit$sample_data)) {
     warning("Wrong label name")
     return(NULL)
   }
@@ -530,17 +719,17 @@ stat_beta_diversity <- function(
     stat.data.full <- data.frame(
       Comp1 = beta.dispersion.fit$coords[[1]][, comp[1]],
       Comp2 = beta.dispersion.fit$coords[[1]][, comp[2]],
-      Label = beta.dispersion.fit$sample.data[[label.name]]
+      Label = beta.dispersion.fit$sample_data[[label.name]]
     )
   } else {
     stat.data.full <- data.frame(
       beta.dispersion.fit$coords[[1]],
-      Label = beta.dispersion.fit$sample.data[[label.name]]
+      Label = beta.dispersion.fit$sample_data[[label.name]]
     )
   }
 
   if (!is.null(strata.name)) {
-    stat.data.full[[strata.name]] <- beta.dispersion.fit$sample.data[[
+    stat.data.full[[strata.name]] <- beta.dispersion.fit$sample_data[[
       strata.name
     ]]
   }
@@ -549,27 +738,27 @@ stat_beta_diversity <- function(
   if (
     full.grid.mode &&
       !is.null(facet.row) &&
-      facet.row %in% colnames(beta.dispersion.fit$sample.data)
+      facet.row %in% colnames(beta.dispersion.fit$sample_data)
   ) {
-    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample_data[[
       facet.row
     ]]
   }
   if (
     full.grid.mode &&
       !is.null(facet.col) &&
-      facet.col %in% colnames(beta.dispersion.fit$sample.data)
+      facet.col %in% colnames(beta.dispersion.fit$sample_data)
   ) {
-    stat.data.full[[".facet.col"]] <- beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.col"]] <- beta.dispersion.fit$sample_data[[
       facet.col
     ]]
   }
   if (
     !full.grid.mode &&
       !is.null(active.facet) &&
-      active.facet %in% colnames(beta.dispersion.fit$sample.data)
+      active.facet %in% colnames(beta.dispersion.fit$sample_data)
   ) {
-    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample.data[[
+    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample_data[[
       active.facet
     ]]
   }
@@ -883,6 +1072,9 @@ full_beta_diversity <- function(
   # margins= c(1,1,1,1),
   ...
 ) {
+  # NOTE: `species` is no longer forwarded — get_beta_diversity() dropped its
+  # own unused `species` param in the 14b cleanup pass. This function's own
+  # `species` arg is now fully dead; left for the 14d argument-hygiene pass.
   beta.dispersion.fit <- get_beta_diversity(
     physeq = physeq,
     taxrank = taxrank,
@@ -890,8 +1082,7 @@ full_beta_diversity <- function(
     fraction_ids = fraction_ids,
     dist = dist,
     method = method,
-    model = model,
-    species = species
+    model = model
   )
   if (!is.null(stat) && stat != FALSE && stat != "none") {
     stat.beta.dispersion <- stat_beta_diversity(
@@ -1020,12 +1211,12 @@ plot_beta_diversity <- function(
   reverse.dim1 = FALSE,
   reverse.dim2 = FALSE
 ) {
-  sample.data <- beta.dispersion.fit$sample.data
+  sample.data <- beta.dispersion.fit$sample_data
 
   grid.mode <- facet.mode == "grid"
 
   # for the hover info only:
-  tax.table <- beta.dispersion.fit$tax.table
+  tax.table <- beta.dispersion.fit$tax_table
   taxrank <- beta.dispersion.fit$taxrank
 
   if (is.null(ellipses)) {
@@ -1086,10 +1277,10 @@ plot_beta_diversity <- function(
     scaling <- 1
   }
 
-  if (!is.null(beta.dispersion.fit$eigen.values)) {
-    prop.var.explained <- beta.dispersion.fit$eigen.values /
-      sum(beta.dispersion.fit$eigen.values[
-        beta.dispersion.fit$eigen.values > 0
+  if (!is.null(beta.dispersion.fit$eigen_values)) {
+    prop.var.explained <- beta.dispersion.fit$eigen_values /
+      sum(beta.dispersion.fit$eigen_values[
+        beta.dispersion.fit$eigen_values > 0
       ]) *
       100
   } else {
@@ -1473,8 +1664,8 @@ plot_beta_diversity <- function(
 
   plot.df$hover.text <- hover.text.all
 
-  if (".is.fit.sample" %in% colnames(sample.data)) {
-    plot.df$.is.fit.sample <- sample.data$.is.fit.sample
+  if (".is_fit_sample" %in% colnames(sample.data)) {
+    plot.df$.is_fit_sample <- sample.data$.is_fit_sample
   }
 
   point_aes <- aes(
@@ -1486,17 +1677,17 @@ plot_beta_diversity <- function(
     size = size # OK if NULL
   )
 
-  if (".is.fit.sample" %in% colnames(plot.df)) {
+  if (".is_fit_sample" %in% colnames(plot.df)) {
     if (!is.null(size.name)) {
       plt <- ggplot() +
         geom_point(
           point_aes,
-          plot.df[!plot.df$.is.fit.sample, ],
+          plot.df[!plot.df$.is_fit_sample, ],
           alpha = projected.alpha
         ) +
         geom_point(
           point_aes,
-          plot.df[plot.df$.is.fit.sample, ],
+          plot.df[plot.df$.is_fit_sample, ],
           alpha = point.alpha
         ) +
         ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
@@ -1505,13 +1696,13 @@ plot_beta_diversity <- function(
       plt <- ggplot() +
         geom_point(
           point_aes,
-          plot.df[!plot.df$.is.fit.sample, ],
+          plot.df[!plot.df$.is_fit_sample, ],
           alpha = projected.alpha,
           size = point.size
         ) +
         geom_point(
           point_aes,
-          plot.df[plot.df$.is.fit.sample, ],
+          plot.df[plot.df$.is_fit_sample, ],
           alpha = point.alpha,
           size = point.size
         ) +
@@ -1583,12 +1774,12 @@ plot_beta_diversity <- function(
         } else {
           "none"
         },
-        if (!is.null(beta.dispersion.fit$fit.filter)) {
+        if (!is.null(beta.dispersion.fit$fit_filter)) {
           paste0(
             "  fit subset: ",
-            beta.dispersion.fit$fit.filter$name,
+            beta.dispersion.fit$fit_filter$name,
             " in {",
-            paste(beta.dispersion.fit$fit.filter$values, collapse = ", "),
+            paste(beta.dispersion.fit$fit_filter$values, collapse = ", "),
             "}"
           )
         },

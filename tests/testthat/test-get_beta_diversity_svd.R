@@ -133,24 +133,24 @@ test_that("get_beta_diversity loadings[[1]] colnames match coords colnames", {
   expect_identical(colnames(result$loadings[[1]]), colnames(result$coords[[1]]))
 })
 
-test_that("get_beta_diversity returns non-null eigen.values for PCoA", {
-  expect_false(is.null(result$eigen.values))
+test_that("get_beta_diversity returns non-null eigen_values for PCoA", {
+  expect_false(is.null(result$eigen_values))
 })
 
-# ---- Test 7b: fit.filter subset path ----
+# ---- Test 7b: fit_filter subset path ----
 
 result_ff <- get_beta_diversity(
   ps,
   method = "PCoA",
-  fit.filter.name = "group",
-  fit.filter.values = "A"
+  fit_filter_name = "group",
+  fit_filter_values = "A"
 )
 
-test_that("get_beta_diversity with fit.filter returns coords for ALL samples", {
+test_that("get_beta_diversity with fit_filter returns coords for ALL samples", {
   expect_equal(nrow(result_ff$coords[[1]]), f$n_samples)
   expect_setequal(rownames(result_ff$coords[[1]]), f$samp_nms)
 })
 
-test_that("get_beta_diversity with fit.filter marks fit samples correctly", {
-  expect_true(".is.fit.sample" %in% colnames(result_ff$sample.data))
+test_that("get_beta_diversity with fit_filter marks fit samples correctly", {
+  expect_true(".is_fit_sample" %in% colnames(result_ff$sample_data))
 })

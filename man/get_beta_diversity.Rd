@@ -2,28 +2,142 @@
 % Please edit documentation in R/beta_diversity.R
 \name{get_beta_diversity}
 \alias{get_beta_diversity}
-\title{Get Beta-Diversity from Phyloseq Object}
+\title{Compute a Beta-Diversity Ordination}
 \usage{
 get_beta_diversity(
   physeq,
   taxrank = NULL,
   fraction_id_name = NULL,
   fraction_ids = NULL,
-  fit.filter.name = NULL,
-  fit.filter.values = NULL,
-  transform.abundances = "identity",
+  fit_filter_name = NULL,
+  fit_filter_values = NULL,
+  transform_abundances = "identity",
   dist = "bray",
   method = "PCoA",
   ndims = 10,
   model = NULL,
   confounders = c(),
-  species = FALSE,
   pca = TRUE,
   perplexity = NULL,
-  nb.neighbors = 15,
-  min.dist = 0.1
+  nb_neighbors = 15,
+  min_dist = 0.1
 )
 }
+\arguments{
+\item{physeq}{A \code{phyloseq} object.}
+
+\item{taxrank}{Taxonomic rank to agglomerate to before ordination (e.g.
+\code{"Phylum"}), via \code{\link[=tax_glom]{tax_glom()}}. Default \code{NULL} (no agglomeration).}
+
+\item{fraction_id_name, fraction_ids}{Optionally restrict to the samples
+where \code{sample_data(physeq)[[fraction_id_name]] \%in\% fraction_ids} (e.g.
+selecting a single IgSeq sort fraction) before ordination. Both must be
+supplied together; default \code{NULL} (no restriction).}
+
+\item{fit_filter_name, fit_filter_values}{Optionally fit the ordination
+model only on the samples where
+\code{sample_data(physeq)[[fit_filter_name]] \%in\% fit_filter_values}, then
+project the remaining samples onto that fit. Both must be supplied
+together; default \code{NULL} (fit on every sample).}
+
+\item{transform_abundances}{Abundance transform applied via
+\code{\link[microbiome:transform]{microbiome::transform()}} before computing distances/ordination (e.g.
+\code{"compositional"}, \code{"clr"}, \code{"hellinger"}). Default \code{"identity"} (no
+transform).}
+
+\item{dist}{Distance metric. Used directly for \code{method = "PCoA"}/\code{"tSNE"}/
+\code{"UMAP"} (also accepts a precomputed \code{dist} object) and for
+\code{method = "dbRDA"}; ignored by the other methods. Default \code{"bray"}.}
+
+\item{method}{Ordination method: \code{"PCoA"}, \code{"tSNE"}, \code{"UMAP"} (distance-
+based); \code{"NMDS"}, \code{"PCA"}, \code{"CA"}, \code{"DCA"} (direct on abundances); or
+\code{"CCA"}, \code{"RDA"}, \code{"dbRDA"} (constrained, require \code{model}).
+Case-insensitive. Default \code{"PCoA"}.}
+
+\item{ndims}{Maximum number of ordination axes to retain in \code{coords}/
+\code{loadings}/\code{covariates}. Models can have up to \code{nsamples - 1} axes, but
+only a couple are ever plotted — keeping them all makes correlating
+every taxon against every axis for \code{loadings} (and storing the
+resulting matrices) far slower than necessary. Raise this if you need
+to plot axes beyond the default range. Default \code{10}.}
+
+\item{model}{For constrained methods, a string with the right-hand side
+of the model formula (e.g. \code{"Var1+Var2"}). Required when \code{method} is
+\code{"CCA"}/\code{"RDA"}/\code{"dbRDA"}; ignored otherwise. Default \code{NULL}.}
+
+\item{confounders}{Character vector of \code{sample_data} column names to
+partial out via \code{vegan::Condition()} in constrained models. Default
+none.}
+
+\item{pca}{For \code{method = "tSNE"}, whether \code{Rtsne()} should run an initial
+PCA step. Default \code{TRUE}.}
+
+\item{perplexity}{For \code{method = "tSNE"}, the perplexity parameter.
+Default \code{NULL} (30, capped to \code{floor((n - 1) / 3)} with a \code{warning()}
+if exceeded).}
+
+\item{nb_neighbors}{For \code{method = "UMAP"}, the number of neighbors.
+Default \code{15}.}
+
+\item{min_dist}{For \code{method = "UMAP"}, the minimum distance. Default
+\code{0.1}.}
+}
+\value{
+A list:
+\describe{
+\item{fit}{The underlying model object returned by the \code{vegan}/
+\code{Rtsne}/\code{umap} fitting function.}
+\item{taxrank}{The \code{taxrank} argument, passed through.}
+\item{coords}{Sample (site) scores: a length-2 list, \verb{[[1]]} for
+\code{vegan} scaling 1 (inter-sample distances) and \verb{[[2]]} for scaling
+2 (inter-taxon angles). Identical for methods with only one natural
+scaling (PCoA, tSNE, UMAP).}
+\item{loadings}{Taxon (species) scores, same \verb{[[1]]}/\verb{[[2]]} scaling
+convention as \code{coords}. May be \code{NULL} per-scaling for methods that
+don't provide them (e.g. NMDS, DCA).}
+\item{covariates}{Constraint (biplot) scores, same scaling
+convention. \code{list()} for unconstrained methods.}
+\item{eigen_values}{Named numeric vector of eigenvalues (for scree
+plots / percent-explained-variance), or \code{NULL} for methods without
+them (NMDS).}
+\item{dist}{The \code{dist} argument, passed through.}
+\item{method}{\code{method}, in its original (non-lowercased) casing.}
+\item{model}{The (possibly \code{confounders}-augmented) model formula
+string, for constrained methods; \code{NULL} otherwise.}
+\item{fit_filter}{\code{list(name = fit_filter_name, values = fit_filter_values)}, or \code{NULL} if no fit filter was used.}
+\item{fit_sample_names}{Character vector of the fit-subset sample
+names, or \code{NULL} if all samples were used to fit.}
+\item{sample_data}{\code{sample_data(physeq)} as a \code{data.frame}. Gains a
+\code{.is_fit_sample} logical column when a fit filter was used.}
+\item{tax_table}{\code{tax_table(physeq)} as a \code{data.frame}.}
+}
+}
 \description{
-Get Beta-Diversity from Phyloseq Object
+Ordinates a \code{phyloseq} object's samples by inter-sample dissimilarity, via
+one of three families of \code{vegan}/\code{Rtsne}/\code{umap} methods: distance-based
+(\code{"PCoA"}, \code{"tSNE"}, \code{"UMAP"}), direct-on-abundance (\code{"NMDS"}, \code{"PCA"},
+\code{"CA"}, \code{"DCA"}), or constrained/supervised on a \code{sample_data} model
+formula (\code{"CCA"}, \code{"RDA"}, \code{"dbRDA"}). Optionally fits the model on a
+subset of samples (\code{fit_filter_name}/\code{fit_filter_values}) and projects the
+rest onto that fit; some methods have no such projection and fall back to
+\code{NA} coordinates with a \code{warning()} for the non-fit samples.
+}
+\examples{
+data(ps_16s_refinement)
+bd <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
+head(bd$coords[[1]])
+
+# Constrained ordination against a sample_data variable, agglomerated to
+# genus level for speed
+bd_cca <- get_beta_diversity(
+  ps_16s_refinement,
+  taxrank = "Genus",
+  method = "CCA",
+  model = "Mechanical_Lyse"
+)
+bd_cca$eigen_values
+
+}
+\seealso{
+\code{\link[=scree_plot]{scree_plot()}}, \code{\link[=stat_beta_diversity]{stat_beta_diversity()}}, \code{\link[=plot_beta_diversity]{plot_beta_diversity()}}
 }
