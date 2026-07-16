@@ -2,12 +2,12 @@
 % Please edit documentation in R/alpha_diversity.R
 \name{get_alpha_diversity}
 \alias{get_alpha_diversity}
-\title{Get Alpha-Diversity from Phyloseq Object}
+\title{Get Alpha Diversity from a Phyloseq Object}
 \usage{
 get_alpha_diversity(
   physeq,
   from_igseq = FALSE,
-  transform.abundances = "identity",
+  transform_abundances = "identity",
   proportions = FALSE,
   low_lim = -1.96,
   high_lim = 1.96,
@@ -17,6 +17,74 @@ get_alpha_diversity(
   measure = "Shannon"
 )
 }
+\arguments{
+\item{physeq}{A \code{phyloseq} object.}
+
+\item{from_igseq}{Logical. If \code{TRUE}, compute Ig-score
+significance-bucket richness via \code{\link[=get_igseq_richness]{get_igseq_richness()}} instead of a
+standard diversity index; \code{proportions}/\code{low_lim}/
+\code{high_lim} apply, \code{transform_abundances}/\code{taxrank}/
+\code{measure}/\code{fraction_id_name}/\code{fraction_ids} are ignored.
+Default \code{FALSE}.}
+
+\item{transform_abundances}{\code{NULL} or a transform name passed to
+\code{\link[microbiome:transform]{microbiome::transform()}} (e.g. \code{"compositional"});
+\code{"identity"} (default) applies no transform.}
+
+\item{proportions}{Logical, only used when \code{from_igseq = TRUE}:
+report bucket proportions instead of raw counts. Default \code{FALSE}.}
+
+\item{low_lim, high_lim}{Numeric Ig-score cutoffs defining the "down"/"up"
+significance buckets when \code{from_igseq = TRUE}: taxa with a score
+below \code{low_lim}/above \code{high_lim} count as down-/up-regulated,
+the rest as not significant ("ns"). Default \code{-1.96}/\code{1.96}
+(two-tailed 95\% Z threshold).}
+
+\item{taxrank}{\code{NULL} (default, no agglomeration) or a taxonomic rank
+to agglomerate to via \code{\link[=tax_glom]{tax_glom()}} before computing diversity.}
+
+\item{fraction_id_name, fraction_ids}{Restrict to a subset of samples
+before computing diversity: \code{fraction_id_name} names a
+\code{sample_data(physeq)} column, \code{fraction_ids} the values of it
+to keep. Both default \code{NULL} (no restriction).}
+
+\item{measure}{Character vector of diversity measure(s) passed to
+\code{\link[phyloseq:estimate_richness]{phyloseq::estimate_richness()}}'s \code{measures} (e.g.
+\code{"Shannon"}, \code{c("Shannon", "Simpson")}). \code{"Shannon"}
+alone is computed via the faster \code{\link[=sparse_shannon]{sparse_shannon()}} when \code{physeq}'s
+OTU table is a \code{\link{sparse_otu_table-class}}. Default
+\code{"Shannon"}.}
+}
+\value{
+A list with:
+\describe{
+\item{diversity}{A data frame with a \code{sample_id} column and one
+column per requested \code{measure}, one row per sample.}
+\item{measure}{The \code{measure} argument, unchanged: names which
+\code{diversity} column(s) hold plottable diversity values.}
+\item{sample_data}{\code{sample_data(physeq)} as a data frame with an
+added \code{sample_id} column, one row per sample.}
+\item{depth}{A data frame with \code{sample_id} and \code{depth}
+(\code{\link[phyloseq]{sample_sums}}) columns, one row per sample.}
+}
+When \code{from_igseq = TRUE}, this is instead exactly
+\code{\link[=get_igseq_richness]{get_igseq_richness()}}'s return value.
+}
 \description{
-Identity (raw counts) is suitable for all metrics,
+Computes one or more alpha-diversity measures per sample. When
+\code{from_igseq = TRUE}, computes Ig-score significance-bucket richness
+via \code{\link[=get_igseq_richness]{get_igseq_richness()}} instead. Identity (raw counts) is a safe
+transform for every measure; Chao1, ACE and Fisher additionally require
+count data and are not meaningful on already-transformed (e.g.
+compositional) abundances.
+}
+\examples{
+data(ps_16s_refinement)
+alpha_div <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
+head(alpha_div$diversity)
+alpha_div$measure
+
+}
+\seealso{
+\code{\link[=plot_alpha_diversity]{plot_alpha_diversity()}}, \code{\link[=get_igseq_richness]{get_igseq_richness()}}
 }

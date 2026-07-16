@@ -1,7 +1,7 @@
-# for a function foo() from ImmuMicrobiome package
-# get_foo(): performs calculation and outputs data
-# plot_foo(): builds plot based on the result of get_foo()
-# full_foo(): combines get_foo() and plot_foo() to restore the original foo()
+# Naming convention used across this file (and beta_diversity.R):
+#   get_foo()  computes data for an analysis and returns a structured list
+#   plot_foo() renders a ggplot from get_foo()'s output
+#   foo()      thin convenience wrapper chaining get_foo() + plot_foo()
 
 #' Sparse-aware Shannon alpha diversity
 #'
@@ -11,6 +11,12 @@
 #' @param physeq A \code{phyloseq} object whose OTU table is a
 #'   \code{\link{sparse_otu_table-class}}.
 #' @return A named numeric vector of Shannon entropy values (nats), one per sample.
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+#' sparse_shannon(ps_sparse)
+#'
 #' @export
 sparse_shannon <- function(physeq) {
   ot <- phyloseq::otu_table(physeq)
@@ -27,28 +33,81 @@ sparse_shannon <- function(physeq) {
   setNames(as.numeric(h), rownames(sp))
 }
 
-#' Get Alpha-Diversity from Phyloseq Object
+#' Get Alpha Diversity from a Phyloseq Object
 #'
-#' Identity (raw counts) is suitable for all metrics,
-# compositional (proportions) are not suitable for Chao1, ACE and Fisher
-# all other transformations are not suitable for alpha div. metrics
-# CCL: use identity all the time
+#' Computes one or more alpha-diversity measures per sample. When
+#' \code{from_igseq = TRUE}, computes Ig-score significance-bucket richness
+#' via [get_igseq_richness()] instead. Identity (raw counts) is a safe
+#' transform for every measure; Chao1, ACE and Fisher additionally require
+#' count data and are not meaningful on already-transformed (e.g.
+#' compositional) abundances.
+#'
+#' @param physeq A \code{phyloseq} object.
+#' @param from_igseq Logical. If \code{TRUE}, compute Ig-score
+#'   significance-bucket richness via [get_igseq_richness()] instead of a
+#'   standard diversity index; \code{proportions}/\code{low_lim}/
+#'   \code{high_lim} apply, \code{transform_abundances}/\code{taxrank}/
+#'   \code{measure}/\code{fraction_id_name}/\code{fraction_ids} are ignored.
+#'   Default \code{FALSE}.
+#' @param transform_abundances \code{NULL} or a transform name passed to
+#'   [microbiome::transform()] (e.g. \code{"compositional"});
+#'   \code{"identity"} (default) applies no transform.
+#' @param proportions Logical, only used when \code{from_igseq = TRUE}:
+#'   report bucket proportions instead of raw counts. Default \code{FALSE}.
+#' @param low_lim,high_lim Numeric Ig-score cutoffs defining the "down"/"up"
+#'   significance buckets when \code{from_igseq = TRUE}: taxa with a score
+#'   below \code{low_lim}/above \code{high_lim} count as down-/up-regulated,
+#'   the rest as not significant ("ns"). Default \code{-1.96}/\code{1.96}
+#'   (two-tailed 95% Z threshold).
+#' @param taxrank \code{NULL} (default, no agglomeration) or a taxonomic rank
+#'   to agglomerate to via [tax_glom()] before computing diversity.
+#' @param fraction_id_name,fraction_ids Restrict to a subset of samples
+#'   before computing diversity: \code{fraction_id_name} names a
+#'   \code{sample_data(physeq)} column, \code{fraction_ids} the values of it
+#'   to keep. Both default \code{NULL} (no restriction).
+#' @param measure Character vector of diversity measure(s) passed to
+#'   [phyloseq::estimate_richness()]'s \code{measures} (e.g.
+#'   \code{"Shannon"}, \code{c("Shannon", "Simpson")}). \code{"Shannon"}
+#'   alone is computed via the faster [sparse_shannon()] when \code{physeq}'s
+#'   OTU table is a \code{\link{sparse_otu_table-class}}. Default
+#'   \code{"Shannon"}.
+#'
+#' @return A list with:
+#'   \describe{
+#'     \item{diversity}{A data frame with a \code{sample_id} column and one
+#'       column per requested \code{measure}, one row per sample.}
+#'     \item{measure}{The \code{measure} argument, unchanged: names which
+#'       \code{diversity} column(s) hold plottable diversity values.}
+#'     \item{sample_data}{\code{sample_data(physeq)} as a data frame with an
+#'       added \code{sample_id} column, one row per sample.}
+#'     \item{depth}{A data frame with \code{sample_id} and \code{depth}
+#'       (\code{\link[phyloseq]{sample_sums}}) columns, one row per sample.}
+#'   }
+#'   When \code{from_igseq = TRUE}, this is instead exactly
+#'   [get_igseq_richness()]'s return value.
+#'
+#' @seealso [plot_alpha_diversity()], [get_igseq_richness()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' alpha_div <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
+#' head(alpha_div$diversity)
+#' alpha_div$measure
+#'
 #' @export
 get_alpha_diversity <- function(
   physeq,
   from_igseq = FALSE,
-  transform.abundances = "identity",
-  # if from Ig Seq
+  transform_abundances = "identity",
   proportions = FALSE,
   low_lim = -1.96,
   high_lim = 1.96,
-  # if not from Ig Seq
   taxrank = NULL,
   fraction_id_name = NULL,
   fraction_ids = NULL,
   measure = "Shannon"
 ) {
-  if (class(physeq) != "phyloseq") {
+  if (!is(physeq, "phyloseq")) {
     stop("Need a phyloseq object")
   }
 
@@ -57,232 +116,248 @@ get_alpha_diversity <- function(
     physeq <- t(physeq)
   }
 
-  if (!from_igseq) {
-    if (!is.null(fraction_id_name) & !is.null(fraction_ids)) {
-      physeq <- prune_samples(
-        sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
-        physeq
-      )
-    }
+  if (from_igseq) {
+    return(get_igseq_richness(
+      ps_ig_score = physeq,
+      proportions = proportions,
+      low_lim = low_lim,
+      high_lim = high_lim
+    ))
+  }
 
-    # NOTE: agglomerate taxa BEFORE transforming the data
-    # Agglomerate taxa up to a certain taxrank
-    if (!is.null(taxrank)) {
-      physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
-      taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
-    }
-
-    if (!is.null(transform.abundances) & transform.abundances != "identity") {
-      physeq <- microbiome::transform(
-        physeq,
-        transform = transform.abundances,
-        target = "OTU", # TODO: and still, clr will scale over samples
-        shift = 0, # pseudocount added (shifts baseline)
-        scale = 1, # if transform is "scale"
-        log10 = TRUE,
-        reference = 1
-      )
-    }
-
-    # alpha diversity is in the first column
-    if (
-      is(otu_table(physeq), "sparse_otu_table") && identical(measure, "Shannon")
-    ) {
-      shannon_vals <- sparse_shannon(physeq)
-      alpha.diversity <- data.frame(
-        Shannon = shannon_vals,
-        row.names = names(shannon_vals)
-      )
-    } else {
-      alpha.diversity <- estimate_richness(physeq, measures = measure)
-    }
-    full.sample.data <- cbind(
-      alpha.diversity,
-      as(sample_data(physeq), "data.frame")
+  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
+    physeq <- prune_samples(
+      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
+      physeq
     )
+  }
 
-    full.sample.data$depth <- sample_sums(physeq) # nreads for each sample
-    rownames(full.sample.data) <- phyloseq::sample_names(physeq)
+  # NOTE: agglomerate taxa BEFORE transforming the data
+  if (!is.null(taxrank)) {
+    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
+    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
+  }
+
+  if (!is.null(transform_abundances) && transform_abundances != "identity") {
+    physeq <- microbiome::transform(
+      physeq,
+      transform = transform_abundances,
+      target = "OTU", # TODO: and still, clr will scale over samples
+      shift = 0, # pseudocount added (shifts baseline)
+      scale = 1, # if transform is "scale"
+      log10 = TRUE,
+      reference = 1
+    )
+  }
+
+  if (
+    is(otu_table(physeq), "sparse_otu_table") && identical(measure, "Shannon")
+  ) {
+    shannon_vals <- sparse_shannon(physeq)
+    diversity <- data.frame(
+      Shannon = shannon_vals,
+      row.names = names(shannon_vals)
+    )
   } else {
-    full.sample.data <-
-      get_igseq_richness(
-        ps_ig_score = physeq,
-        proportions = proportions,
-        low_lim = low_lim,
-        high_lim = high_lim
-      )
+    diversity <- estimate_richness(physeq, measures = measure)
+    rownames(diversity) <- sample_names(physeq)
   }
+  diversity$sample_id <- rownames(diversity)
 
-  return(full.sample.data)
+  sample_data_df <- as(sample_data(physeq), "data.frame")
+  sample_data_df$sample_id <- rownames(sample_data_df)
+
+  list(
+    diversity = diversity,
+    measure = measure,
+    sample_data = sample_data_df,
+    depth = data.frame(
+      sample_id = sample_names(physeq),
+      depth = sample_sums(physeq)
+    )
+  )
 }
 
-is_valid_factor <- function(df, name) {
-  return(!is.null(name) && name %in% names(df) && !is.numeric(df[[name]]))
-}
-
-keep_levels <- function(vals, level_names) {
-  if (!is.null(level_names) && length(level_names) > 0) {
-    if ("(NA)" %in% level_names) {
-      vals <- as.character(vals)
-      vals[is.na(vals)] <- "(NA)"
-    }
-    as.character(vals) %in% level_names
-  } else {
-    rep(TRUE, length(vals))
-  }
-}
-
-factorize_levels <- function(vals, level_names) {
-  if (!is.null(level_names) && length(level_names) > 0) {
-    if ("(NA)" %in% level_names) {
-      vals <- as.character(vals)
-      vals[is.na(vals)] <- "(NA)"
-    }
-    factor(vals, levels = level_names)
-  } else {
-    factor(vals, levels = gtools::mixedsort(unique(vals[!is.na(vals)])))
-  }
-}
-
-apply_levels <- function(df, name, level_names) {
-  df <- df[keep_levels(df[[name]], level_names), , drop = FALSE]
-  df[[name]] <- factorize_levels(df[[name]], level_names)
-  df
-}
-
-remove_nas <- function(df, var.names) {
-  samples.wo.na <- rep(TRUE, nrow(df))
-  for (var.name in var.names) {
-    if (!is.null(df[[var.name]])) {
-      samples.wo.na <- samples.wo.na & !is.na(df[[var.name]])
-    }
-  }
-  return(df[samples.wo.na, ])
-}
-
-get_hover_text <- function(df, hover.variables) {
-  hover.variables <- colnames(df)[colnames(df) %in% hover.variables]
-  hover.text.all <- rep(NA, nrow(df))
-
-  for (i in seq_len(nrow(df))) {
-    sample <- rownames(df)[i]
-    hover.text <- ""
-    values <- df[sample, , drop = FALSE] %>% as("data.frame")
-    for (variable in hover.variables) {
-      value <- values[[variable]]
-      hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
-    }
-    hover.text.all[i] <- hover.text
-  }
-
-  return(hover.text.all)
-}
-
-#' Plot Alpha-Diversity
+#' Plot Alpha Diversity
+#'
+#' Renders a [get_alpha_diversity()] (or [get_igseq_richness()]) result as a
+#' boxplot/violin/scatter plot, with optional grouping, faceting, and hover
+#' text (for interactive use via \code{plotly::ggplotly(tooltip = "text")}).
+#'
+#' @param alpha_div A list as returned by [get_alpha_diversity()] or
+#'   [get_igseq_richness()].
+#' @param measure Which \code{alpha_div$diversity} column to plot on the
+#'   y-axis. Defaults to \code{alpha_div$measure[1]}.
+#' @param hover_variables Character vector of \code{alpha_div$sample_data}
+#'   column names to include in the hover text (\code{"text"} aesthetic).
+#'   Default \code{NULL} (no hover variables besides \code{depth}, if
+#'   \code{check_depth = TRUE}).
+#' @param x \code{NULL} (default; single unlabeled x position) or the name of
+#'   a merged sample-data column to use as the x-axis.
+#' @param x_levels \code{NULL} (default, all levels in sorted order) or a
+#'   character vector giving the levels of \code{x} to keep, in plotting
+#'   order.
+#' @param group \code{NULL} (default) or a merged sample-data column name to
+#'   color points/boxes/violins by.
+#' @param group_levels Levels of \code{group} to keep, in plotting order.
+#'   Default \code{NULL} (all levels, sorted).
+#' @param facet_mode \code{"wrap"} (default, uses \code{facet}/\code{facet_levels})
+#'   or \code{"grid"} (uses \code{facet_row}/\code{facet_col}).
+#' @param facet,facet_levels Column to facet by (\code{facet_mode = "wrap"})
+#'   and the levels of it to keep, in order. Both default \code{NULL}.
+#' @param facet_row,facet_row_levels,facet_col,facet_col_levels Row/column
+#'   facet variables and their kept levels (\code{facet_mode = "grid"}). All
+#'   default \code{NULL}.
+#' @param facet_labeller Passed to [ggplot2::facet_wrap()]/
+#'   [ggplot2::facet_grid()]'s \code{labeller}: \code{"label_value"} (default)
+#'   or \code{"label_both"}.
+#' @param shape \code{NULL} (default) or a merged sample-data column name to
+#'   map to point shape.
+#' @param shape_levels Levels of \code{shape} to keep, in plotting order.
+#'   Default \code{NULL}.
+#' @param size \code{NULL} (default) or a merged sample-data column name to
+#'   map to point size. Ignored if \code{check_depth = TRUE} (\code{depth} is
+#'   used instead).
+#' @param point_size Base point radius. Default \code{1.5}.
+#' @param remove_na_from_plot Logical. Drop samples with an \code{NA} in any
+#'   of \code{x}/\code{group}/\code{facet}/\code{facet_row}/\code{facet_col}/
+#'   \code{shape}/\code{size} before plotting. Default \code{FALSE}.
+#' @param plot_type \code{NULL} (default: \code{"scatter"} if \code{x} is
+#'   numeric, otherwise \code{"boxplot"}), or one of \code{"boxplot"},
+#'   \code{"violin"}, \code{"scatter"}.
+#' @param stat Logical. Add a group-comparison p-value layer
+#'   ([ggpubr::stat_compare_means()] for \code{"boxplot"}/\code{"violin"}, or
+#'   [ggpubr::stat_cor()] for \code{"scatter"}). Default \code{FALSE}.
+#' @param check_depth Logical. Map point size to sequencing depth
+#'   (\code{alpha_div$depth}) and add it to the hover text. Not compatible
+#'   with \code{plotly}. Default \code{FALSE}.
+#' @param alpha Point/jitter transparency. Default \code{1}.
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object.
+#'
+#' @seealso [get_alpha_diversity()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' alpha_div <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
+#' plot_alpha_diversity(alpha_div, x = "Protocol", group = "Protocol")
+#'
 #' @export
 plot_alpha_diversity <- function(
-  full.sample.data, # containing alpha diversity, measure and depth
-  hover.variables = NULL,
+  alpha_div,
+  measure = NULL,
+  hover_variables = NULL,
   x = NULL,
-  x.levels = NULL,
+  x_levels = NULL,
   group = NULL,
-  group.levels = NULL,
-  facet.mode = "wrap", # "grid", "wrap"
+  group_levels = NULL,
+  facet_mode = "wrap", # "grid", "wrap"
   facet = NULL,
-  facet.levels = NULL,
-  facet.row = NULL,
-  facet.row.levels = NULL,
-  facet.col = NULL,
-  facet.col.levels = NULL,
+  facet_levels = NULL,
+  facet_row = NULL,
+  facet_row_levels = NULL,
+  facet_col = NULL,
+  facet_col_levels = NULL,
   facet_labeller = "label_value", #"label_both" or "label_value"
   shape = NULL,
-  shape.levels = NULL,
+  shape_levels = NULL,
   size = NULL,
-  point.size = 1.5,
-  remove.na.from.plot = FALSE,
+  point_size = 1.5,
+  remove_na_from_plot = FALSE,
   plot_type = NULL, # automatic if NULL
-  color_vector = c("brown", "darkgreen", "orange", "violet"),
   stat = FALSE,
   check_depth = FALSE, # NOTE: not compatible with plotly
   alpha = 1
 ) {
-  # Assuming alpha diversity is in the first column !
-  measure <- colnames(full.sample.data)[1] # contains measure name
+  measure <- measure %||% alpha_div$measure[1]
 
-  if (is.null(facet.mode)) {
-    facet.mode <- "wrap"
+  full_sample_data <- merge(
+    alpha_div$diversity,
+    alpha_div$sample_data,
+    by = "sample_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  if (!is.null(alpha_div$depth)) {
+    full_sample_data <- merge(
+      full_sample_data,
+      alpha_div$depth,
+      by = "sample_id",
+      all.x = TRUE,
+      sort = FALSE
+    )
+  }
+
+  if (is.null(facet_mode)) {
+    facet_mode <- "wrap"
   }
   # Set proper data types
 
-  if (is_valid_factor(full.sample.data, group)) {
-    full.sample.data <- apply_levels(full.sample.data, group, group.levels)
-  }
+  full_sample_data <- apply_levels_if_valid(full_sample_data, group, group_levels)
 
-  if (is_valid_factor(full.sample.data, shape)) {
-    full.sample.data <- apply_levels(full.sample.data, shape, shape.levels)
+  if (is_valid_factor(full_sample_data, shape)) {
+    full_sample_data <- apply_levels(full_sample_data, shape, shape_levels)
   } else {
     shape <- NULL
   }
 
-  if (is_valid_factor(full.sample.data, x)) {
-    full.sample.data <- apply_levels(full.sample.data, x, x.levels)
-  }
+  full_sample_data <- apply_levels_if_valid(full_sample_data, x, x_levels)
 
-  is_valid_facet <- is_valid_factor(full.sample.data, facet) &&
-    facet.mode == "wrap"
+  is_valid_facet <- is_valid_factor(full_sample_data, facet) &&
+    facet_mode == "wrap"
 
   if (is_valid_facet) {
-    full.sample.data <- apply_levels(full.sample.data, facet, facet.levels)
+    full_sample_data <- apply_levels(full_sample_data, facet, facet_levels)
   }
 
-  is_valid_facet_row <- is_valid_factor(full.sample.data, facet.row) &&
-    facet.mode == "grid"
+  is_valid_facet_row <- is_valid_factor(full_sample_data, facet_row) &&
+    facet_mode == "grid"
 
   if (is_valid_facet_row) {
-    full.sample.data <- apply_levels(
-      full.sample.data,
-      facet.row,
-      facet.row.levels
+    full_sample_data <- apply_levels(
+      full_sample_data,
+      facet_row,
+      facet_row_levels
     )
   }
 
-  is_valid_facet_col <- is_valid_factor(full.sample.data, facet.col) &&
-    facet.mode == "grid"
+  is_valid_facet_col <- is_valid_factor(full_sample_data, facet_col) &&
+    facet_mode == "grid"
 
   if (is_valid_facet_col) {
-    full.sample.data <- apply_levels(
-      full.sample.data,
-      facet.col,
-      facet.col.levels
+    full_sample_data <- apply_levels(
+      full_sample_data,
+      facet_col,
+      facet_col_levels
     )
   }
 
   # Check whether depth is present
-  check_depth <- check_depth && !is.null(full.sample.data$depth)
+  check_depth <- check_depth && !is.null(full_sample_data$depth)
 
   # Remove all NA's from plot data (labels, facets or shape) by removing samples
   # having NA for at least one of graphical parameters (x-axis variable and group variable)
   # remove these samples from sample data
-  if (remove.na.from.plot) {
-    full.sample.data <- remove_nas(
-      full.sample.data,
-      c(x, group, facet, facet.row, facet.col, shape, size)
+  if (remove_na_from_plot) {
+    full_sample_data <- remove_nas(
+      full_sample_data,
+      c(x, group, facet, facet_row, facet_col, shape, size)
     )
   }
 
   # Prepare hover information about samples based on sample_data
-  hover.variables <- c(
-    hover.variables,
+  hover_variables <- c(
+    hover_variables,
     if (check_depth) {
       "depth"
     }
   )
-  full.sample.data$hover.text <-
-    get_hover_text(full.sample.data, hover.variables)
+  full_sample_data$hover.text <-
+    get_hover_text(full_sample_data, hover_variables)
 
   # Handle various plot types
 
-  is_continuous_x <- !is.null(x) && is.numeric(full.sample.data[[x]])
+  is_continuous_x <- !is.null(x) && is.numeric(full_sample_data[[x]])
 
   if (is.null(plot_type)) {
     if (is_continuous_x) {
@@ -307,7 +382,7 @@ plot_alpha_diversity <- function(
     )
   }
 
-  if (length(hover.variables) > 0) {
+  if (length(hover_variables) > 0) {
     point_mapping <- modifyList(
       point_mapping,
       aes(text = .data[["hover.text"]])
@@ -349,21 +424,21 @@ plot_alpha_diversity <- function(
       function() {
         list(
           ggplot2::geom_point(point_mapping),
-          ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3))
+          ggplot2::scale_size(range = c(point_size * 0.5, point_size * 3))
         )
       }
     } else {
       function() {
-        ggplot2::geom_point(point_mapping, size = point.size)
+        ggplot2::geom_point(point_mapping, size = point_size)
       }
     }
   }
 
   if (plot_type %in% c("boxplot", "violin")) {
-    plt <- ggplot(full.sample.data, mapping) +
+    plt <- ggplot(full_sample_data, mapping) +
       plot_layer_fn(outlier.shape = NA)
   } else {
-    plt <- ggplot(full.sample.data, mapping) +
+    plt <- ggplot(full_sample_data, mapping) +
       plot_layer_fn()
   }
 
@@ -371,14 +446,18 @@ plot_alpha_diversity <- function(
     if (has_size_aes) {
       plt <- plt +
         ggplot2::geom_jitter(point_mapping, alpha = alpha) +
-        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3))
+        ggplot2::scale_size(range = c(point_size * 0.5, point_size * 3))
     } else {
       plt <- plt +
-        ggplot2::geom_jitter(point_mapping, alpha = alpha, size = point.size)
+        ggplot2::geom_jitter(point_mapping, alpha = alpha, size = point_size)
     }
   } else {
+    smooth_mapping <- aes()
+    if (!is.null(group)) {
+      smooth_mapping <- modifyList(smooth_mapping, aes(color = .data[[group]]))
+    }
     plt <- plt +
-      stat_smooth(aes_string(color = group), method = "lm", alpha = 0.1)
+      stat_smooth(smooth_mapping, method = "lm", alpha = 0.1)
   }
 
   if (stat) {
@@ -396,21 +475,20 @@ plot_alpha_diversity <- function(
   if (is_valid_facet_row && is_valid_facet_col) {
     plt <- plt +
       facet_grid(
-        rows = vars(!!sym(facet.row)),
-        cols = vars(!!sym(facet.col)),
+        rows = vars(!!sym(facet_row)),
+        cols = vars(!!sym(facet_col)),
         labeller = facet_labeller
       )
-    #facet_grid(.data[[facet.row]] ~ .data[[facet.col]])
   } else if (is_valid_facet_row) {
     plt <- plt +
       facet_grid(
-        rows = vars(!!sym(facet.row)),
+        rows = vars(!!sym(facet_row)),
         labeller = facet_labeller
       )
   } else if (is_valid_facet_col) {
     plt <- plt +
       facet_grid(
-        cols = vars(!!sym(facet.col)),
+        cols = vars(!!sym(facet_col)),
         labeller = facet_labeller
       )
   } else if (is_valid_facet) {
@@ -418,28 +496,11 @@ plot_alpha_diversity <- function(
       facet_wrap(
         ~ .data[[facet]],
         ncol = smart_facet_ncol(
-          nlevels(factor(full.sample.data[[facet]]))
+          nlevels(factor(full_sample_data[[facet]]))
         ),
         labeller = facet_labeller
       )
   }
-
-  # TODO: ignored it since ggarrange is incompatible with plotly after
-  # else{
-  #   if(check_depth){
-  #
-  #     plt.depth = ggplot(full.sample.data, aes_string(y=measure, x = "depth"))+
-  #       geom_point(aes_string(color=group, shape=shape), size = size, alpha = alpha)+
-  #       stat_smooth(aes_string(color= group), method = "lm", alpha=0.1 )+
-  #       theme_minimal()+
-  #       labs(x= "depth", y = measure)
-  #     if(stat){
-  #       plt.depth = plt.depth+
-  #         ggpubr::stat_cor()
-  #     }
-  #     plt = ggarrange(plt, plt.depth, common.legend = TRUE)
-  #   }
-  # }
 
   plt <- plt +
     labs(title = "Alpha Diversity") +
@@ -447,7 +508,7 @@ plot_alpha_diversity <- function(
       plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
       legend.title = element_text(face = "bold", hjust = 0.5)
     )
-  if (!is.null(group) && !is.numeric(full.sample.data[[group]])) {
+  if (!is.null(group) && !is.numeric(full_sample_data[[group]])) {
     plt <- plt +
       ggsci::scale_fill_npg()
   }
@@ -464,137 +525,221 @@ plot_alpha_diversity <- function(
   return(plt)
 }
 
-
-#' Get and Plot Alpha-Diversity from Phyloseq Object
+#' Compute and Plot Alpha Diversity
+#'
+#' Thin convenience wrapper chaining [get_alpha_diversity()] and
+#' [plot_alpha_diversity()] in one call.
+#'
+#' @inheritParams get_alpha_diversity
+#' @inheritParams plot_alpha_diversity
+#' @param physeq A \code{phyloseq} object.
+#' @param x \code{NULL} (default; single unlabeled x position) or the name of
+#'   a sample-data column to use as the x-axis.
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object.
+#'
+#' @seealso [get_alpha_diversity()], [plot_alpha_diversity()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' alpha_diversity(ps_16s_refinement, x = "Protocol", group = "Protocol")
+#'
 #' @export
-full_alpha_diversity <- function(
+alpha_diversity <- function(
   physeq,
   taxrank = NULL,
   fraction_id_name = NULL,
   fraction_ids = NULL,
   measure = "Shannon",
-  x,
+  x = NULL,
   group = NULL,
   plot_type = "boxplot",
-  hover.variables = hover.variables,
-  color_vector = c("brown", "darkgreen", "orange", "violet"),
+  hover_variables = NULL,
   stat = FALSE,
   check_depth = FALSE,
-  size = 1.5,
+  point_size = 1.5,
   alpha = 1
 ) {
-  full.sample.data <- get_alpha_diversity(
+  alpha_div <- get_alpha_diversity(
     physeq = physeq,
     taxrank = taxrank,
     fraction_id_name = fraction_id_name,
     fraction_ids = fraction_ids,
     measure = measure
   )
-  p <- plot_alpha_diversity(
-    full.sample.data = full.sample.data,
-    hover.variables = hover.variables,
+  plot_alpha_diversity(
+    alpha_div,
+    measure = measure,
+    hover_variables = hover_variables,
     x = x,
     group = group,
     plot_type = plot_type,
-    color_vector = color_vector,
     stat = stat,
     check_depth = check_depth,
-    size = size,
+    point_size = point_size,
     alpha = alpha
   )
-
-  return(p)
 }
 
-#' Get Richness Based on Ig Score Significance
+#' Get Richness Based on Ig-Score Significance
+#'
+#' For each sample, buckets taxa by their Ig score into "down" (below
+#' \code{low_lim}), "up" (above \code{high_lim}), or "ns" (not significant,
+#' in between), and counts (or reports the proportion of) taxa in each
+#' bucket.
+#'
+#' @param ps_ig_score A \code{phyloseq} object whose OTU table holds
+#'   per-taxon Ig scores (e.g. slide-Z scores). Re-oriented to taxa-as-columns
+#'   internally if needed.
+#' @param proportions Logical. Report bucket proportions (summing to 1 per
+#'   sample) instead of raw counts. Default \code{FALSE}.
+#' @param low_lim,high_lim Numeric Ig-score cutoffs. Default
+#'   \code{-1.96}/\code{1.96} (two-tailed 95% Z threshold).
+#'
+#' @return A list with:
+#'   \describe{
+#'     \item{diversity}{A data frame, one row per sample per significance
+#'       bucket, with \code{sample_id}, \code{significance}
+#'       (\code{"down"}/\code{"ns"}/\code{"up"}), and \code{richness}
+#'       columns.}
+#'     \item{measure}{\code{"richness"}.}
+#'     \item{sample_data}{\code{sample_data(ps_ig_score)} as a data frame
+#'       with an added \code{sample_id} column, one row per sample.}
+#'     \item{depth}{\code{NULL} (sequencing depth is not meaningful for
+#'       Ig-score data).}
+#'   }
+#'
+#' @seealso [get_alpha_diversity()], [plot_igseq_richness()]
+#'
+#' @examples
+#' ig_scores <- matrix(
+#'   rnorm(40, sd = 1.5),
+#'   nrow = 4,
+#'   dimnames = list(paste0("ASV", 1:4), paste0("S", 1:10))
+#' )
+#' ps_ig_score <- phyloseq::phyloseq(
+#'   phyloseq::otu_table(ig_scores, taxa_are_rows = TRUE),
+#'   phyloseq::sample_data(data.frame(
+#'     Group = rep(c("A", "B"), 5),
+#'     row.names = colnames(ig_scores)
+#'   ))
+#' )
+#' igseq_richness <- get_igseq_richness(ps_ig_score)
+#' head(igseq_richness$diversity)
+#'
 #' @export
-get_igseq_richness <-
-  function(ps_ig_score, proportions = FALSE, low_lim = -5, high_lim = 5) {
-    counts <- matrix(
-      NA,
-      nrow = nsamples(ps_ig_score),
-      ncol = 3,
-      dimnames = list(sample_names(ps_ig_score), c("down", "ns", "up"))
-    )
-    for (sample_id in sample_names(ps_ig_score)) {
-      counts[sample_id, "down"] <- sum(
-        otu_table(ps_ig_score)[sample_id, ] < low_lim,
-        na.rm = TRUE
-      )
-      counts[sample_id, "up"] <- sum(
-        otu_table(ps_ig_score)[sample_id, ] > high_lim,
-        na.rm = TRUE
-      )
-      counts[sample_id, "ns"] <- sum(
-        otu_table(ps_ig_score)[sample_id, ] >= low_lim &
-          otu_table(ps_ig_score)[sample_id, ] <= high_lim,
-        na.rm = TRUE
-      )
-    }
-
-    if (proportions) {
-      counts[, c("down", "ns", "up")] <- t(apply(
-        counts[, c("down", "ns", "up")],
-        1,
-        function(row) {
-          row / sum(row, na.rm = TRUE)
-        }
-      ))
-    }
-
-    igseq_richness_df <- cbind(counts, sample_data(ps_ig_score)) %>%
-      as.data.frame() %>%
-      mutate(sample_id = rownames(counts), .before = 1) %>%
-      pivot_longer(
-        cols = c("down", "ns", "up"),
-        values_to = "richness",
-        names_to = "significance"
-      ) %>%
-      as.data.frame()
-
-    #rownames(igseq_richness_df) = igseq_richness_df$sample_id
-
-    igseq_richness_df <- igseq_richness_df[, unique(c(
-      "richness",
-      colnames(igseq_richness_df)
-    ))]
-
-    return(igseq_richness_df)
+get_igseq_richness <- function(
+  ps_ig_score,
+  proportions = FALSE,
+  low_lim = -1.96,
+  high_lim = 1.96
+) {
+  if (taxa_are_rows(ps_ig_score)) {
+    ps_ig_score <- t(ps_ig_score)
   }
 
-#' Plot Richness Based on Ig Score Significance
-#' @export
-plot_igseq_richness <-
-  function(igseq_richness_df, group, color, exclude_ns = FALSE) {
-    if (exclude_ns) {
-      igseq_richness_df <- igseq_richness_df[
-        igseq_richness_df$significance != "ns",
-      ]
-    }
-
-    igseq_richness_df[[group]] <- factor(
-      igseq_richness_df[[group]],
-      levels = gtools::mixedsort(unique(igseq_richness_df[[group]]))
+  counts <- matrix(
+    NA_real_,
+    nrow = nsamples(ps_ig_score),
+    ncol = 3,
+    dimnames = list(sample_names(ps_ig_score), c("down", "ns", "up"))
+  )
+  for (sample_id in sample_names(ps_ig_score)) {
+    scores <- otu_table(ps_ig_score)[sample_id, ]
+    counts[sample_id, "down"] <- sum(scores < low_lim, na.rm = TRUE)
+    counts[sample_id, "up"] <- sum(scores > high_lim, na.rm = TRUE)
+    counts[sample_id, "ns"] <- sum(
+      scores >= low_lim & scores <= high_lim,
+      na.rm = TRUE
     )
-
-    plt <-
-      ggplot(
-        igseq_richness_df,
-        aes(x = .data[[group]], y = richness, color = .data[[color]])
-      ) +
-      geom_jitter() +
-      geom_violin(alpha = 0.1) +
-      facet_grid(~significance) +
-      theme_minimal()
-    return(plt)
   }
 
-# get_... - gets the fit object and coordinates, parameters
-# stat_... - compares groups
-# plot_... - plots the result with plot() function as a sideeffect
-# ggplot_... - outputs a ggplot instead
-# full_... - imitates the original function
+  if (proportions) {
+    counts <- counts / rowSums(counts, na.rm = TRUE)
+  }
 
-# constrained_beta_diversity() is very similar, so it's in this function as well
-# BUT: original functions for constrained and unconstrained beta-dispersion
-# don't return the same object, so this one returns the format of original
+  diversity <- as.data.frame(counts)
+  diversity$sample_id <- rownames(diversity)
+  diversity <- as.data.frame(pivot_longer(
+    diversity,
+    cols = c("down", "ns", "up"),
+    names_to = "significance",
+    values_to = "richness"
+  ))
+
+  sample_data_df <- as(sample_data(ps_ig_score), "data.frame")
+  sample_data_df$sample_id <- rownames(sample_data_df)
+
+  list(
+    diversity = diversity,
+    measure = "richness",
+    sample_data = sample_data_df,
+    depth = NULL
+  )
+}
+
+#' Plot Richness Based on Ig-Score Significance
+#'
+#' Jitter+violin plot of [get_igseq_richness()]'s bucketed richness, grouped
+#' by a sample-data variable and faceted by significance bucket.
+#'
+#' @param igseq_richness A list as returned by [get_igseq_richness()].
+#' @param group Sample-data column name to use as the x-axis grouping
+#'   variable.
+#' @param color Sample-data column name to color points/violins by.
+#' @param exclude_ns Logical. Drop the "ns" (not significant) bucket before
+#'   plotting. Default \code{FALSE}.
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object, faceted by significance
+#'   bucket.
+#'
+#' @seealso [get_igseq_richness()]
+#'
+#' @examples
+#' ig_scores <- matrix(
+#'   rnorm(40, sd = 1.5),
+#'   nrow = 4,
+#'   dimnames = list(paste0("ASV", 1:4), paste0("S", 1:10))
+#' )
+#' ps_ig_score <- phyloseq::phyloseq(
+#'   phyloseq::otu_table(ig_scores, taxa_are_rows = TRUE),
+#'   phyloseq::sample_data(data.frame(
+#'     Group = rep(c("A", "B"), 5),
+#'     row.names = colnames(ig_scores)
+#'   ))
+#' )
+#' igseq_richness <- get_igseq_richness(ps_ig_score)
+#' plot_igseq_richness(igseq_richness, group = "Group", color = "Group")
+#'
+#' @export
+plot_igseq_richness <- function(igseq_richness, group, color, exclude_ns = FALSE) {
+  full_data <- merge(
+    igseq_richness$diversity,
+    igseq_richness$sample_data,
+    by = "sample_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
+
+  if (exclude_ns) {
+    full_data <- full_data[full_data$significance != "ns", ]
+  }
+
+  full_data[[group]] <- factor(
+    full_data[[group]],
+    levels = gtools::mixedsort(unique(full_data[[group]]))
+  )
+
+  ggplot(
+    full_data,
+    aes(
+      x = .data[[group]],
+      y = .data[[igseq_richness$measure]],
+      color = .data[[color]]
+    )
+  ) +
+    geom_jitter() +
+    geom_violin(alpha = 0.1) +
+    facet_grid(~significance) +
+    theme_minimal()
+}

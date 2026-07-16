@@ -2,35 +2,118 @@
 % Please edit documentation in R/alpha_diversity.R
 \name{plot_alpha_diversity}
 \alias{plot_alpha_diversity}
-\title{Plot Alpha-Diversity}
+\title{Plot Alpha Diversity}
 \usage{
 plot_alpha_diversity(
-  full.sample.data,
-  hover.variables = NULL,
+  alpha_div,
+  measure = NULL,
+  hover_variables = NULL,
   x = NULL,
-  x.levels = NULL,
+  x_levels = NULL,
   group = NULL,
-  group.levels = NULL,
-  facet.mode = "wrap",
+  group_levels = NULL,
+  facet_mode = "wrap",
   facet = NULL,
-  facet.levels = NULL,
-  facet.row = NULL,
-  facet.row.levels = NULL,
-  facet.col = NULL,
-  facet.col.levels = NULL,
+  facet_levels = NULL,
+  facet_row = NULL,
+  facet_row_levels = NULL,
+  facet_col = NULL,
+  facet_col_levels = NULL,
   facet_labeller = "label_value",
   shape = NULL,
-  shape.levels = NULL,
+  shape_levels = NULL,
   size = NULL,
-  point.size = 1.5,
-  remove.na.from.plot = FALSE,
+  point_size = 1.5,
+  remove_na_from_plot = FALSE,
   plot_type = NULL,
-  color_vector = c("brown", "darkgreen", "orange", "violet"),
   stat = FALSE,
   check_depth = FALSE,
   alpha = 1
 )
 }
+\arguments{
+\item{alpha_div}{A list as returned by \code{\link[=get_alpha_diversity]{get_alpha_diversity()}} or
+\code{\link[=get_igseq_richness]{get_igseq_richness()}}.}
+
+\item{measure}{Which \code{alpha_div$diversity} column to plot on the
+y-axis. Defaults to \code{alpha_div$measure[1]}.}
+
+\item{hover_variables}{Character vector of \code{alpha_div$sample_data}
+column names to include in the hover text (\code{"text"} aesthetic).
+Default \code{NULL} (no hover variables besides \code{depth}, if
+\code{check_depth = TRUE}).}
+
+\item{x}{\code{NULL} (default; single unlabeled x position) or the name of
+a merged sample-data column to use as the x-axis.}
+
+\item{x_levels}{\code{NULL} (default, all levels in sorted order) or a
+character vector giving the levels of \code{x} to keep, in plotting
+order.}
+
+\item{group}{\code{NULL} (default) or a merged sample-data column name to
+color points/boxes/violins by.}
+
+\item{group_levels}{Levels of \code{group} to keep, in plotting order.
+Default \code{NULL} (all levels, sorted).}
+
+\item{facet_mode}{\code{"wrap"} (default, uses \code{facet}/\code{facet_levels})
+or \code{"grid"} (uses \code{facet_row}/\code{facet_col}).}
+
+\item{facet, facet_levels}{Column to facet by (\code{facet_mode = "wrap"})
+and the levels of it to keep, in order. Both default \code{NULL}.}
+
+\item{facet_row, facet_row_levels, facet_col, facet_col_levels}{Row/column
+facet variables and their kept levels (\code{facet_mode = "grid"}). All
+default \code{NULL}.}
+
+\item{facet_labeller}{Passed to \code{\link[ggplot2:facet_wrap]{ggplot2::facet_wrap()}}/
+\code{\link[ggplot2:facet_grid]{ggplot2::facet_grid()}}'s \code{labeller}: \code{"label_value"} (default)
+or \code{"label_both"}.}
+
+\item{shape}{\code{NULL} (default) or a merged sample-data column name to
+map to point shape.}
+
+\item{shape_levels}{Levels of \code{shape} to keep, in plotting order.
+Default \code{NULL}.}
+
+\item{size}{\code{NULL} (default) or a merged sample-data column name to
+map to point size. Ignored if \code{check_depth = TRUE} (\code{depth} is
+used instead).}
+
+\item{point_size}{Base point radius. Default \code{1.5}.}
+
+\item{remove_na_from_plot}{Logical. Drop samples with an \code{NA} in any
+of \code{x}/\code{group}/\code{facet}/\code{facet_row}/\code{facet_col}/
+\code{shape}/\code{size} before plotting. Default \code{FALSE}.}
+
+\item{plot_type}{\code{NULL} (default: \code{"scatter"} if \code{x} is
+numeric, otherwise \code{"boxplot"}), or one of \code{"boxplot"},
+\code{"violin"}, \code{"scatter"}.}
+
+\item{stat}{Logical. Add a group-comparison p-value layer
+(\code{\link[ggpubr:stat_compare_means]{ggpubr::stat_compare_means()}} for \code{"boxplot"}/\code{"violin"}, or
+\code{\link[ggpubr:stat_cor]{ggpubr::stat_cor()}} for \code{"scatter"}). Default \code{FALSE}.}
+
+\item{check_depth}{Logical. Map point size to sequencing depth
+(\code{alpha_div$depth}) and add it to the hover text. Not compatible
+with \code{plotly}. Default \code{FALSE}.}
+
+\item{alpha}{Point/jitter transparency. Default \code{1}.}
+}
+\value{
+A \code{\link[ggplot2]{ggplot}} object.
+}
 \description{
-Plot Alpha-Diversity
+Renders a \code{\link[=get_alpha_diversity]{get_alpha_diversity()}} (or \code{\link[=get_igseq_richness]{get_igseq_richness()}}) result as a
+boxplot/violin/scatter plot, with optional grouping, faceting, and hover
+text (for interactive use via \code{plotly::ggplotly(tooltip = "text")}).
+}
+\examples{
+data(ps_16s_refinement)
+alpha_div <- get_alpha_diversity(ps_16s_refinement, measure = "Shannon")
+plot_alpha_diversity(alpha_div, x = "Protocol", group = "Protocol")
+
+}
+\seealso{
+\code{\link[=get_alpha_diversity]{get_alpha_diversity()}}
 }

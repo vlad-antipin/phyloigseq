@@ -17,3 +17,9 @@ A named numeric vector of Shannon entropy values (nats), one per sample.
 Computes Shannon entropy per sample directly from the sparse matrix slot,
 without materialising the full dense OTU table.
 }
+\examples{
+data(ps_16s_refinement)
+ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
+sparse_shannon(ps_sparse)
+
+}

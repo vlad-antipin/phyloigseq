@@ -2,15 +2,63 @@
 % Please edit documentation in R/alpha_diversity.R
 \name{get_igseq_richness}
 \alias{get_igseq_richness}
-\title{Get Richness Based on Ig Score Significance}
+\title{Get Richness Based on Ig-Score Significance}
 \usage{
 get_igseq_richness(
   ps_ig_score,
   proportions = FALSE,
-  low_lim = -5,
-  high_lim = 5
+  low_lim = -1.96,
+  high_lim = 1.96
 )
 }
+\arguments{
+\item{ps_ig_score}{A \code{phyloseq} object whose OTU table holds
+per-taxon Ig scores (e.g. slide-Z scores). Re-oriented to taxa-as-columns
+internally if needed.}
+
+\item{proportions}{Logical. Report bucket proportions (summing to 1 per
+sample) instead of raw counts. Default \code{FALSE}.}
+
+\item{low_lim, high_lim}{Numeric Ig-score cutoffs. Default
+\code{-1.96}/\code{1.96} (two-tailed 95\% Z threshold).}
+}
+\value{
+A list with:
+\describe{
+\item{diversity}{A data frame, one row per sample per significance
+bucket, with \code{sample_id}, \code{significance}
+(\code{"down"}/\code{"ns"}/\code{"up"}), and \code{richness}
+columns.}
+\item{measure}{\code{"richness"}.}
+\item{sample_data}{\code{sample_data(ps_ig_score)} as a data frame
+with an added \code{sample_id} column, one row per sample.}
+\item{depth}{\code{NULL} (sequencing depth is not meaningful for
+Ig-score data).}
+}
+}
 \description{
-Get Richness Based on Ig Score Significance
+For each sample, buckets taxa by their Ig score into "down" (below
+\code{low_lim}), "up" (above \code{high_lim}), or "ns" (not significant,
+in between), and counts (or reports the proportion of) taxa in each
+bucket.
+}
+\examples{
+ig_scores <- matrix(
+  rnorm(40, sd = 1.5),
+  nrow = 4,
+  dimnames = list(paste0("ASV", 1:4), paste0("S", 1:10))
+)
+ps_ig_score <- phyloseq::phyloseq(
+  phyloseq::otu_table(ig_scores, taxa_are_rows = TRUE),
+  phyloseq::sample_data(data.frame(
+    Group = rep(c("A", "B"), 5),
+    row.names = colnames(ig_scores)
+  ))
+)
+igseq_richness <- get_igseq_richness(ps_ig_score)
+head(igseq_richness$diversity)
+
+}
+\seealso{
+\code{\link[=get_alpha_diversity]{get_alpha_diversity()}}, \code{\link[=plot_igseq_richness]{plot_igseq_richness()}}
 }

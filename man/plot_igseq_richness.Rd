@@ -2,10 +2,46 @@
 % Please edit documentation in R/alpha_diversity.R
 \name{plot_igseq_richness}
 \alias{plot_igseq_richness}
-\title{Plot Richness Based on Ig Score Significance}
+\title{Plot Richness Based on Ig-Score Significance}
 \usage{
-plot_igseq_richness(igseq_richness_df, group, color, exclude_ns = FALSE)
+plot_igseq_richness(igseq_richness, group, color, exclude_ns = FALSE)
+}
+\arguments{
+\item{igseq_richness}{A list as returned by \code{\link[=get_igseq_richness]{get_igseq_richness()}}.}
+
+\item{group}{Sample-data column name to use as the x-axis grouping
+variable.}
+
+\item{color}{Sample-data column name to color points/violins by.}
+
+\item{exclude_ns}{Logical. Drop the "ns" (not significant) bucket before
+plotting. Default \code{FALSE}.}
+}
+\value{
+A \code{\link[ggplot2]{ggplot}} object, faceted by significance
+bucket.
 }
 \description{
-Plot Richness Based on Ig Score Significance
+Jitter+violin plot of \code{\link[=get_igseq_richness]{get_igseq_richness()}}'s bucketed richness, grouped
+by a sample-data variable and faceted by significance bucket.
+}
+\examples{
+ig_scores <- matrix(
+  rnorm(40, sd = 1.5),
+  nrow = 4,
+  dimnames = list(paste0("ASV", 1:4), paste0("S", 1:10))
+)
+ps_ig_score <- phyloseq::phyloseq(
+  phyloseq::otu_table(ig_scores, taxa_are_rows = TRUE),
+  phyloseq::sample_data(data.frame(
+    Group = rep(c("A", "B"), 5),
+    row.names = colnames(ig_scores)
+  ))
+)
+igseq_richness <- get_igseq_richness(ps_ig_score)
+plot_igseq_richness(igseq_richness, group = "Group", color = "Group")
+
+}
+\seealso{
+\code{\link[=get_igseq_richness]{get_igseq_richness()}}
 }

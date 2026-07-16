@@ -39,6 +39,175 @@
 #' @importFrom utils globalVariables
 "_PACKAGE"
 
+#' Is `name` a Valid, Non-Numeric Column of `df`?
+#'
+#' Internal. `TRUE` if `name` is non-`NULL`, present in `colnames(df)`, and not
+#' numeric -- i.e. usable as a discrete plotting variable (grouping, faceting,
+#' shape). Used by [plot_alpha_diversity()] to decide whether to apply
+#' `apply_levels()` to a candidate column.
+#'
+#' @param df A data frame.
+#' @param name A single column name, or `NULL`.
+#'
+#' @return A single logical.
+#'
+#' @noRd
+is_valid_factor <- function(df, name) {
+  !is.null(name) && name %in% names(df) && !is.numeric(df[[name]])
+}
+
+#' Which `vals` to Keep for a Given Level Set?
+#'
+#' Internal. Companion to `factorize_levels()`. `TRUE`/`FALSE` per element of
+#' `vals`: whether it falls in `level_names` (all of `vals` kept if
+#' `level_names` is `NULL`/empty). `"(NA)"` in `level_names` is treated as a
+#' request to keep `NA`s (coerced to the literal string `"(NA)"` first).
+#'
+#' @param vals A vector (any type coercible to character).
+#' @param level_names `NULL` or a character vector of levels to keep.
+#'
+#' @return A logical vector the same length as `vals`.
+#'
+#' @noRd
+keep_levels <- function(vals, level_names) {
+  if (!is.null(level_names) && length(level_names) > 0) {
+    if ("(NA)" %in% level_names) {
+      vals <- as.character(vals)
+      vals[is.na(vals)] <- "(NA)"
+    }
+    as.character(vals) %in% level_names
+  } else {
+    rep(TRUE, length(vals))
+  }
+}
+
+#' Factorize `vals` With an Explicit or Sorted Level Order
+#'
+#' Internal. Companion to `keep_levels()`. Converts `vals` to a `factor`, with
+#' levels in `level_names`'s order if supplied, otherwise sorted via
+#' [gtools::mixedsort()] (natural/alphanumeric order). `"(NA)"` in
+#' `level_names` is treated as a request to keep `NA`s (coerced to the literal
+#' string `"(NA)"` first).
+#'
+#' @param vals A vector (any type coercible to character).
+#' @param level_names `NULL` or a character vector giving the desired level
+#'   order.
+#'
+#' @return A `factor` the same length as `vals`.
+#'
+#' @noRd
+factorize_levels <- function(vals, level_names) {
+  if (!is.null(level_names) && length(level_names) > 0) {
+    if ("(NA)" %in% level_names) {
+      vals <- as.character(vals)
+      vals[is.na(vals)] <- "(NA)"
+    }
+    factor(vals, levels = level_names)
+  } else {
+    factor(vals, levels = gtools::mixedsort(unique(vals[!is.na(vals)])))
+  }
+}
+
+#' Filter and Factorize a Data Frame Column by Level Set
+#'
+#' Internal. Combines `keep_levels()` (row filter) and `factorize_levels()`
+#' (factor conversion) for column `name` of `df`.
+#'
+#' @param df A data frame.
+#' @param name Column name to filter/factorize.
+#' @param level_names `NULL` or a character vector of levels to keep, in
+#'   plotting order.
+#'
+#' @return `df`, with rows outside `level_names` dropped and column `name`
+#'   converted to a `factor`.
+#'
+#' @noRd
+apply_levels <- function(df, name, level_names) {
+  df <- df[keep_levels(df[[name]], level_names), , drop = FALSE]
+  df[[name]] <- factorize_levels(df[[name]], level_names)
+  df
+}
+
+#' `apply_levels()`, But Only If `name` is a Valid Factor Column
+#'
+#' Internal. `if (is_valid_factor(df, name)) apply_levels(df, name, levels) else df`
+#' -- shared shortcut for the several [plot_alpha_diversity()] parameters that
+#' get this exact treatment unconditionally (no extra side effect needed
+#' beyond the filter/factorize itself).
+#'
+#' @param df A data frame.
+#' @param name Column name to filter/factorize, or `NULL`.
+#' @param level_names `NULL` or a character vector of levels to keep, in
+#'   plotting order.
+#'
+#' @return `df`, unchanged if `name` is not a valid factor column, otherwise
+#'   as returned by `apply_levels()`.
+#'
+#' @noRd
+apply_levels_if_valid <- function(df, name, level_names) {
+  if (is_valid_factor(df, name)) {
+    apply_levels(df, name, level_names)
+  } else {
+    df
+  }
+}
+
+#' Drop Rows With `NA` in Any of `var_names`
+#'
+#' Internal. Removes rows of `df` that have an `NA` in any column named in
+#' `var_names` (names not present in `df` are silently skipped).
+#'
+#' @param df A data frame.
+#' @param var_names Character vector of column names to check for `NA`s (may
+#'   include `NULL` entries, e.g. from unset plotting parameters).
+#'
+#' @return `df`, with the offending rows removed.
+#'
+#' @noRd
+remove_nas <- function(df, var_names) {
+  samples_wo_na <- rep(TRUE, nrow(df))
+  for (var_name in var_names) {
+    if (!is.null(df[[var_name]])) {
+      samples_wo_na <- samples_wo_na & !is.na(df[[var_name]])
+    }
+  }
+  df[samples_wo_na, ]
+}
+
+#' Build Per-Row Hover Text From Selected Columns
+#'
+#' Internal. For each row of `df`, concatenates `"<column>: <value><br>"` for
+#' every column named in `hover_variables` that's actually present in `df`.
+#' Used to populate the \code{text} aesthetic consumed by
+#' \code{plotly::ggplotly(tooltip = "text")}.
+#'
+#' @param df A data frame.
+#' @param hover_variables Character vector of column names to include (names
+#'   not present in `df` are silently skipped).
+#'
+#' @return A character vector the same length as `nrow(df)`.
+#'
+#' @noRd
+get_hover_text <- function(df, hover_variables) {
+  hover_variables <- colnames(df)[colnames(df) %in% hover_variables]
+  vapply(
+    seq_len(nrow(df)),
+    function(i) {
+      paste0(
+        vapply(
+          hover_variables,
+          function(variable) {
+            paste0(variable, ": ", df[[variable]][i], "<br>")
+          },
+          character(1)
+        ),
+        collapse = ""
+      )
+    },
+    character(1)
+  )
+}
+
 #' Optimal `facet_wrap()` Column Count
 #'
 #' Internal. Picks the number of columns for [ggplot2::facet_wrap()] that
