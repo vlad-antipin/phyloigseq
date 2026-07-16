@@ -5,18 +5,101 @@
 \title{Permutation Test for Beta-Diversity Ordination}
 \usage{
 stat_beta_diversity(
-  beta.dispersion.fit,
-  facet.name = NULL,
-  facet.mode = "wrap",
+  beta_dispersion_fit,
+  facet_mode = "wrap",
   facet = NULL,
-  facet.row = NULL,
-  facet.col = NULL,
+  facet_row = NULL,
+  facet_col = NULL,
   comp = c(1, 2),
-  strata.name = NULL,
-  label.name,
+  strata_name = NULL,
+  label_name,
   pairwise = FALSE
 )
 }
+\arguments{
+\item{beta_dispersion_fit}{A list as returned by \code{\link[=get_beta_diversity]{get_beta_diversity()}}.}
+
+\item{facet_mode}{\code{"wrap"} (facet by the single \code{facet} variable) or
+\code{"grid"} (facet by \code{facet_row} x \code{facet_col}; only takes effect when
+both are supplied). Defaults to \code{"wrap"} if \code{NULL}.}
+
+\item{facet}{Wrap-mode faceting variable: a column name of
+\code{beta_dispersion_fit$sample_data}, or \code{NULL} for no faceting.}
+
+\item{facet_row, facet_col}{Grid-mode row/column faceting variable names
+(column names of \code{beta_dispersion_fit$sample_data}).}
+
+\item{comp}{Length-2 integer vector selecting which two ordination axes
+(columns of \code{beta_dispersion_fit$coords[[1]]}) to test, or \code{NULL} to
+test using every retained axis at once.}
+
+\item{strata_name}{Optional column of \code{beta_dispersion_fit$sample_data}
+passed as \code{strata} to \code{\link[vegan:adonis2]{vegan::adonis2()}}, restricting permutations to
+within each stratum (paired/blocked designs).}
+
+\item{label_name}{Column of \code{beta_dispersion_fit$sample_data} to test
+against the ordination coordinates.}
+
+\item{pairwise}{If \code{TRUE} and \code{label_name} is categorical, also compute
+pairwise PERMANOVA between every pair of \code{label_name} levels (per
+facet, if faceted), BH-adjusted across pairs.}
+}
+\value{
+\code{NULL} (with a \code{warning()}) if \code{label_name} is not a column of
+\code{beta_dispersion_fit$sample_data}. Otherwise a list (facets whose
+\code{label_name} is constant are individually skipped with a \code{warning()},
+not fatal -- \code{test_result}/\code{p_value}-family elements simply omit them,
+and can end up empty if every facet was skipped):
+\describe{
+\item{stat}{\code{"permanova"} or \code{"envfit"}.}
+\item{label_name, facet_mode, facet, facet_row, facet_col}{Echo the
+corresponding arguments (\code{facet}/\code{facet_row}/\code{facet_col} may differ
+from the input when only one grid dimension was supplied).}
+\item{facet_name}{The active single faceting variable.}
+\item{dim_used}{The \code{comp} argument, or \code{"all <n>"} when
+\code{comp = NULL}.}
+\item{test_result}{A list of raw \code{\link[vegan:adonis2]{vegan::adonis2()}}/\code{\link[vegan:envfit]{vegan::envfit()}}
+objects, one per facet level tested (unnamed if unfaceted); \code{NULL}
+if every facet was skipped for having a constant \code{label_name}.}
+\item{p_value}{Wrap-mode/no-facet only: a character vector of
+human-readable p-value strings, one per facet level (unnamed if
+unfaceted).}
+\item{p_value_df}{Grid-mode only: a data frame with columns
+\code{facet_row}, \code{facet_col}, \code{p_label}, \code{p_raw}, one row per grid
+cell tested.}
+\item{p_value_raw}{Numeric p-values, named by facet level (wrap
+mode) or unnamed (grid mode uses row order matching
+\code{p_value_df}).}
+\item{pairwise_df}{If \code{pairwise = TRUE}: a data frame with columns
+\code{group1}, \code{group2}, \code{R2}, \code{p_raw}, \code{p_adj}, and (if faceted) the
+faceting variable(s); \code{NULL} if \code{pairwise = FALSE} or no pair was
+fittable.}
+}
+}
 \description{
-Permutation Test for Beta-Diversity Ordination
+Tests whether \code{label_name} explains variation in the ordination
+coordinates returned by \code{\link[=get_beta_diversity]{get_beta_diversity()}}: a factor/character
+\code{label_name} runs a PERMANOVA (\code{\link[vegan:adonis2]{vegan::adonis2()}}); a numeric one runs a
+correlation-style test (\code{\link[vegan:envfit]{vegan::envfit()}}). Optionally repeats the test
+once per facet level (wrap- or grid-mode faceting, mirroring
+\code{\link[=plot_beta_diversity]{plot_beta_diversity()}}'s own faceting) and/or adds pairwise,
+BH-adjusted comparisons between every pair of \code{label_name} levels.
+}
+\examples{
+taxa_nms <- paste0("T", 1:12)
+samp_nms <- paste0("S", 1:10)
+ps <- phyloseq::phyloseq(
+  phyloseq::otu_table(
+    matrix(rpois(120, 20), nrow = 12, dimnames = list(taxa_nms, samp_nms)),
+    taxa_are_rows = TRUE
+  ),
+  phyloseq::sample_data(data.frame(
+    group = rep(c("A", "B"), 5),
+    row.names = samp_nms
+  )),
+  phyloseq::tax_table(matrix(taxa_nms, dimnames = list(taxa_nms, "taxon_id")))
+)
+bd <- get_beta_diversity(ps, method = "PCoA", dist = "bray")
+stat_beta_diversity(bd, label_name = "group")
+
 }

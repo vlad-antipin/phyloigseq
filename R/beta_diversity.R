@@ -263,7 +263,7 @@
   otu_fit <- as(otu_table(reverseASV(physeq_fit)), "matrix")
 
   if (method == "nmds") {
-    fit <- vegan::metaMDS(otu_fit, distance = dist)
+    fit <- vegan::metaMDS(otu_fit, distance = dist, trace = 0)
   } else if (method == "pca") {
     # RDA without constraint = PCA
     fit <- vegan::rda(otu_fit, scale = TRUE)
@@ -408,7 +408,14 @@
     scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
   }
 
-  coords <- list(get_constrained_coords(1), get_constrained_coords(2))
+  # get_constrained_coords() warns (once) via .warn_and_na_fill() on the dbRDA
+  # no-projection path; scaling 1/2 genuinely differ (unlike PCoA, so they
+  # can't just share one computed result), but the warning reason doesn't --
+  # suppress the identical repeat on the second call.
+  coords <- list(
+    get_constrained_coords(1),
+    suppressWarnings(get_constrained_coords(2))
+  )
   loadings <- list(
     scores(fit, display = "species", choices = 1:n_axes, scaling = 1),
     scores(fit, display = "species", choices = 1:n_axes, scaling = 2)
@@ -676,358 +683,426 @@ get_beta_diversity <- function(
   ))
 }
 
+#' Run PERMANOVA or envfit on a single beta-diversity data slice
+#'
+#' Shared per-facet worker for [stat_beta_diversity()]: a factor/character
+#' `Label` column runs [vegan::adonis2()] (PERMANOVA); a numeric `Label`
+#' column runs [vegan::envfit()] (correlation-style test).
+#'
+#' @param stat_data A data frame with `Comp1`/`Comp2` (or one column per
+#'   retained ordination axis), a `Label` column, and optionally a
+#'   `strata_name` column. Must not contain the internal `.facet_row`/
+#'   `.facet_col` marker columns.
+#' @param strata_name Column of `stat_data` to use as `strata` in
+#'   [vegan::adonis2()], or `NULL`.
+#' @return A list with elements `test_result`, `p_raw`, `p_text`, `stat`
+#'   (`"permanova"` or `"envfit"`).
+#' @noRd
+.stat_beta_diversity_test <- function(stat_data, strata_name) {
+  if (is.factor(stat_data$Label) || is.character(stat_data$Label)) {
+    stat_data <- na.omit(stat_data)
+    if (!is.null(strata_name)) {
+      strata <- stat_data[[strata_name]]
+      stat_data[[strata_name]] <- NULL
+    } else {
+      strata <- NULL
+    }
+    test_result <- vegan::adonis2(
+      stat_data[, colnames(stat_data) != "Label"] ~ Label,
+      data = stat_data,
+      strata = strata,
+      permutations = 999,
+      method = "euclidean"
+    )
+    p_raw <- test_result$`Pr(>F)`[1]
+    p_text <- if (!is.null(strata)) {
+      paste0(
+        "restricted by ",
+        strata_name,
+        " PERMANOVA p = ",
+        format(signif(p_raw, digits = 2), scientific = TRUE)
+      )
+    } else {
+      paste0(
+        "PERMANOVA p = ",
+        format(signif(p_raw, digits = 2), scientific = TRUE)
+      )
+    }
+    list(test_result = test_result, p_raw = p_raw, p_text = p_text, stat = "permanova")
+  } else {
+    test_result <- vegan::envfit(
+      stat_data[, colnames(stat_data) != "Label"] ~ Label,
+      data = stat_data,
+      permutations = 999
+    )
+    p_raw <- test_result$vectors$pvals[1]
+    p_text <- paste0(
+      "Correlation p = ",
+      format(signif(p_raw, digits = 2), scientific = TRUE)
+    )
+    list(test_result = test_result, p_raw = p_raw, p_text = p_text, stat = "envfit")
+  }
+}
+
+#' Pairwise PERMANOVA between every pair of label levels
+#'
+#' Per-facet worker backing [stat_beta_diversity()]'s `pairwise = TRUE` path:
+#' runs [vegan::adonis2()] on every pair of `Label` levels in `stat_data` and
+#' BH-adjusts the resulting p-values across pairs.
+#'
+#' @inheritParams .stat_beta_diversity_test
+#' @return A data frame with columns `group1`, `group2`, `R2`, `p_raw`,
+#'   `p_adj`; `NULL` if `Label` is not categorical, has fewer than 2 levels,
+#'   or no pair yields a fittable model.
+#' @noRd
+.stat_beta_diversity_pairwise <- function(stat_data, strata_name) {
+  if (!is.factor(stat_data$Label) && !is.character(stat_data$Label)) {
+    return(NULL)
+  }
+  labels <- unique(na.omit(as.character(stat_data$Label)))
+  if (length(labels) < 2) {
+    return(NULL)
+  }
+  pairs <- combn(labels, 2, simplify = FALSE)
+  pair_results <- lapply(pairs, function(pair) {
+    sub <- stat_data[as.character(stat_data$Label) %in% pair, ]
+    sub <- na.omit(sub)
+    if (length(unique(as.character(sub$Label))) < 2) {
+      return(NULL)
+    }
+    sub_strata <- NULL
+    if (!is.null(strata_name) && strata_name %in% colnames(sub)) {
+      sub_strata <- sub[[strata_name]]
+      sub[[strata_name]] <- NULL
+    }
+    res <- tryCatch(
+      vegan::adonis2(
+        sub[, colnames(sub) != "Label"] ~ Label,
+        data = sub,
+        strata = sub_strata,
+        permutations = 999,
+        method = "euclidean"
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(res)) {
+      return(NULL)
+    }
+    data.frame(
+      group1 = pair[1],
+      group2 = pair[2],
+      R2 = res$R2[1],
+      p_raw = res$`Pr(>F)`[1],
+      stringsAsFactors = FALSE
+    )
+  })
+  pair_results <- do.call(rbind, Filter(Negate(is.null), pair_results))
+  if (is.null(pair_results) || nrow(pair_results) == 0) {
+    return(NULL)
+  }
+  pair_results$p_adj <- p.adjust(pair_results$p_raw, method = "BH")
+  pair_results
+}
+
 #' Permutation Test for Beta-Diversity Ordination
+#'
+#' Tests whether `label_name` explains variation in the ordination
+#' coordinates returned by [get_beta_diversity()]: a factor/character
+#' `label_name` runs a PERMANOVA ([vegan::adonis2()]); a numeric one runs a
+#' correlation-style test ([vegan::envfit()]). Optionally repeats the test
+#' once per facet level (wrap- or grid-mode faceting, mirroring
+#' [plot_beta_diversity()]'s own faceting) and/or adds pairwise,
+#' BH-adjusted comparisons between every pair of `label_name` levels.
+#'
+#' @param beta_dispersion_fit A list as returned by [get_beta_diversity()].
+#' @param facet_mode `"wrap"` (facet by the single `facet` variable) or
+#'   `"grid"` (facet by `facet_row` x `facet_col`; only takes effect when
+#'   both are supplied). Defaults to `"wrap"` if `NULL`.
+#' @param facet Wrap-mode faceting variable: a column name of
+#'   `beta_dispersion_fit$sample_data`, or `NULL` for no faceting.
+#' @param facet_row,facet_col Grid-mode row/column faceting variable names
+#'   (column names of `beta_dispersion_fit$sample_data`).
+#' @param comp Length-2 integer vector selecting which two ordination axes
+#'   (columns of `beta_dispersion_fit$coords[[1]]`) to test, or `NULL` to
+#'   test using every retained axis at once.
+#' @param strata_name Optional column of `beta_dispersion_fit$sample_data`
+#'   passed as `strata` to [vegan::adonis2()], restricting permutations to
+#'   within each stratum (paired/blocked designs).
+#' @param label_name Column of `beta_dispersion_fit$sample_data` to test
+#'   against the ordination coordinates.
+#' @param pairwise If `TRUE` and `label_name` is categorical, also compute
+#'   pairwise PERMANOVA between every pair of `label_name` levels (per
+#'   facet, if faceted), BH-adjusted across pairs.
+#'
+#' @return `NULL` (with a `warning()`) if `label_name` is not a column of
+#'   `beta_dispersion_fit$sample_data`. Otherwise a list (facets whose
+#'   `label_name` is constant are individually skipped with a `warning()`,
+#'   not fatal -- `test_result`/`p_value`-family elements simply omit them,
+#'   and can end up empty if every facet was skipped):
+#'   \describe{
+#'     \item{stat}{`"permanova"` or `"envfit"`.}
+#'     \item{label_name, facet_mode, facet, facet_row, facet_col}{Echo the
+#'       corresponding arguments (`facet`/`facet_row`/`facet_col` may differ
+#'       from the input when only one grid dimension was supplied).}
+#'     \item{facet_name}{The active single faceting variable.}
+#'     \item{dim_used}{The `comp` argument, or `"all <n>"` when
+#'       `comp = NULL`.}
+#'     \item{test_result}{A list of raw [vegan::adonis2()]/[vegan::envfit()]
+#'       objects, one per facet level tested (unnamed if unfaceted); `NULL`
+#'       if every facet was skipped for having a constant `label_name`.}
+#'     \item{p_value}{Wrap-mode/no-facet only: a character vector of
+#'       human-readable p-value strings, one per facet level (unnamed if
+#'       unfaceted).}
+#'     \item{p_value_df}{Grid-mode only: a data frame with columns
+#'       `facet_row`, `facet_col`, `p_label`, `p_raw`, one row per grid
+#'       cell tested.}
+#'     \item{p_value_raw}{Numeric p-values, named by facet level (wrap
+#'       mode) or unnamed (grid mode uses row order matching
+#'       `p_value_df`).}
+#'     \item{pairwise_df}{If `pairwise = TRUE`: a data frame with columns
+#'       `group1`, `group2`, `R2`, `p_raw`, `p_adj`, and (if faceted) the
+#'       faceting variable(s); `NULL` if `pairwise = FALSE` or no pair was
+#'       fittable.}
+#'   }
+#'
+#' @examples
+#' taxa_nms <- paste0("T", 1:12)
+#' samp_nms <- paste0("S", 1:10)
+#' ps <- phyloseq::phyloseq(
+#'   phyloseq::otu_table(
+#'     matrix(rpois(120, 20), nrow = 12, dimnames = list(taxa_nms, samp_nms)),
+#'     taxa_are_rows = TRUE
+#'   ),
+#'   phyloseq::sample_data(data.frame(
+#'     group = rep(c("A", "B"), 5),
+#'     row.names = samp_nms
+#'   )),
+#'   phyloseq::tax_table(matrix(taxa_nms, dimnames = list(taxa_nms, "taxon_id")))
+#' )
+#' bd <- get_beta_diversity(ps, method = "PCoA", dist = "bray")
+#' stat_beta_diversity(bd, label_name = "group")
+#'
 #' @export
 stat_beta_diversity <- function(
-  beta.dispersion.fit,
-  facet.name = NULL, # backward compat: treated as facet in wrap mode
-  facet.mode = "wrap", # "grid", "wrap"
+  beta_dispersion_fit,
+  facet_mode = "wrap", # "grid", "wrap"
   facet = NULL, # wrap-mode facet variable name
-  facet.row = NULL, # grid-mode row facet variable name
-  facet.col = NULL, # grid-mode col facet variable name
+  facet_row = NULL, # grid-mode row facet variable name
+  facet_col = NULL, # grid-mode col facet variable name
   comp = c(1, 2), # if NULL, consider all components
-  strata.name = NULL, # in case of paired design
-  label.name,
+  strata_name = NULL, # in case of paired design
+  label_name,
   pairwise = FALSE
 ) {
-  if (!is.null(facet.name) && is.null(facet)) {
-    facet <- facet.name
-  }
-  if (is.null(facet.mode)) {
-    facet.mode <- "wrap"
+  if (is.null(facet_mode)) {
+    facet_mode <- "wrap"
   }
 
-  full.grid.mode <- facet.mode == "grid" &&
-    !is.null(facet.row) &&
-    !is.null(facet.col)
-  active.facet <- if (facet.mode == "wrap") {
+  grid_mode <- facet_mode == "grid" && !is.null(facet_row) && !is.null(facet_col)
+  active_facet <- if (facet_mode == "wrap") {
     facet
-  } else if (!is.null(facet.row) && is.null(facet.col)) {
-    facet.row
-  } else if (is.null(facet.row) && !is.null(facet.col)) {
-    facet.col
+  } else if (!is.null(facet_row) && is.null(facet_col)) {
+    facet_row
+  } else if (is.null(facet_row) && !is.null(facet_col)) {
+    facet_col
   } else {
     NULL
   }
 
-  if (!label.name %in% colnames(beta.dispersion.fit$sample_data)) {
+  if (!label_name %in% colnames(beta_dispersion_fit$sample_data)) {
     warning("Wrong label name")
     return(NULL)
   }
 
   if (!is.null(comp)) {
-    stat.data.full <- data.frame(
-      Comp1 = beta.dispersion.fit$coords[[1]][, comp[1]],
-      Comp2 = beta.dispersion.fit$coords[[1]][, comp[2]],
-      Label = beta.dispersion.fit$sample_data[[label.name]]
+    stat_data_full <- data.frame(
+      Comp1 = beta_dispersion_fit$coords[[1]][, comp[1]],
+      Comp2 = beta_dispersion_fit$coords[[1]][, comp[2]],
+      Label = beta_dispersion_fit$sample_data[[label_name]]
     )
   } else {
-    stat.data.full <- data.frame(
-      beta.dispersion.fit$coords[[1]],
-      Label = beta.dispersion.fit$sample_data[[label.name]]
+    stat_data_full <- data.frame(
+      beta_dispersion_fit$coords[[1]],
+      Label = beta_dispersion_fit$sample_data[[label_name]]
     )
   }
 
-  if (!is.null(strata.name)) {
-    stat.data.full[[strata.name]] <- beta.dispersion.fit$sample_data[[
-      strata.name
-    ]]
+  if (!is.null(strata_name)) {
+    stat_data_full[[strata_name]] <- beta_dispersion_fit$sample_data[[strata_name]]
   }
 
-  # Embed facet variables into stat.data.full before na.omit so subsetting is consistent
+  # Embed facet variables into stat_data_full before na.omit so subsetting is consistent
   if (
-    full.grid.mode &&
-      !is.null(facet.row) &&
-      facet.row %in% colnames(beta.dispersion.fit$sample_data)
+    grid_mode &&
+      facet_row %in% colnames(beta_dispersion_fit$sample_data)
   ) {
-    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample_data[[
-      facet.row
-    ]]
+    stat_data_full[[".facet_row"]] <- beta_dispersion_fit$sample_data[[facet_row]]
   }
   if (
-    full.grid.mode &&
-      !is.null(facet.col) &&
-      facet.col %in% colnames(beta.dispersion.fit$sample_data)
+    grid_mode &&
+      facet_col %in% colnames(beta_dispersion_fit$sample_data)
   ) {
-    stat.data.full[[".facet.col"]] <- beta.dispersion.fit$sample_data[[
-      facet.col
-    ]]
+    stat_data_full[[".facet_col"]] <- beta_dispersion_fit$sample_data[[facet_col]]
   }
   if (
-    !full.grid.mode &&
-      !is.null(active.facet) &&
-      active.facet %in% colnames(beta.dispersion.fit$sample_data)
+    !grid_mode &&
+      !is.null(active_facet) &&
+      active_facet %in% colnames(beta_dispersion_fit$sample_data)
   ) {
-    stat.data.full[[".facet.row"]] <- beta.dispersion.fit$sample_data[[
-      active.facet
-    ]]
+    stat_data_full[[".facet_row"]] <- beta_dispersion_fit$sample_data[[active_facet]]
   }
 
-  stat.data.full <- na.omit(stat.data.full)
-
-  # Shared helper: run PERMANOVA or envfit on a single data slice
-  run_test <- function(stat.data) {
-    stat.data[[".facet.row"]] <- NULL
-    stat.data[[".facet.col"]] <- NULL
-    if (is.factor(stat.data$Label) || is.character(stat.data$Label)) {
-      stat.data <- na.omit(stat.data)
-      if (!is.null(strata.name)) {
-        strata <- stat.data[[strata.name]]
-        stat.data[[strata.name]] <- NULL
-      } else {
-        strata <- NULL
-      }
-      test.result <- vegan::adonis2(
-        stat.data[, colnames(stat.data) != "Label"] ~ Label,
-        data = stat.data,
-        strata = strata,
-        permutations = 999,
-        method = "euclidean"
-      )
-      p.raw <- test.result$`Pr(>F)`[1]
-      p.text <- if (!is.null(strata)) {
-        paste0(
-          "restricted by ",
-          strata.name,
-          " PERMANOVA p = ",
-          format(signif(p.raw, digits = 2), scientific = TRUE)
-        )
-      } else {
-        paste0(
-          "PERMANOVA p = ",
-          format(signif(p.raw, digits = 2), scientific = TRUE)
-        )
-      }
-      list(
-        test.result = test.result,
-        p.raw = p.raw,
-        p.text = p.text,
-        stat = "permanova"
-      )
-    } else {
-      test.result <- vegan::envfit(
-        stat.data[, colnames(stat.data) != "Label"] ~ Label,
-        data = stat.data,
-        permutations = 999
-      )
-      p.raw <- test.result$vectors$pvals[1]
-      p.text <- paste0(
-        "Correlation p = ",
-        format(signif(p.raw, digits = 2), scientific = TRUE)
-      )
-      list(
-        test.result = test.result,
-        p.raw = p.raw,
-        p.text = p.text,
-        stat = "envfit"
-      )
-    }
-  }
-
-  run_pairwise <- function(stat.data) {
-    stat.data[[".facet.row"]] <- NULL
-    stat.data[[".facet.col"]] <- NULL
-    if (!is.factor(stat.data$Label) && !is.character(stat.data$Label)) {
-      return(NULL)
-    }
-    labels <- unique(na.omit(as.character(stat.data$Label)))
-    if (length(labels) < 2) {
-      return(NULL)
-    }
-    pairs <- combn(labels, 2, simplify = FALSE)
-    pair_results <- lapply(pairs, function(pair) {
-      sub <- stat.data[as.character(stat.data$Label) %in% pair, ]
-      sub <- na.omit(sub)
-      if (length(unique(as.character(sub$Label))) < 2) {
-        return(NULL)
-      }
-      sub_strata <- NULL
-      if (!is.null(strata.name) && strata.name %in% colnames(sub)) {
-        sub_strata <- sub[[strata.name]]
-        sub[[strata.name]] <- NULL
-      }
-      res <- tryCatch(
-        vegan::adonis2(
-          sub[, colnames(sub) != "Label"] ~ Label,
-          data = sub,
-          strata = sub_strata,
-          permutations = 999,
-          method = "euclidean"
-        ),
-        error = function(e) NULL
-      )
-      if (is.null(res)) {
-        return(NULL)
-      }
-      data.frame(
-        group1 = pair[1],
-        group2 = pair[2],
-        R2 = res$R2[1],
-        p.raw = res$`Pr(>F)`[1],
-        stringsAsFactors = FALSE
-      )
-    })
-    pair_results <- do.call(rbind, Filter(Negate(is.null), pair_results))
-    if (is.null(pair_results) || nrow(pair_results) == 0) {
-      return(NULL)
-    }
-    pair_results$p.adj <- p.adjust(pair_results$p.raw, method = "BH")
-    pair_results
-  }
+  stat_data_full <- na.omit(stat_data_full)
 
   dim_used <- if (!is.null(comp)) {
     comp
   } else {
-    paste("all", ncol(beta.dispersion.fit$coords))
+    paste("all", ncol(beta_dispersion_fit$coords[[1]]))
   }
 
-  if (full.grid.mode) {
-    row.vals <- unique(stat.data.full[[".facet.row"]])
-    col.vals <- unique(stat.data.full[[".facet.col"]])
-    combinations <- expand.grid(
-      row = row.vals,
-      col = col.vals,
+  # Build the facet combinations to iterate: grid mode crosses facet_row x
+  # facet_col; wrap/no-facet mode is the same shape with a single, unused
+  # "col" column (NA sentinel -- no legitimate facet value can be NA here,
+  # since stat_data_full was just na.omit()'d).
+  combinations <- if (grid_mode) {
+    expand.grid(
+      row = unique(stat_data_full[[".facet_row"]]),
+      col = unique(stat_data_full[[".facet_col"]]),
       stringsAsFactors = FALSE
     )
-
-    test.result.all <- list()
-    p.value.df <- data.frame(
-      facet.row = character(0),
-      facet.col = character(0),
-      p.label = character(0),
-      p.raw = numeric(0),
+  } else if (".facet_row" %in% colnames(stat_data_full)) {
+    data.frame(
+      row = unique(stat_data_full[[".facet_row"]]),
+      col = NA,
       stringsAsFactors = FALSE
     )
-    stat.type <- NULL
-    pairwise.list <- list()
-
-    for (i in seq_len(nrow(combinations))) {
-      row.val <- combinations$row[i]
-      col.val <- combinations$col[i]
-      stat.data <- stat.data.full[
-        stat.data.full[[".facet.row"]] == row.val &
-          stat.data.full[[".facet.col"]] == col.val,
-      ]
-      if (length(unique(stat.data$Label)) < 2) {
-        warning(paste0(
-          "Facet [",
-          row.val,
-          ", ",
-          col.val,
-          "]: label doesn't vary, skipping."
-        ))
-        next
-      }
-      res <- run_test(stat.data)
-      key <- paste(row.val, col.val, sep = "//")
-      test.result.all[[key]] <- res$test.result
-      stat.type <- res$stat
-      p.value.df <- rbind(
-        p.value.df,
-        data.frame(
-          facet.row = as.character(row.val),
-          facet.col = as.character(col.val),
-          p.label = res$p.text,
-          p.raw = res$p.raw,
-          stringsAsFactors = FALSE
-        )
-      )
-      if (pairwise && res$stat == "permanova") {
-        pw <- run_pairwise(stat.data)
-        if (!is.null(pw)) {
-          if (!is.null(facet.row)) {
-            pw[[facet.row]] <- as.character(row.val)
-          }
-          if (!is.null(facet.col)) {
-            pw[[facet.col]] <- as.character(col.val)
-          }
-          pairwise.list[[length(pairwise.list) + 1]] <- pw
-        }
-      }
-    }
-
-    return(list(
-      stat = stat.type,
-      label.name = label.name,
-      facet.name = facet.row,
-      facet.mode = facet.mode,
-      facet = NULL,
-      facet.row = facet.row,
-      facet.col = facet.col,
-      dim_used = dim_used,
-      test.result = if (length(test.result.all) > 0) test.result.all else NULL,
-      p.value = NULL,
-      p.value.df = p.value.df,
-      p.value.raw = p.value.df$p.raw,
-      pairwise.df = if (pairwise && length(pairwise.list) > 0) {
-        do.call(rbind, pairwise.list)
-      } else {
-        NULL
-      }
-    ))
-  }
-
-  # Single-facet or no-facet mode
-  facet.levels.iter <- if (".facet.row" %in% colnames(stat.data.full)) {
-    unique(stat.data.full[[".facet.row"]])
   } else {
-    NA
+    data.frame(row = NA, col = NA, stringsAsFactors = FALSE)
   }
 
-  test.result.all <- list()
-  p.value.all <- c()
-  p.value.raw <- c()
-  stat.type <- NULL
-  pairwise.list <- list()
+  cell_results <- list()
+  for (i in seq_len(nrow(combinations))) {
+    row_val <- combinations$row[i]
+    col_val <- combinations$col[i]
 
-  for (facet.val in facet.levels.iter) {
-    if (is.na(facet.val)) {
-      stat.data <- stat.data.full
-      idx <- 1
-    } else {
-      stat.data <- stat.data.full[stat.data.full[[".facet.row"]] == facet.val, ]
-      idx <- facet.val
+    cell_data <- stat_data_full
+    if (!is.na(row_val)) {
+      cell_data <- cell_data[cell_data[[".facet_row"]] == row_val, ]
+    }
+    if (grid_mode) {
+      cell_data <- cell_data[cell_data[[".facet_col"]] == col_val, ]
+    }
+    cell_data[[".facet_row"]] <- NULL
+    cell_data[[".facet_col"]] <- NULL
+
+    if (length(unique(cell_data$Label)) < 2) {
+      warning(if (grid_mode) {
+        paste0("Facet [", row_val, ", ", col_val, "]: label doesn't vary, skipping.")
+      } else if (!is.na(row_val)) {
+        paste0("Facet [", row_val, "]: label doesn't vary, skipping.")
+      } else {
+        "Variable doesn't vary, no stats performed..."
+      })
+      next
     }
 
-    if (length(unique(stat.data$Label)) == 1) {
-      warning("Variable doesn't vary, no stats performed...")
-      return(NULL)
-    }
-
-    res <- run_test(stat.data)
-    test.result.all[[idx]] <- res$test.result
-    stat.type <- res$stat
-    p.value.raw[idx] <- res$p.raw
-    p.value.all[idx] <- res$p.text
-    if (pairwise && res$stat == "permanova") {
-      pw <- run_pairwise(stat.data)
-      if (!is.null(pw)) {
-        if (!is.na(facet.val) && !is.null(active.facet)) {
-          pw[[active.facet]] <- as.character(facet.val)
-        }
-        pairwise.list[[length(pairwise.list) + 1]] <- pw
-      }
-    }
-  }
-
-  return(list(
-    stat = stat.type,
-    label.name = label.name,
-    facet.name = active.facet,
-    facet.mode = facet.mode,
-    facet = facet,
-    facet.row = facet.row,
-    facet.col = facet.col,
-    dim_used = dim_used,
-    test.result = if (length(test.result.all) > 0) test.result.all else NULL,
-    p.value = p.value.all,
-    p.value.df = NULL,
-    p.value.raw = p.value.raw,
-    pairwise.df = if (pairwise && length(pairwise.list) > 0) {
-      do.call(rbind, pairwise.list)
+    res <- .stat_beta_diversity_test(cell_data, strata_name)
+    pw <- if (pairwise && res$stat == "permanova") {
+      .stat_beta_diversity_pairwise(cell_data, strata_name)
     } else {
       NULL
     }
+    if (!is.null(pw)) {
+      if (grid_mode) {
+        pw[[facet_row]] <- as.character(row_val)
+        pw[[facet_col]] <- as.character(col_val)
+      } else if (!is.na(row_val) && !is.null(active_facet)) {
+        pw[[active_facet]] <- as.character(row_val)
+      }
+    }
+
+    cell_results[[length(cell_results) + 1]] <- list(
+      row = row_val,
+      col = col_val,
+      res = res,
+      pairwise = pw
+    )
+  }
+
+  stat_type <- if (length(cell_results) > 0) {
+    cell_results[[length(cell_results)]]$res$stat
+  } else {
+    NULL
+  }
+  cell_keys <- if (grid_mode) {
+    vapply(cell_results, function(c) paste(c$row, c$col, sep = "//"), character(1))
+  } else if (length(cell_results) > 0 && !is.na(cell_results[[1]]$row)) {
+    vapply(cell_results, function(c) as.character(c$row), character(1))
+  } else {
+    NULL
+  }
+  test_result_all <- if (length(cell_results) > 0) {
+    stats::setNames(lapply(cell_results, function(c) c$res$test_result), cell_keys)
+  } else {
+    NULL
+  }
+  pairwise_list <- Filter(Negate(is.null), lapply(cell_results, `[[`, "pairwise"))
+  pairwise_df <- if (pairwise && length(pairwise_list) > 0) {
+    do.call(rbind, pairwise_list)
+  } else {
+    NULL
+  }
+
+  if (grid_mode) {
+    p_value_df <- data.frame(
+      facet_row = vapply(cell_results, function(c) as.character(c$row), character(1)),
+      facet_col = vapply(cell_results, function(c) as.character(c$col), character(1)),
+      p_label = vapply(cell_results, function(c) c$res$p_text, character(1)),
+      p_raw = vapply(cell_results, function(c) c$res$p_raw, numeric(1)),
+      stringsAsFactors = FALSE
+    )
+    return(list(
+      stat = stat_type,
+      label_name = label_name,
+      facet_name = facet_row,
+      facet_mode = facet_mode,
+      facet = NULL,
+      facet_row = facet_row,
+      facet_col = facet_col,
+      dim_used = dim_used,
+      test_result = test_result_all,
+      p_value = NULL,
+      p_value_df = p_value_df,
+      p_value_raw = p_value_df$p_raw,
+      pairwise_df = pairwise_df
+    ))
+  }
+
+  p_value_raw <- if (length(cell_results) > 0) {
+    stats::setNames(vapply(cell_results, function(c) c$res$p_raw, numeric(1)), cell_keys)
+  } else {
+    numeric(0)
+  }
+  p_value_all <- if (length(cell_results) > 0) {
+    stats::setNames(vapply(cell_results, function(c) c$res$p_text, character(1)), cell_keys)
+  } else {
+    character(0)
+  }
+
+  return(list(
+    stat = stat_type,
+    label_name = label_name,
+    facet_name = active_facet,
+    facet_mode = facet_mode,
+    facet = facet,
+    facet_row = facet_row,
+    facet_col = facet_col,
+    dim_used = dim_used,
+    test_result = test_result_all,
+    p_value = p_value_all,
+    p_value_df = NULL,
+    p_value_raw = p_value_raw,
+    pairwise_df = pairwise_df
   ))
 }
 
@@ -1088,7 +1163,7 @@ full_beta_diversity <- function(
     stat.beta.dispersion <- stat_beta_diversity(
       beta.dispersion.fit,
       comp = c(axis_x, axis_y),
-      label.name = group
+      label_name = group
     )
   } else {
     stat.beta.dispersion <- NULL
@@ -1398,35 +1473,35 @@ plot_beta_diversity <- function(
   p.value <- NULL
   p.value.df <- NULL
 
-  if (!is.null(stat.beta.dispersion$label.name)) {
+  if (!is.null(stat.beta.dispersion$label_name)) {
     if (
       grid.mode &&
         !is.null(facet.row) &&
         !is.null(facet.col) &&
-        !is.null(stat.beta.dispersion$p.value.df)
+        !is.null(stat.beta.dispersion$p_value_df)
     ) {
       # Full grid mode: p-values as data frame, rendered as geom_text annotations
-      p.value.df <- stat.beta.dispersion$p.value.df
-    } else if (!is.null(stat.beta.dispersion$p.value)) {
+      p.value.df <- stat.beta.dispersion$p_value_df
+    } else if (!is.null(stat.beta.dispersion$p_value)) {
       active.facet <- if (grid.mode) facet.row %||% facet.col else facet
       if (
-        is.null(active.facet) && is.null(names(stat.beta.dispersion$p.value))
+        is.null(active.facet) && is.null(names(stat.beta.dispersion$p_value))
       ) {
         # No facets: embed single p-value in subtitle
         p.value <- paste(
-          strsplit(stat.beta.dispersion$p.value[[1]], "\n")[[1]],
+          strsplit(stat.beta.dispersion$p_value[[1]], "\n")[[1]],
           collapse = " "
         )
       } else if (
         !is.null(active.facet) &&
-          !is.null(names(stat.beta.dispersion$p.value)) &&
+          !is.null(names(stat.beta.dispersion$p_value)) &&
           all(
             levels(sample.data[[active.facet]]) %in%
-              names(stat.beta.dispersion$p.value)
+              names(stat.beta.dispersion$p_value)
           )
       ) {
         # Single-facet: embed per-facet p-value into facet strip labels
-        p.value <- stat.beta.dispersion$p.value[levels(sample.data[[
+        p.value <- stat.beta.dispersion$p_value[levels(sample.data[[
           active.facet
         ]])]
       }
@@ -1456,8 +1531,8 @@ plot_beta_diversity <- function(
   }
 
   # If stats on group are provided, overwrite the label.name by the one of this group
-  if (!is.null(stat.beta.dispersion$label.name)) {
-    label.name <- stat.beta.dispersion$label.name
+  if (!is.null(stat.beta.dispersion$label_name)) {
+    label.name <- stat.beta.dispersion$label_name
   }
 
   if (!is.null(label.name)) {
@@ -2035,14 +2110,14 @@ plot_beta_diversity <- function(
       if (!is.null(p.value.df) && nrow(p.value.df) > 0) {
         annot.df <- data.frame(
           facet.row = factor(
-            paste0(facet.row, " = ", p.value.df$facet.row),
+            paste0(facet.row, " = ", p.value.df$facet_row),
             levels = levels(plot.df$facet.row)
           ),
           facet.col = factor(
-            paste0(facet.col, " = ", p.value.df$facet.col),
+            paste0(facet.col, " = ", p.value.df$facet_col),
             levels = levels(plot.df$facet.col)
           ),
-          p.label = p.value.df$p.label,
+          p.label = p.value.df$p_label,
           x = Inf,
           y = Inf
         )

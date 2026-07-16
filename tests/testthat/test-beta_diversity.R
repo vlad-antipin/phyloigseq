@@ -210,3 +210,147 @@ test_that("get_beta_diversity agglomerates by taxrank before ordination", {
   expect_equal(nrow(bd$tax_table), 3L)
   expect_equal(nrow(bd$loadings[[1]]), 3L)
 })
+
+# ---- stat_beta_diversity() ----
+
+make_bd_fit <- function(n_samples = 24, seed = 42) {
+  ps <- make_bd_ps(n_samples = n_samples, seed = seed)
+  sdata <- as(phyloseq::sample_data(ps), "data.frame")
+  # facet1 is blocked in pairs so it doesn't align with group's period-2
+  # alternation (which would make group constant within a facet1 level).
+  sdata$facet1 <- rep(c("F1", "F1", "F2", "F2"), length.out = n_samples)
+  sdata$facet2 <- rep(c("G1", "G2"), each = n_samples / 2)
+  set.seed(seed)
+  sdata$cont_var <- stats::rnorm(n_samples)
+  phyloseq::sample_data(ps) <- phyloseq::sample_data(sdata)
+  get_beta_diversity(ps, method = "PCoA", dist = "bray")
+}
+
+test_that("stat_beta_diversity warns and returns NULL for an unknown label name", {
+  fit <- make_bd_fit()
+  expect_warning(
+    result <- stat_beta_diversity(fit, label_name = "nope"),
+    "Wrong label name"
+  )
+  expect_null(result)
+})
+
+test_that("stat_beta_diversity runs PERMANOVA for a categorical label, no facet", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(fit, label_name = "group")
+  expect_equal(result$stat, "permanova")
+  expect_match(result$p_value[[1]], "PERMANOVA p")
+  expect_null(result$p_value_df)
+  expect_length(result$p_value_raw, 1L)
+  expect_null(names(result$p_value_raw)) # unfaceted: unnamed, like the pre-refactor behavior
+})
+
+test_that("stat_beta_diversity runs envfit for a continuous label", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(fit, label_name = "cont_var")
+  expect_equal(result$stat, "envfit")
+  expect_match(result$p_value[[1]], "Correlation p")
+})
+
+test_that("stat_beta_diversity wrap-mode facets, one PERMANOVA per facet level", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(
+    fit,
+    facet_mode = "wrap",
+    facet = "facet1",
+    label_name = "group"
+  )
+  expect_setequal(names(result$p_value_raw), c("F1", "F2"))
+  expect_length(result$test_result, 2L)
+})
+
+test_that("stat_beta_diversity grid mode returns a p_value_df with one row per cell", {
+  fit <- make_bd_fit()
+  # suppressMessages(): grid cells are small enough that vegan::adonis2() falls
+  # back to complete permutation enumeration and notes so via message().
+  result <- suppressMessages(stat_beta_diversity(
+    fit,
+    facet_mode = "grid",
+    facet_row = "facet1",
+    facet_col = "facet2",
+    label_name = "group"
+  ))
+  expect_equal(nrow(result$p_value_df), 4L)
+  expect_setequal(result$p_value_df$facet_row, c("F1", "F2"))
+  expect_setequal(result$p_value_df$facet_col, c("G1", "G2"))
+  expect_null(result$p_value)
+})
+
+test_that("stat_beta_diversity strata restricts the PERMANOVA permutation scheme", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(
+    fit,
+    label_name = "group",
+    strata_name = "batch"
+  )
+  expect_match(result$p_value[[1]], "restricted by batch")
+})
+
+test_that("stat_beta_diversity pairwise adds a BH-adjusted pairwise table", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(fit, label_name = "batch", pairwise = TRUE)
+  expect_setequal(
+    colnames(result$pairwise_df),
+    c("group1", "group2", "R2", "p_raw", "p_adj")
+  )
+  expect_equal(nrow(result$pairwise_df), 3L) # choose(3, 2) levels of batch
+})
+
+test_that("stat_beta_diversity comp = NULL uses every retained ordination axis", {
+  fit <- make_bd_fit()
+  result <- stat_beta_diversity(fit, comp = NULL, label_name = "group")
+  expect_equal(result$dim_used, paste("all", ncol(fit$coords[[1]])))
+})
+
+test_that("stat_beta_diversity has dropped the dead facet.name back-compat alias", {
+  fit <- make_bd_fit()
+  expect_error(
+    stat_beta_diversity(fit, facet.name = "facet1", label_name = "group"),
+    "unused argument"
+  )
+})
+
+test_that("stat_beta_diversity wrap-mode skips only the degenerate facet, keeping the others (bug fix)", {
+  fit <- make_bd_fit()
+  sdata <- fit$sample_data
+  # Force facet2's "G1" level to a single, constant group value.
+  sdata$group[sdata$facet2 == "G1"] <- "A"
+  fit$sample_data <- sdata
+  expect_warning(
+    result <- stat_beta_diversity(
+      fit,
+      facet_mode = "wrap",
+      facet = "facet2",
+      label_name = "group"
+    ),
+    "doesn't vary"
+  )
+  expect_false(is.null(result)) # no longer aborts entirely
+  expect_equal(names(result$p_value_raw), "G2")
+  expect_length(result$test_result, 1L)
+})
+
+test_that("stat_beta_diversity grid mode skips only the degenerate cell, keeping the others", {
+  fit <- make_bd_fit()
+  sdata <- fit$sample_data
+  sdata$group[sdata$facet1 == "F1" & sdata$facet2 == "G1"] <- "A"
+  fit$sample_data <- sdata
+  # suppressMessages(): grid cells are small enough that vegan::adonis2() falls
+  # back to complete permutation enumeration and notes so via message().
+  expect_warning(
+    result <- suppressMessages(stat_beta_diversity(
+      fit,
+      facet_mode = "grid",
+      facet_row = "facet1",
+      facet_col = "facet2",
+      label_name = "group"
+    )),
+    "doesn't vary"
+  )
+  expect_equal(nrow(result$p_value_df), 3L)
+})
