@@ -1106,9 +1106,33 @@ stat_beta_diversity <- function(
   ))
 }
 
-#' Get and Plot Beta-Diversity from Phyloseq Object
+#' Compute and Plot Beta-Diversity
+#'
+#' Thin convenience wrapper chaining [get_beta_diversity()], optionally
+#' [stat_beta_diversity()], and [plot_beta_diversity()] in one call.
+#'
+#' @inheritParams get_beta_diversity
+#' @param group `NULL` (default) or the name of a `sample_data` column used
+#'   to color/group the plot and, when `stat = TRUE`, as the
+#'   [stat_beta_diversity()] test label.
+#' @param stat Logical; run [stat_beta_diversity()] on `group` and annotate
+#'   the plot with its result. Default `FALSE`.
+#' @param comp Length-2 integer vector of ordination axes to plot and (when
+#'   `stat = TRUE`) to test. Default `c(1, 2)`.
+#' @param ... Passed on to [plot_beta_diversity()] (e.g. `facet`,
+#'   `hover.variables`, `ellipses`; see its documentation once written).
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object.
+#'
+#' @seealso [get_beta_diversity()], [stat_beta_diversity()],
+#'   [plot_beta_diversity()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' beta_diversity(ps_16s_refinement, group = "Protocol", stat = TRUE)
+#'
 #' @export
-full_beta_diversity <- function(
+beta_diversity <- function(
   physeq,
   taxrank = NULL,
   fraction_id_name = NULL,
@@ -1117,40 +1141,11 @@ full_beta_diversity <- function(
   model = NULL,
   dist = "bray",
   group = NULL,
-  stat = "none",
-  species = FALSE,
-  axis_x = 1,
-  axis_y = 2,
-  # nf= 5,
-  # type= "boxplot",
-  # color_vector= c("cyan4","brown","deepskyblue", "black","red"),
-  # legend_title= NULL,
-  # lwd=1,
-  # conf=0.9,
-  # cex=2,
-  # font=2,
-  # pch=20,
-  # draw= "lines",
-  # ylimits="auto",
-  # xlimits= "auto",
-  # text=FALSE,
-  # ncol=1,
-  # x.intersp = 1,
-  # y.intersp=0.5,
-  # where="topleft",
-  # inset=0.2,
-  # pca=TRUE,
-  # stat.cex= 2,
-  # legend.cex=2,
-  # widths= c(1,1),
-  # heights= c(1,1),
-  # margins= c(1,1,1,1),
+  stat = FALSE,
+  comp = c(1, 2),
   ...
 ) {
-  # NOTE: `species` is no longer forwarded — get_beta_diversity() dropped its
-  # own unused `species` param in the 14b cleanup pass. This function's own
-  # `species` arg is now fully dead; left for the 14d argument-hygiene pass.
-  beta.dispersion.fit <- get_beta_diversity(
+  beta_dispersion_fit <- get_beta_diversity(
     physeq = physeq,
     taxrank = taxrank,
     fraction_id_name = fraction_id_name,
@@ -1159,27 +1154,24 @@ full_beta_diversity <- function(
     method = method,
     model = model
   )
-  if (!is.null(stat) && stat != FALSE && stat != "none") {
-    stat.beta.dispersion <- stat_beta_diversity(
-      beta.dispersion.fit,
-      comp = c(axis_x, axis_y),
+
+  stat_beta_dispersion <- if (isTRUE(stat)) {
+    stat_beta_diversity(
+      beta_dispersion_fit,
+      comp = comp,
       label_name = group
     )
   } else {
-    stat.beta.dispersion <- NULL
+    NULL
   }
 
-  plt <- plot_beta_diversity(
-    beta.dispersion.fit = beta.dispersion.fit,
-    stat.beta.dispersion = stat.beta.dispersion,
+  plot_beta_diversity(
+    beta.dispersion.fit = beta_dispersion_fit,
+    stat.beta.dispersion = stat_beta_dispersion,
+    comp = comp,
+    label.name = group,
     ...
   )
-  print(plt)
-
-  return(list(
-    reduction = beta.dispersion.fit$fit,
-    stat = stat.beta.dispersion[[1]]$test.result
-  ))
 }
 
 #' Scree Plot from Eigenvalues
@@ -2170,43 +2162,82 @@ plot_beta_diversity <- function(
 
 
 # Inspired from animateDimReduction() in Feature Selector
-# TODO: this function is better since it doesn't assume any facets for animation,
-# implement it in feature selector
 #' Animate a Ggplot Object by a Variable
+#'
+#' Adds a [gganimate::transition_states()] animation over the levels of
+#' `animation_variable_name` to an existing `ggplot` object (typically the
+#' output of [plot_beta_diversity()]) and renders it to a GIF via
+#' [gifski::gifski()].
+#'
+#' @param ggplot_obj A `ggplot` object to animate.
+#' @param animation_variable_name Name of the (typically discrete) variable
+#'   in `ggplot_obj`'s underlying data to animate over; one animation frame
+#'   group per level.
+#' @param return_anim Logical; return the rendered animation object. Default
+#'   `TRUE`.
+#' @param save_path `NULL` (default; don't save) or a file path to save the
+#'   rendered animation to (e.g. a `.gif` path), via
+#'   [gganimate::anim_save()].
+#' @param nframes Total number of animation frames. Default `150`.
+#' @param fps Frames per second. Default `25`.
+#' @param width,height Rendered animation size in pixels. Default `900`/
+#'   `700`.
+#' @param res Rendered animation resolution (dpi). Default `200`.
+#'
+#' @return The rendered `gganim` animation object if `return_anim = TRUE`,
+#'   otherwise `NULL`. Either way, the animation is written to `save_path`
+#'   first (as a side effect) if one was given.
+#'
 #' @export
+#'
+#' @examples
+#' \donttest{
+#' data(ps_16s_refinement)
+#' # animation.variable.name must also be passed to plot_beta_diversity()
+#' # (via `...`) so the variable is embedded in the plot's data first.
+#' bd <- beta_diversity(
+#'   ps_16s_refinement,
+#'   group = "Protocol",
+#'   animation.variable.name = "Protocol"
+#' )
+#' animate_by_variable(bd, "Protocol", nframes = 10, fps = 5)
+#' }
 animate_by_variable <- function(
-  ggplot.obj, # ggplot2 object
-  animation.variable.name,
-  return.anim = TRUE,
-  save.path = NULL # gif file name
+  ggplot_obj,
+  animation_variable_name,
+  return_anim = TRUE,
+  save_path = NULL,
+  nframes = 150,
+  fps = 25,
+  width = 900,
+  height = 700,
+  res = 200
 ) {
-  plt <- ggplot.obj
-
   plt <-
-    plt +
+    ggplot_obj +
     gganimate::transition_states(
-      get(animation.variable.name),
+      get(animation_variable_name),
       transition_length = 2,
       state_length = 3
     ) +
-    labs(subtitle = paste0(animation.variable.name, " = {closest_state}")) +
+    labs(subtitle = paste0(animation_variable_name, " = {closest_state}")) +
     ease_aes('linear')
   anim <-
     animate(
       plt,
-      nframes = 150, # More frames for better smoothness
-      fps = 25, # Higher FPS for fluid animation
-      width = 900,
-      height = 700,
-      res = 200, # Higher resolution
-      renderer = gifski_renderer(loop = TRUE) # High-quality GIF output
+      nframes = nframes,
+      fps = fps,
+      width = width,
+      height = height,
+      res = res,
+      renderer = gifski_renderer(loop = TRUE)
     )
 
-  if (!is.null(save.path)) {
-    anim_save(save.path, anim)
+  if (!is.null(save_path)) {
+    anim_save(save_path, anim)
   }
 
-  if (return.anim) {
+  if (return_anim) {
     return(anim)
   } else {
     return(NULL)

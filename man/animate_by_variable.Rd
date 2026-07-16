@@ -5,12 +5,61 @@
 \title{Animate a Ggplot Object by a Variable}
 \usage{
 animate_by_variable(
-  ggplot.obj,
-  animation.variable.name,
-  return.anim = TRUE,
-  save.path = NULL
+  ggplot_obj,
+  animation_variable_name,
+  return_anim = TRUE,
+  save_path = NULL,
+  nframes = 150,
+  fps = 25,
+  width = 900,
+  height = 700,
+  res = 200
 )
 }
+\arguments{
+\item{ggplot_obj}{A \code{ggplot} object to animate.}
+
+\item{animation_variable_name}{Name of the (typically discrete) variable
+in \code{ggplot_obj}'s underlying data to animate over; one animation frame
+group per level.}
+
+\item{return_anim}{Logical; return the rendered animation object. Default
+\code{TRUE}.}
+
+\item{save_path}{\code{NULL} (default; don't save) or a file path to save the
+rendered animation to (e.g. a \code{.gif} path), via
+\code{\link[gganimate:anim_save]{gganimate::anim_save()}}.}
+
+\item{nframes}{Total number of animation frames. Default \code{150}.}
+
+\item{fps}{Frames per second. Default \code{25}.}
+
+\item{width, height}{Rendered animation size in pixels. Default \code{900}/
+\code{700}.}
+
+\item{res}{Rendered animation resolution (dpi). Default \code{200}.}
+}
+\value{
+The rendered \code{gganim} animation object if \code{return_anim = TRUE},
+otherwise \code{NULL}. Either way, the animation is written to \code{save_path}
+first (as a side effect) if one was given.
+}
 \description{
-Animate a Ggplot Object by a Variable
+Adds a \code{\link[gganimate:transition_states]{gganimate::transition_states()}} animation over the levels of
+\code{animation_variable_name} to an existing \code{ggplot} object (typically the
+output of \code{\link[=plot_beta_diversity]{plot_beta_diversity()}}) and renders it to a GIF via
+\code{\link[gifski:gifski]{gifski::gifski()}}.
+}
+\examples{
+\donttest{
+data(ps_16s_refinement)
+# animation.variable.name must also be passed to plot_beta_diversity()
+# (via `...`) so the variable is embedded in the plot's data first.
+bd <- beta_diversity(
+  ps_16s_refinement,
+  group = "Protocol",
+  animation.variable.name = "Protocol"
+)
+animate_by_variable(bd, "Protocol", nframes = 10, fps = 5)
+}
 }

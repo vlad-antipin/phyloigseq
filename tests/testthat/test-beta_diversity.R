@@ -354,3 +354,108 @@ test_that("stat_beta_diversity grid mode skips only the degenerate cell, keeping
   )
   expect_equal(nrow(result$p_value_df), 3L)
 })
+
+# ---- beta_diversity() ----
+#
+# suppressWarnings(): plot_beta_diversity()'s pre-existing geom_point(point_aes, ...)
+# call passes an unused `text` aesthetic (for the app's plotly tooltip), triggering a
+# harmless "Ignoring unknown aesthetics" cosmetic warning on every call. Out of scope
+# for this batch (plot_beta_diversity() itself is Batch 14e/14f); muffled here so it
+# doesn't drown out these tests' own signal.
+
+test_that("beta_diversity returns a ggplot", {
+  plt <- suppressWarnings(beta_diversity(make_bd_ps(), group = "group"))
+  expect_s3_class(plt, "ggplot")
+})
+
+test_that("beta_diversity colors the plot by group even when stat = FALSE (bug fix)", {
+  plt <- suppressWarnings(beta_diversity(make_bd_ps(), group = "group"))
+  expect_setequal(as.character(unique(plt$layers[[1]]$data$label)), c("A", "B"))
+})
+
+test_that("beta_diversity forwards comp to the plot, not just to stat_beta_diversity (bug fix)", {
+  ps <- make_bd_ps()
+  fit <- get_beta_diversity(ps, method = "PCoA", dist = "bray")
+  plt_default <- suppressWarnings(beta_diversity(ps, group = "group"))
+  plt_23 <- suppressWarnings(beta_diversity(ps, group = "group", comp = c(2, 3)))
+  expect_equal(plt_default$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 1]))
+  expect_equal(plt_23$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 2]))
+})
+
+test_that("beta_diversity with stat = TRUE runs without erroring (regression: stat.beta.dispersion[[1]]$test.result indexing bug)", {
+  plt <- suppressWarnings(beta_diversity(make_bd_ps(), group = "group", stat = TRUE))
+  expect_s3_class(plt, "ggplot")
+})
+
+test_that("beta_diversity has dropped the dead species argument and the full_ prefix", {
+  expect_false("species" %in% names(formals(beta_diversity)))
+  expect_false(exists("full_beta_diversity", where = asNamespace("PhyloIgSeq"), inherits = FALSE))
+})
+
+test_that("beta_diversity forwards ... to plot_beta_diversity", {
+  plt <- suppressWarnings(beta_diversity(make_bd_ps(), group = "group", ellipses = TRUE))
+  expect_true(any(vapply(plt$layers, function(l) inherits(l$stat, "StatEllipse"), logical(1))))
+})
+
+# ---- animate_by_variable() ----
+
+test_that("animate_by_variable returns a gganim/gif_image object by default", {
+  ps <- make_bd_ps()
+  plt <- suppressWarnings(beta_diversity(
+    ps,
+    group = "group",
+    animation.variable.name = "group"
+  ))
+  anim <- animate_by_variable(
+    plt,
+    "group",
+    nframes = 6,
+    fps = 3,
+    width = 200,
+    height = 200,
+    res = 72
+  )
+  expect_true(inherits(anim, "gif_image") || inherits(anim, "gganim"))
+})
+
+test_that("animate_by_variable returns NULL when return_anim = FALSE", {
+  ps <- make_bd_ps()
+  plt <- suppressWarnings(beta_diversity(
+    ps,
+    group = "group",
+    animation.variable.name = "group"
+  ))
+  anim <- animate_by_variable(
+    plt,
+    "group",
+    return_anim = FALSE,
+    nframes = 6,
+    fps = 3,
+    width = 200,
+    height = 200,
+    res = 72
+  )
+  expect_null(anim)
+})
+
+test_that("animate_by_variable writes a file to save_path when given", {
+  ps <- make_bd_ps()
+  plt <- suppressWarnings(beta_diversity(
+    ps,
+    group = "group",
+    animation.variable.name = "group"
+  ))
+  out <- tempfile(fileext = ".gif")
+  on.exit(unlink(out), add = TRUE)
+  animate_by_variable(
+    plt,
+    "group",
+    save_path = out,
+    nframes = 6,
+    fps = 3,
+    width = 200,
+    height = 200,
+    res = 72
+  )
+  expect_true(file.exists(out))
+})
