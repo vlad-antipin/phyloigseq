@@ -1937,6 +1937,282 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
   plt
 }
 
+#' Filter and scale one biplot arrow group (loadings or covariates)
+#'
+#' For [plot_beta_diversity()]'s biplot: shared tail of the "drop NA/absent
+#' rows, filter out arrows shorter than a length cutoff, build a
+#' `Comp1`/`Comp2`/`type` data frame, and scale it onto `coords`' range"
+#' pattern applied identically to loadings and covariates by
+#' .plot_beta_diversity_arrow_data(). Hover text/label columns are added by
+#' the caller instead, since those differ between the two arrow types.
+#'
+#' @param scores A `loadings` or `covariates` matrix (rows = taxa/
+#'   predictors, columns = ordination axes).
+#' @param type `"load"` or `"covar"`, recorded in the returned data frame's
+#'   `type` column.
+#' @param comp,coords See [plot_beta_diversity()]; `coords` sets the range
+#'   arrow length is scaled to.
+#' @param cutoff Arrows shorter than `cutoff` times the longest arrow in this
+#'   group are dropped (`arrow_cutoff_load`/`arrow_cutoff_covar`, see
+#'   [plot_beta_diversity()]).
+#' @return `list(arrow =, scale_factor =)`; both `NULL` if nothing survives
+#'   filtering.
+#' @noRd
+.plot_beta_diversity_arrow_group <- function(scores, type, comp, coords, cutoff) {
+  # Account for absent scores: taxa/predictors with zero variance across the
+  # fitted samples have an undefined correlation/score (e.g. PCoA's loadings
+  # are cor(otu_matrix, coords), see .get_beta_diversity_from_distance()) and
+  # are dropped here rather than plotted as NA arrows.
+  filtered <- na.omit(scores[, comp, drop = FALSE])
+
+  # Filter arrows by length (get rid of smaller arrows)
+  arrow_lengths <- apply(filtered, 1, function(x) sqrt(sum(x^2)))
+  filtered <- filtered[arrow_lengths / max(arrow_lengths) > cutoff, , drop = FALSE]
+
+  if (nrow(filtered) == 0) {
+    return(list(arrow = NULL, scale_factor = NULL))
+  }
+
+  arrow <- data.frame(Comp1 = filtered[, 1], Comp2 = filtered[, 2], type = type)
+  rownames(arrow) <- rownames(filtered)
+
+  # Scale the secondary axes so that arrows and sample scores are on a
+  # comparable scale. NOTE: both components are scaled by the same factor,
+  # so arrows point in the same direction as before, only their size changes.
+  lim <- max(abs(arrow$Comp1), abs(arrow$Comp2))
+  scale_factor <- max(abs(coords)) / lim
+  arrow$Comp1 <- arrow$Comp1 * scale_factor
+  arrow$Comp2 <- arrow$Comp2 * scale_factor
+
+  list(arrow = arrow, scale_factor = scale_factor)
+}
+
+#' Build the biplot arrow data frame and length-scale factors
+#'
+#' For [plot_beta_diversity()]: turns `loadings`/`covariates` into the arrow
+#' data frame drawn by .plot_beta_diversity_arrow_plot(), gated by
+#' `biplot_loadings`/`biplot_covariates`. Loading arrows and covariate
+#' arrows share the filter/scale steps
+#' (.plot_beta_diversity_arrow_group()), but differ in hover text/label
+#' source: loadings use `tax_table`/`arrow_taxonomy_labels` (species scores
+#' are taxa), covariates always use their own (backtick-stripped) name,
+#' since they're `sample_data` column names, not taxa.
+#'
+#' @param loadings,covariates `NULL` or a scores matrix, as resolved by
+#'   .plot_beta_diversity_select_scaling().
+#' @param comp,coords,biplot_loadings,biplot_covariates,arrow_cutoff_load,
+#'   arrow_cutoff_covar,arrow_taxonomy_labels See [plot_beta_diversity()].
+#' @param tax_table `beta_dispersion_fit$tax_table`, or `NULL`.
+#' @return `list(arrow_df =, scale_factor_load =, scale_factor_covar =)`;
+#'   `arrow_df` has 0 rows when neither arrow group survives filtering.
+#' @noRd
+.plot_beta_diversity_arrow_data <- function(
+  loadings,
+  covariates,
+  comp,
+  coords,
+  biplot_loadings,
+  biplot_covariates,
+  arrow_cutoff_load,
+  arrow_cutoff_covar,
+  tax_table,
+  arrow_taxonomy_labels
+) {
+  arrow_df <- data.frame()
+  scale_factor_load <- NULL
+  scale_factor_covar <- NULL
+
+  # Plot species arrows = loadings here
+  if (!is.null(loadings) && biplot_loadings) {
+    grp <- .plot_beta_diversity_arrow_group(
+      loadings,
+      "load",
+      comp,
+      coords,
+      arrow_cutoff_load
+    )
+    if (!is.null(grp$arrow)) {
+      arrow_load <- grp$arrow
+      scale_factor_load <- grp$scale_factor
+
+      # If phyloseq object provided, get hover info from it - taxonomy for each species (arrow)
+      if (!is.null(tax_table)) {
+        arrow_load$hover_text <- get_hover_text(
+          tax_table[rownames(arrow_load), , drop = FALSE],
+          colnames(tax_table)
+        )
+      } else {
+        arrow_load$hover_text <- rownames(arrow_load)
+      }
+
+      if (!is.null(arrow_taxonomy_labels)) {
+        # use taxonomy as label instead of taxa names
+        arrow_load$Names <- apply(
+          tax_table[rownames(arrow_load), ],
+          1,
+          function(row) {
+            gsub("NA", " ", paste(row[arrow_taxonomy_labels], collapse = ":"))
+          }
+        )
+      } else {
+        arrow_load$Names <- rownames(arrow_load)
+      }
+      arrow_df <- rbind(arrow_df, arrow_load)
+    }
+  }
+
+  # Similar for covariates (predictors in case of constrained model), scaled
+  # independently so both groups are of comparable size on the plot
+  if (!is.null(covariates) && biplot_covariates) {
+    grp <- .plot_beta_diversity_arrow_group(
+      covariates,
+      "covar",
+      comp,
+      coords,
+      arrow_cutoff_covar
+    )
+    if (!is.null(grp$arrow)) {
+      arrow_covar <- grp$arrow
+      scale_factor_covar <- grp$scale_factor
+      # Hover text is just the name of covariate
+      arrow_covar$hover_text <- rownames(arrow_covar)
+      arrow_covar$Names <- gsub("`", "", rownames(arrow_covar))
+      arrow_df <- rbind(arrow_df, arrow_covar)
+    }
+  }
+
+  list(
+    arrow_df = arrow_df,
+    scale_factor_load = scale_factor_load,
+    scale_factor_covar = scale_factor_covar
+  )
+}
+
+#' Draw biplot arrow layers (loadings/covariates) and their secondary axis
+#'
+#' For [plot_beta_diversity()]: adds `geom_segment()` arrow layers for
+#' whichever of `"load"`/`"covar"` rows are present in `arrow_df`, optional
+#' arrow labels (`geom_text()` or `ggrepel::geom_text_repel()`), and a
+#' secondary axis scaled back to the arrows' pre-scaling units. The
+#' secondary axis is only added when exactly one of the two arrow groups is
+#' present and no `marginal_plot` is set, to avoid an ambiguous/cluttered
+#' axis (loadings and covariates use independent scale factors, and
+#' `marginal_plot` has no room for it).
+#'
+#' @param plt The base `ggplot` object (already carrying the sample points).
+#' @param arrow_df As returned by .plot_beta_diversity_arrow_data(); must
+#'   have at least 1 row.
+#' @param scale_factor_load,scale_factor_covar As returned by
+#'   .plot_beta_diversity_arrow_data().
+#' @param color_arrows_by_taxa,arrow_labels,repel,max_overlaps,marginal_plot
+#'   See [plot_beta_diversity()].
+#' @param dim_names,comp As resolved by
+#'   .plot_beta_diversity_select_scaling().
+#' @return `plt` with the arrow layers/secondary axis added.
+#' @noRd
+.plot_beta_diversity_arrow_plot <- function(
+  plt,
+  arrow_df,
+  scale_factor_load,
+  scale_factor_covar,
+  color_arrows_by_taxa,
+  arrow_labels,
+  repel,
+  max_overlaps,
+  marginal_plot,
+  dim_names,
+  comp
+) {
+  arrow_params <- arrow(
+    type = "closed",
+    angle = 20,
+    length = unit(0.1, "inches")
+  )
+
+  if ("load" %in% arrow_df$type) {
+    if (color_arrows_by_taxa) {
+      plt <- plt +
+        geom_segment(
+          data = arrow_df[arrow_df$type == "load", ],
+          aes(
+            x = 0,
+            y = 0,
+            xend = Comp1,
+            yend = Comp2,
+            text = hover_text,
+            color = Names
+          ), # Arrow from (0,0) to each point
+          arrow = arrow_params,
+          size = 0.7, # Size of the arrows
+          alpha = 0.7 # Transparency of the arrows
+        )
+    } else {
+      plt <- plt +
+        geom_segment(
+          data = arrow_df[arrow_df$type == "load", ],
+          aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
+          arrow = arrow_params,
+          color = "darkgrey",
+          size = 0.7, # Size of the arrows
+          alpha = 0.7 # Transparency of the arrows
+        )
+    }
+  }
+
+  if ("covar" %in% arrow_df$type) {
+    plt <- plt +
+      geom_segment(
+        data = arrow_df[arrow_df$type == "covar", ],
+        aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
+        arrow = arrow_params,
+        color = "darkred",
+        size = 0.7, # Size of the arrows
+        alpha = 0.7 # Transparency of the arrows
+      )
+  }
+  if (arrow_labels) {
+    if (repel) {
+      plt <- plt +
+        ggrepel::geom_text_repel(
+          data = arrow_df,
+          aes(x = Comp1, y = Comp2, label = Names),
+          max.overlaps = max_overlaps,
+          show.legend = FALSE
+        )
+    } else {
+      plt <- plt +
+        geom_text(
+          data = arrow_df,
+          aes(x = Comp1, y = Comp2, label = Names, text = hover_text)
+        )
+    }
+  }
+
+  # if there are marginal plots or covariates and loadings at the same time,
+  # don't show secondary axis names to avoid visual mess
+  if (
+    is.null(marginal_plot) &&
+      xor(is.null(scale_factor_load), is.null(scale_factor_covar)) # <=> only loadings or covariates, not both
+  ) {
+    scale_factor <- c(scale_factor_load, scale_factor_covar) # = the one which is not NULL
+    plt <- plt +
+      scale_x_continuous(
+        sec.axis = sec_axis(
+          trans = ~ . / scale_factor,
+          name = paste0("Loadings ", dim_names[comp[1]])
+        )
+      ) +
+      scale_y_continuous(
+        sec.axis = sec_axis(
+          trans = ~ . / scale_factor,
+          name = paste0("Loadings ", dim_names[comp[2]])
+        )
+      )
+  }
+
+  plt
+}
+
 #' Plot a Beta-Diversity Ordination
 #'
 #' Scatter plot of ordination sample scores (`beta_dispersion_fit$coords`,
@@ -2297,194 +2573,34 @@ plot_beta_diversity <- function(
   )
 
   if (biplot && (!is.null(loadings) || !is.null(covariates))) {
-    scale_factor_load <- NULL
-    scale_factor_covar <- NULL
-
-    arrow_df <- data.frame()
-
-    # Plot species arrows = loadings here
-    if (!is.null(loadings) && biplot_loadings) {
-      # Account for absent loadings: taxa with zero abundance variance across
-      # the fitted samples have an undefined correlation (PCoA's loadings are
-      # cor(otu_matrix, coords), see .get_beta_diversity_from_distance()) and
-      # are dropped here rather than plotted as NA arrows.
-      filtered_loadings <- na.omit(loadings[, comp, drop = FALSE])
-      # Filter arrows by length (get rid of smaller arrows)
-      arrow_lengths <- apply(filtered_loadings, 1, function(x) sqrt(sum(x^2)))
-      filtered_loadings <- filtered_loadings[
-        arrow_lengths / max(arrow_lengths) > arrow_cutoff_load,
-        ,
-        drop = FALSE
-      ]
-
-      # If there are loadings left...
-      if (nrow(filtered_loadings) > 0) {
-        arrow_load <- data.frame(
-          Comp1 = filtered_loadings[, 1],
-          Comp2 = filtered_loadings[, 2],
-          type = "load"
-        )
-
-        rownames(arrow_load) <- row.names(filtered_loadings)
-
-        # Scale the secondary axes for loadings so that loadings and scores are on
-        # comparable scale
-        # NOTE: both components are scaled by the same factor, so arrows point
-        # in the same direction as before, only their size changes!
-        lim_load <- max(abs(arrow_load$Comp1), abs(arrow_load$Comp2))
-        scale_factor_load <- max(abs(coords)) / lim_load
-        arrow_load$Comp1 <- arrow_load$Comp1 * scale_factor_load
-        arrow_load$Comp2 <- arrow_load$Comp2 * scale_factor_load
-
-        # If phyloseq object provided, get hover info from it - taxonomy for each species (arrow)
-        if (!is.null(tax_table)) {
-          arrow_load$hover_text <- get_hover_text(
-            tax_table[rownames(arrow_load), , drop = FALSE],
-            colnames(tax_table)
-          )
-        } else {
-          arrow_load$hover_text <- rownames(arrow_load)
-        }
-
-        if (!is.null(arrow_taxonomy_labels)) {
-          # use taxonomy as label instead of taxa names
-          arrow_load$Names <- apply(
-            tax_table[rownames(arrow_load), ],
-            1,
-            function(row) {
-              gsub("NA", " ", paste(row[arrow_taxonomy_labels], collapse = ":"))
-            }
-          )
-        } else {
-          arrow_load$Names <- rownames(arrow_load)
-        }
-        arrow_df <- rbind(arrow_df, arrow_load)
-      }
-    }
-    # Similar for covariates (predictors in case of constrained model)
-    if (!is.null(covariates) && biplot_covariates) {
-      # Filter out absent data or short arrows
-      filtered_covariates <- na.omit(covariates[, comp, drop = FALSE])
-      arrow_lengths <- apply(
-        filtered_covariates,
-        1,
-        function(x) sqrt(sum(x^2))
-      )
-      filtered_covariates <- filtered_covariates[
-        arrow_lengths / max(arrow_lengths) > arrow_cutoff_covar,
-        ,
-        drop = FALSE
-      ]
-      # If some are left...
-      if (nrow(filtered_covariates) > 0) {
-        arrow_covar <- data.frame(
-          Comp1 = filtered_covariates[, 1],
-          Comp2 = filtered_covariates[, 2],
-          type = "covar"
-        )
-        rownames(arrow_covar) <- row.names(filtered_covariates)
-
-        # Scale in the same manner as for loading but notice that they are scaled
-        # by a different factor, so that all are of comparable size on plot
-        lim_covar <- max(abs(arrow_covar$Comp1), abs(arrow_covar$Comp2))
-        scale_factor_covar <- max(abs(coords)) / lim_covar
-        arrow_covar$Comp1 <- arrow_covar$Comp1 * scale_factor_covar
-        arrow_covar$Comp2 <- arrow_covar$Comp2 * scale_factor_covar
-        # Hover text is just the name of covariate
-        arrow_covar$hover_text <- rownames(arrow_covar)
-        arrow_covar$Names <- gsub("`", "", rownames(arrow_covar))
-        arrow_df <- rbind(arrow_df, arrow_covar)
-      }
-    }
+    arrow_data <- .plot_beta_diversity_arrow_data(
+      loadings,
+      covariates,
+      comp,
+      coords,
+      biplot_loadings,
+      biplot_covariates,
+      arrow_cutoff_load,
+      arrow_cutoff_covar,
+      tax_table,
+      arrow_taxonomy_labels
+    )
 
     # If there are loadings and/or covariates, plot arrows
-    if (nrow(arrow_df) > 0) {
-      arrow_params <- arrow(
-        type = "closed",
-        angle = 20,
-        length = unit(0.1, "inches")
+    if (nrow(arrow_data$arrow_df) > 0) {
+      plt <- .plot_beta_diversity_arrow_plot(
+        plt,
+        arrow_data$arrow_df,
+        arrow_data$scale_factor_load,
+        arrow_data$scale_factor_covar,
+        color_arrows_by_taxa,
+        arrow_labels,
+        repel,
+        max_overlaps,
+        marginal_plot,
+        dim_names,
+        comp
       )
-
-      if ("load" %in% arrow_df$type) {
-        if (color_arrows_by_taxa) {
-          plt <- plt +
-            geom_segment(
-              data = arrow_df[arrow_df$type == "load", ],
-              aes(
-                x = 0,
-                y = 0,
-                xend = Comp1,
-                yend = Comp2,
-                text = hover_text,
-                color = Names
-              ), # Arrow from (0,0) to each point
-              arrow = arrow_params,
-              size = 0.7, # Size of the arrows
-              alpha = 0.7 # Transparency of the arrows
-            )
-        } else {
-          plt <- plt +
-            geom_segment(
-              data = arrow_df[arrow_df$type == "load", ],
-              aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
-              arrow = arrow_params,
-              color = "darkgrey",
-              size = 0.7, # Size of the arrows
-              alpha = 0.7 # Transparency of the arrows
-            )
-        }
-      }
-
-      if ("covar" %in% arrow_df$type) {
-        plt <- plt +
-          geom_segment(
-            data = arrow_df[arrow_df$type == "covar", ],
-            aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
-            arrow = arrow_params,
-            color = "darkred",
-            size = 0.7, # Size of the arrows
-            alpha = 0.7 # Transparency of the arrows
-          )
-      }
-      if (arrow_labels) {
-        if (repel) {
-          plt <- plt +
-            ggrepel::geom_text_repel(
-              data = arrow_df,
-              aes(x = Comp1, y = Comp2, label = Names),
-              max.overlaps = max_overlaps,
-              show.legend = FALSE
-            )
-        } else {
-          plt <- plt +
-            geom_text(
-              data = arrow_df,
-              aes(x = Comp1, y = Comp2, label = Names, text = hover_text)
-            )
-        }
-      }
-
-      # if there are marginal plots or covariates and loadings at the same time,
-      # don't show secondary axis names to avoid visual mess
-      if (
-        is.null(marginal_plot) &&
-          xor(is.null(scale_factor_load), is.null(scale_factor_covar)) # <=> only loadings or covariates, not both
-      ) {
-        scale_factor <- c(scale_factor_load, scale_factor_covar) # = the one which is not NULL
-        plt <- plt +
-          scale_x_continuous(
-            sec.axis = sec_axis(
-              trans = ~ . / scale_factor,
-              name = paste0("Loadings ", dim_names[comp[1]])
-            )
-          ) +
-          scale_y_continuous(
-            sec.axis = sec_axis(
-              trans = ~ . / scale_factor,
-              name = paste0("Loadings ", dim_names[comp[2]])
-            )
-          )
-      }
     }
   }
 

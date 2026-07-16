@@ -724,6 +724,68 @@ test_that("plot_beta_diversity has dropped the dead raw.loadings/raw_loadings ar
   expect_false("raw.loadings" %in% names(formals(plot_beta_diversity)))
 })
 
+test_that("plot_beta_diversity filters short covariate arrows by arrow_cutoff_covar", {
+  ps <- make_bd_ps(n_samples = 14)
+  fit <- get_beta_diversity(ps, method = "RDA", model = "group + batch", dist = "bray")
+  plt_all <- suppressWarnings(plot_beta_diversity(fit, biplot_covariates = TRUE))
+  segment_all <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt_all$layers)
+  expect_equal(nrow(segment_all[[1]]$data), 3L)
+
+  plt_cut <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_covariates = TRUE,
+    arrow_cutoff_covar = 0.5
+  ))
+  segment_cut <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt_cut$layers)
+  expect_lt(nrow(segment_cut[[1]]$data), nrow(segment_all[[1]]$data))
+})
+
+test_that("plot_beta_diversity maps loading arrows to individual colors when color_arrows_by_taxa = TRUE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    color_arrows_by_taxa = TRUE
+  ))
+  segment_layer <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt$layers)[[1]]
+  expect_true("colour" %in% names(segment_layer$mapping))
+  expect_null(segment_layer$aes_params$colour)
+})
+
+test_that("plot_beta_diversity fixes loading arrows to a single darkgrey color when color_arrows_by_taxa = FALSE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, biplot_loadings = TRUE))
+  segment_layer <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt$layers)[[1]]
+  expect_false("colour" %in% names(segment_layer$mapping))
+  expect_equal(segment_layer$aes_params$colour, "darkgrey")
+})
+
+test_that("plot_beta_diversity omits the secondary axis when both loadings and covariates arrows are drawn", {
+  fit <- make_bd_constrained_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    biplot_covariates = TRUE
+  ))
+  x_scale <- Find(function(s) "x" %in% s$aesthetics, plt$scales$scales)
+  expect_null(x_scale)
+})
+
+test_that("plot_beta_diversity omits the secondary axis when marginal_plot is set", {
+  fit <- make_bd_fit()
+  # No label_name: the marginal-plot condition (is.factor(label)) isn't met,
+  # so ggMarginal() never wraps plt -- lets us inspect $scales directly while
+  # still exercising the arrow-plot's own is.null(marginal_plot) check.
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    marginal_plot = "boxplot"
+  ))
+  expect_s3_class(plt, "ggplot")
+  x_scale <- Find(function(s) "x" %in% s$aesthetics, plt$scales$scales)
+  expect_null(x_scale)
+})
+
 test_that("plot_beta_diversity wraps the plot in ggMarginal when marginal_plot is set, no facet, no grid", {
   fit <- make_bd_fit()
   plt <- suppressWarnings(plot_beta_diversity(
