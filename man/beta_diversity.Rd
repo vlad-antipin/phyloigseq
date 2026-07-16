@@ -53,7 +53,7 @@ the plot with its result. Default \code{FALSE}.}
 \code{stat = TRUE}) to test. Default \code{c(1, 2)}.}
 
 \item{...}{Passed on to \code{\link[=plot_beta_diversity]{plot_beta_diversity()}} (e.g. \code{facet},
-\code{hover.variables}, \code{ellipses}; see its documentation once written).}
+\code{hover_variables}, \code{ellipses}; see its documentation for the full list).}
 }
 \value{
 A \code{\link[ggplot2]{ggplot}} object.

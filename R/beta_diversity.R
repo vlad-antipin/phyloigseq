@@ -1120,7 +1120,7 @@ stat_beta_diversity <- function(
 #' @param comp Length-2 integer vector of ordination axes to plot and (when
 #'   `stat = TRUE`) to test. Default `c(1, 2)`.
 #' @param ... Passed on to [plot_beta_diversity()] (e.g. `facet`,
-#'   `hover.variables`, `ellipses`; see its documentation once written).
+#'   `hover_variables`, `ellipses`; see its documentation for the full list).
 #'
 #' @return A \code{\link[ggplot2]{ggplot}} object.
 #'
@@ -1166,10 +1166,10 @@ beta_diversity <- function(
   }
 
   plot_beta_diversity(
-    beta.dispersion.fit = beta_dispersion_fit,
-    stat.beta.dispersion = stat_beta_dispersion,
+    beta_dispersion_fit = beta_dispersion_fit,
+    stat_beta_dispersion = stat_beta_dispersion,
     comp = comp,
-    label.name = group,
+    label_name = group,
     ...
   )
 }
@@ -1229,594 +1229,568 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
   return(plt)
 }
 
+#' Pick one scaling's element out of a `coords`/`loadings`/`covariates` list
+#'
+#' Shared tail of the "resolve a `get_beta_diversity()` scaling list to one
+#' matrix" pattern, used identically for `coords`, `loadings`, and
+#' `covariates` in [plot_beta_diversity()]. Falls back to the first scaling
+#' with a `warning()` if `scaling` is out of range; passes through unchanged
+#' (without validating `scaling`) when the list has 0 or 1 elements, since
+#' there's nothing to choose between.
+#'
+#' @param scaling_list A `coords`/`loadings`/`covariates`-style length-0/1/2
+#'   list from [get_beta_diversity()].
+#' @param scaling Requested scaling (`1` or `2`).
+#' @return `list(value =, scaling =)`: the resolved matrix (or `NULL` if
+#'   `scaling_list` was empty) and the (possibly corrected) `scaling`.
+#' @noRd
+.plot_beta_diversity_pick_scaling <- function(scaling_list, scaling) {
+  if (length(scaling_list) == 0) {
+    return(list(value = NULL, scaling = scaling))
+  }
+  if (length(scaling_list) == 1) {
+    return(list(value = scaling_list[[1]], scaling = scaling))
+  }
+  if (0 < scaling && scaling <= length(scaling_list)) {
+    return(list(value = scaling_list[[scaling]], scaling = scaling))
+  }
+  warning("Wrong scaling, scaling 1 is used")
+  list(value = scaling_list[[1]], scaling = 1)
+}
 
-#' Plot Beta-Diversity Ordination
-#' @export
-plot_beta_diversity <- function(
-  beta.dispersion.fit, # output of get_beta_diversity()
-  hover.variables = NULL, # all columns of sample data if NULL
-  scaling = 1, # see vegan's scalings 1 and 2
-  comp = c(1, 2), # components to plot (loadings might be lacking components beyond 2)
-  label.name = NULL,
-  label.levels = NULL,
-  facet.mode = "wrap", # "grid", "wrap"
-  facet = NULL, # wrap-mode facet variable name
-  facet.levels = NULL,
-  facet.row = NULL, # grid-mode row facet variable name
-  facet.row.levels = NULL,
-  facet.col = NULL, # grid-mode col facet variable name
-  facet.col.levels = NULL,
-  shape.name = NULL,
-  shape.levels = NULL,
-  size.name = NULL,
-  animation.variable.name = NULL,
-  animation.variable.levels = NULL,
-  remove.na.from.plot = FALSE,
-  ellipses = FALSE, # only for factor lable
-  fill.ellipses = FALSE, # fill ellipses with color (requires ellipses = TRUE)
-  stat.beta.dispersion = NULL, # in case of stats performed between groups
-  # can contain  label.name, overwriting the parameter `label.name`
-  biplot.loadings = FALSE, # aka species
-  biplot.covariates = FALSE, # aka environemental variables
-
-  arrow.labels = FALSE, # display species names near the arrows
-  arrow.taxonomy.labels = NULL, # taxranks to display as text label for
-  # each species arrow e.g. c("Genus", "Species") will give
-  # Escherichia : Coli
-  color.arrows.by.taxa = FALSE, # color arrows according to taxonomy labels
-  arrow.cutoff.load = 0, # [0,1] arrow length normalized to the longest arrow
-  arrow.cutoff.covar = 0, # to hide shorter arrows
-  repel = FALSE, # repel arrow text labels
-  # NOTE: repel is incompatible with plotly!
-  max.overlaps = 10, # in case of repel
-  marginal.plot = NULL, # only for factor label
-  # NOTE: marginal plot is incompatible with plotly!
-  raw.loadings = TRUE, # TODO: think if you should implement correlations here as an alternative
-  point.alpha = 1,
-  point.size = 3,
-  projected.alpha = 0.4, # alpha for samples not in the fit subset (when fit.filter is used)
-  reverse.dim1 = FALSE,
-  reverse.dim2 = FALSE
+#' Resolve `coords`/`loadings`/`covariates` and the plotted axes
+#'
+#' For [plot_beta_diversity()]: selects the requested `scaling` out of
+#' `beta_dispersion_fit`'s `coords`/`loadings`/`covariates` lists (falling
+#' back to scaling 1 with a `warning()` if invalid — the scaling correction
+#' from `coords` cascades into the `loadings`/`covariates` lookups, matching
+#' `get_beta_diversity()`'s own scaling-list ordering), validates `comp`
+#' against the resolved `coords` (falling back to `c(1, 2)` with a
+#' `warning()`), drops `loadings`/`covariates` that don't cover `comp` (with
+#' a `warning()`), and applies `reverse_dim1`/`reverse_dim2` axis negation.
+#' None of this depends on sample-level filtering (it only touches matrix
+#' columns/axes, never rows/samples), so it can run before or after
+#' .plot_beta_diversity_filter_levels() with an identical result.
+#'
+#' @param beta_dispersion_fit A list as returned by [get_beta_diversity()].
+#' @param scaling,comp,reverse_dim1,reverse_dim2 See [plot_beta_diversity()].
+#' @return `list(coords =, loadings =, covariates =, scaling =, comp =,
+#'   dim_names =)`.
+#' @noRd
+.plot_beta_diversity_select_scaling <- function(
+  beta_dispersion_fit,
+  scaling,
+  comp,
+  reverse_dim1,
+  reverse_dim2
 ) {
-  sample.data <- beta.dispersion.fit$sample_data
+  coords_sel <- .plot_beta_diversity_pick_scaling(
+    beta_dispersion_fit$coords,
+    scaling
+  )
+  coords <- coords_sel$value
+  scaling <- coords_sel$scaling
 
-  grid.mode <- facet.mode == "grid"
+  loadings <- .plot_beta_diversity_pick_scaling(
+    beta_dispersion_fit$loadings,
+    scaling
+  )$value
+  covariates <- .plot_beta_diversity_pick_scaling(
+    beta_dispersion_fit$covariates,
+    scaling
+  )$value
 
-  # for the hover info only:
-  tax.table <- beta.dispersion.fit$tax_table
-  taxrank <- beta.dispersion.fit$taxrank
-
-  if (is.null(ellipses)) {
-    ellipses <- FALSE
-  }
-
-  # NOTE: species scores indicated by `vegan` = loadings here
-  #       covariates (predictors) scores = covariates (constrained models only)
-  # -> coordinates of arrows for biplot
-
-  # NOTE: Comp (component) and Dim (dimension) are used interchangeably here
-  if (is.null(biplot.loadings)) {
-    biplot.loadings <- FALSE
-  }
-  if (is.null(biplot.covariates)) {
-    biplot.covariates <- FALSE
-  }
-  biplot <- biplot.loadings | biplot.covariates
-
-  # If no coordinates provided
-  if (length(beta.dispersion.fit$coords) == 0) {
-    coords <- NULL
-    # If only one scaling provided
-  } else if (length(beta.dispersion.fit$coords) == 1) {
-    coords <- beta.dispersion.fit$coords[[1]]
-    # Select the scaling
-  } else if (0 < scaling & scaling <= length(beta.dispersion.fit$coords)) {
-    coords <- beta.dispersion.fit$coords[[scaling]]
+  dim_names <- if (!is.null(colnames(coords))) {
+    colnames(coords)
   } else {
-    warning("Wrong scaling, scaling 1 is used")
-    coords <- beta.dispersion.fit$coords[[1]]
-    scaling <- 1
+    paste0("Dim ", seq_len(ncol(coords)))
   }
 
-  # Same as for coords
-  if (length(beta.dispersion.fit$loadings) == 0) {
+  if (
+    !is.numeric(comp) ||
+      length(comp) != 2 ||
+      !all(comp %in% seq_len(ncol(coords)))
+  ) {
+    warning("Wrong components, forced to first two components")
+    comp <- c(1, 2)
+  }
+
+  if (!is.null(loadings) && !all(comp %in% seq_len(ncol(loadings)))) {
+    warning("No species score provided for these components")
     loadings <- NULL
-  } else if (length(beta.dispersion.fit$loadings) == 1) {
-    loadings <- beta.dispersion.fit$loadings[[1]]
-  } else if (0 < scaling & scaling <= length(beta.dispersion.fit$loadings)) {
-    loadings <- beta.dispersion.fit$loadings[[scaling]]
-  } else {
-    warning("Wrong scaling, scaling 1 is used")
-    loadings <- beta.dispersion.fit$loadings[[1]]
-    scaling <- 1
   }
-
-  # Same as for coords
-  if (length(beta.dispersion.fit$covariates) == 0) {
+  if (!is.null(covariates) && !all(comp %in% seq_len(ncol(covariates)))) {
+    warning("No species score provided for these components")
     covariates <- NULL
-  } else if (length(beta.dispersion.fit$covariates) == 1) {
-    covariates <- beta.dispersion.fit$covariates[[1]]
-  } else if (0 < scaling & scaling <= length(beta.dispersion.fit$covariates)) {
-    covariates <- beta.dispersion.fit$covariates[[scaling]]
-  } else {
-    warning("Wrong scaling, scaling 1 is used")
-    covariates <- beta.dispersion.fit$covariates[[1]]
-    scaling <- 1
   }
 
-  if (!is.null(beta.dispersion.fit$eigen_values)) {
-    prop.var.explained <- beta.dispersion.fit$eigen_values /
-      sum(beta.dispersion.fit$eigen_values[
-        beta.dispersion.fit$eigen_values > 0
-      ]) *
-      100
-  } else {
-    prop.var.explained <- NULL
+  if (reverse_dim1) {
+    if (!is.null(coords)) {
+      coords[, comp[1]] <- -coords[, comp[1]]
+    }
+    if (!is.null(loadings)) {
+      loadings[, comp[1]] <- -loadings[, comp[1]]
+    }
+    if (!is.null(covariates)) {
+      covariates[, comp[1]] <- -covariates[, comp[1]]
+    }
+  }
+  if (reverse_dim2) {
+    if (!is.null(coords)) {
+      coords[, comp[2]] <- -coords[, comp[2]]
+    }
+    if (!is.null(loadings)) {
+      loadings[, comp[2]] <- -loadings[, comp[2]]
+    }
+    if (!is.null(covariates)) {
+      covariates[, comp[2]] <- -covariates[, comp[2]]
+    }
   }
 
-  dist <- beta.dispersion.fit$dist
-  method <- beta.dispersion.fit$method
-  model <- beta.dispersion.fit$model
+  list(
+    coords = coords,
+    loadings = loadings,
+    covariates = covariates,
+    scaling = scaling,
+    comp = comp,
+    dim_names = dim_names
+  )
+}
 
-  if (
-    !is.null(label.name) &&
-      !is.null(label.levels) &&
-      !is.numeric(sample.data[[label.name]])
-  ) {
-    keep <- keep_levels(sample.data[[label.name]], label.levels)
-    sample.data <- sample.data[keep, , drop = FALSE]
+#' Filter `sample_data`/`coords` to a variable's kept levels
+#'
+#' For [plot_beta_diversity()]: shared tail of the "optionally subset
+#' samples to `keep_levels()`, then `factorize_levels()`" pattern, applied
+#' identically to `label_name`, `shape_name`, `facet`, `facet_row`,
+#' `facet_col`, and `animation_variable_name`. A no-op when `var_name` is
+#' `NULL` or already numeric. When `var_levels` is `NULL`: a no-op for
+#' `label_name`/`shape_name`/`animation_variable_name` (`auto_factor =
+#' FALSE`), but still coerces to a plain (naturally-ordered) factor for
+#' `facet`/`facet_row`/`facet_col` (`auto_factor = TRUE`), matching each
+#' variable's pre-refactor behavior.
+#'
+#' @param sample_data,coords Current (possibly already filtered by an
+#'   earlier call) `sample_data`/`coords`.
+#' @param var_name `NULL` or a `sample_data` column name.
+#' @param var_levels `NULL` or the subset/order of levels to keep, per
+#'   `keep_levels()`/`factorize_levels()`.
+#' @param auto_factor Logical; coerce `sample_data[[var_name]]` to a factor
+#'   even when `var_levels` is `NULL`. Default `FALSE`.
+#' @return `list(sample_data =, coords =)`.
+#' @noRd
+.plot_beta_diversity_filter_levels <- function(
+  sample_data,
+  coords,
+  var_name,
+  var_levels,
+  auto_factor = FALSE
+) {
+  if (is.null(var_name) || is.numeric(sample_data[[var_name]])) {
+    return(list(sample_data = sample_data, coords = coords))
+  }
+
+  if (!is.null(var_levels)) {
+    keep <- keep_levels(sample_data[[var_name]], var_levels)
+    sample_data <- sample_data[keep, , drop = FALSE]
     if (!is.null(coords)) {
       coords <- coords[keep, , drop = FALSE]
     }
-    sample.data[[label.name]] <- factorize_levels(
-      sample.data[[label.name]],
-      label.levels
+    sample_data[[var_name]] <- factorize_levels(
+      sample_data[[var_name]],
+      var_levels
     )
+  } else if (auto_factor) {
+    sample_data[[var_name]] <- as.factor(sample_data[[var_name]])
   }
 
-  if (
-    !is.null(shape.name) &&
-      !is.null(shape.levels) &&
-      !is.numeric(sample.data[[shape.name]])
-  ) {
-    keep <- keep_levels(sample.data[[shape.name]], shape.levels)
-    sample.data <- sample.data[keep, , drop = FALSE]
-    if (!is.null(coords)) {
-      coords <- coords[keep, , drop = FALSE]
-    }
-    sample.data[[shape.name]] <- factorize_levels(
-      sample.data[[shape.name]],
-      shape.levels
-    )
-  }
+  list(sample_data = sample_data, coords = coords)
+}
 
-  if (!is.null(facet) && !is.numeric(sample.data[[facet]])) {
-    if (!is.null(facet.levels)) {
-      keep <- keep_levels(sample.data[[facet]], facet.levels)
-      sample.data <- sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) {
-        coords <- coords[keep, , drop = FALSE]
-      }
-      sample.data[[facet]] <- factorize_levels(
-        sample.data[[facet]],
-        facet.levels
-      )
-    } else {
-      sample.data[[facet]] <- as.factor(sample.data[[facet]])
-    }
-  }
+#' Extract p-value(s) for the subtitle/facet strips/facet annotations
+#'
+#' For [plot_beta_diversity()]: reads a [stat_beta_diversity()] result and
+#' picks the right shape of p-value to embed: a full grid's `p_value_df`
+#' (rendered later as `geom_text()` annotations by
+#' .plot_beta_diversity_facets()), a single subtitle-embedded p-value (no
+#' facet, or a facet whose levels don't need individual p-values), or a
+#' named-by-level vector (one p-value per facet-strip label).
+#'
+#' @param stat_beta_dispersion `NULL` or a [stat_beta_diversity()] result.
+#' @param sample_data Current (post-level-filtering) `sample_data`.
+#' @param grid_mode,facet,facet_row,facet_col See [plot_beta_diversity()].
+#' @return `list(p_value =, p_value_df =)`.
+#' @noRd
+.plot_beta_diversity_pvalues <- function(
+  stat_beta_dispersion,
+  sample_data,
+  grid_mode,
+  facet,
+  facet_row,
+  facet_col
+) {
+  p_value <- NULL
+  p_value_df <- NULL
 
-  if (
-    grid.mode && !is.null(facet.row) && !is.numeric(sample.data[[facet.row]])
-  ) {
-    if (!is.null(facet.row.levels)) {
-      keep <- keep_levels(sample.data[[facet.row]], facet.row.levels)
-      sample.data <- sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) {
-        coords <- coords[keep, , drop = FALSE]
-      }
-      sample.data[[facet.row]] <- factorize_levels(
-        sample.data[[facet.row]],
-        facet.row.levels
-      )
-    } else {
-      sample.data[[facet.row]] <- as.factor(sample.data[[facet.row]])
-    }
-  }
-
-  if (
-    grid.mode && !is.null(facet.col) && !is.numeric(sample.data[[facet.col]])
-  ) {
-    if (!is.null(facet.col.levels)) {
-      keep <- keep_levels(sample.data[[facet.col]], facet.col.levels)
-      sample.data <- sample.data[keep, , drop = FALSE]
-      if (!is.null(coords)) {
-        coords <- coords[keep, , drop = FALSE]
-      }
-      sample.data[[facet.col]] <- factorize_levels(
-        sample.data[[facet.col]],
-        facet.col.levels
-      )
-    } else {
-      sample.data[[facet.col]] <- as.factor(sample.data[[facet.col]])
-    }
-  }
-
-  if (
-    !is.null(animation.variable.name) &&
-      !is.null(animation.variable.levels) &&
-      !is.numeric(sample.data[[animation.variable.name]])
-  ) {
-    keep <- keep_levels(
-      sample.data[[animation.variable.name]],
-      animation.variable.levels
-    )
-    sample.data <- sample.data[keep, , drop = FALSE]
-    if (!is.null(coords)) {
-      coords <- coords[keep, , drop = FALSE]
-    }
-    sample.data[[animation.variable.name]] <- factorize_levels(
-      sample.data[[animation.variable.name]],
-      animation.variable.levels
-    )
-  }
-  # (split by newline character to get one line of text for the subtitle)
-  # if no label name is provided, stats are ignored
-  p.value <- NULL
-  p.value.df <- NULL
-
-  if (!is.null(stat.beta.dispersion$label_name)) {
+  if (!is.null(stat_beta_dispersion$label_name)) {
     if (
-      grid.mode &&
-        !is.null(facet.row) &&
-        !is.null(facet.col) &&
-        !is.null(stat.beta.dispersion$p_value_df)
+      grid_mode &&
+        !is.null(facet_row) &&
+        !is.null(facet_col) &&
+        !is.null(stat_beta_dispersion$p_value_df)
     ) {
       # Full grid mode: p-values as data frame, rendered as geom_text annotations
-      p.value.df <- stat.beta.dispersion$p_value_df
-    } else if (!is.null(stat.beta.dispersion$p_value)) {
-      active.facet <- if (grid.mode) facet.row %||% facet.col else facet
+      p_value_df <- stat_beta_dispersion$p_value_df
+    } else if (!is.null(stat_beta_dispersion$p_value)) {
+      active_facet <- if (grid_mode) facet_row %||% facet_col else facet
       if (
-        is.null(active.facet) && is.null(names(stat.beta.dispersion$p_value))
+        is.null(active_facet) && is.null(names(stat_beta_dispersion$p_value))
       ) {
         # No facets: embed single p-value in subtitle
-        p.value <- paste(
-          strsplit(stat.beta.dispersion$p_value[[1]], "\n")[[1]],
+        p_value <- paste(
+          strsplit(stat_beta_dispersion$p_value[[1]], "\n")[[1]],
           collapse = " "
         )
       } else if (
-        !is.null(active.facet) &&
-          !is.null(names(stat.beta.dispersion$p_value)) &&
+        !is.null(active_facet) &&
+          !is.null(names(stat_beta_dispersion$p_value)) &&
           all(
-            levels(sample.data[[active.facet]]) %in%
-              names(stat.beta.dispersion$p_value)
+            levels(sample_data[[active_facet]]) %in%
+              names(stat_beta_dispersion$p_value)
           )
       ) {
         # Single-facet: embed per-facet p-value into facet strip labels
-        p.value <- stat.beta.dispersion$p_value[levels(sample.data[[
-          active.facet
+        p_value <- stat_beta_dispersion$p_value[levels(sample_data[[
+          active_facet
         ]])]
       }
     }
   }
 
-  # Remove all NA's from plot data (labels, facets or shape) by removing samples
-  # having NA for at least one of graphical parameters (label, shape, facet, animation)
-  # remove these samples from sample data AND from corresponding coordinates!
-  if (remove.na.from.plot) {
-    samples.wo.na <- rep(TRUE, nrow(sample.data))
-    for (var.name in c(
-      label.name,
-      shape.name,
-      size.name,
-      facet,
-      facet.row,
-      facet.col,
-      animation.variable.name
-    )) {
-      if (!is.null(sample.data[[var.name]])) {
-        samples.wo.na <- samples.wo.na & !is.na(sample.data[[var.name]])
-      }
-    }
-    sample.data <- sample.data[samples.wo.na, ]
-    coords <- coords[samples.wo.na, ]
-  }
+  list(p_value = p_value, p_value_df = p_value_df)
+}
 
-  # If stats on group are provided, overwrite the label.name by the one of this group
-  if (!is.null(stat.beta.dispersion$label_name)) {
-    label.name <- stat.beta.dispersion$label_name
-  }
-
-  if (!is.null(label.name)) {
-    label <- sample.data[[label.name]]
-  } else {
-    label <- NULL
-  }
-
-  if (!is.null(animation.variable.name)) {
-    animation.variable <- sample.data[[animation.variable.name]]
-  } else {
-    animation.variable <- NULL
-  }
-
-  if (is.character(label)) {
-    label <- factor(label, levels = unique(label))
-  }
-
-  if (!is.null(colnames(coords))) {
-    dim.names <- colnames(coords)
-  } else {
-    dim.names <- paste0("Dim ", 1:ncol(coords))
-  }
-
-  # Check if components are valid
-  if (!is.numeric(comp) | length(comp) != 2 | !all(comp %in% 1:ncol(coords))) {
-    warning("Wrong components, forced to first two components")
-    comp <- c(1, 2)
-  }
-
-  # Check if there are loadings and covariates for given components
-  if (!is.null(loadings)) {
-    if (!all(comp %in% 1:ncol(loadings))) {
-      warning("No species score provided for these components")
-      loadings <- NULL
-    }
-  }
-
-  if (!is.null(covariates)) {
-    if (!all(comp %in% 1:ncol(covariates))) {
-      warning("No species score provided for these components")
-      covariates <- NULL
-    }
-  }
-
-  if (reverse.dim1 && !is.null(coords)) {
-    coords[, comp[1]] <- -coords[, comp[1]]
-  }
-  if (reverse.dim2 && !is.null(coords)) {
-    coords[, comp[2]] <- -coords[, comp[2]]
-  }
-  if (reverse.dim1 && !is.null(loadings)) {
-    loadings[, comp[1]] <- -loadings[, comp[1]]
-  }
-  if (reverse.dim2 && !is.null(loadings)) {
-    loadings[, comp[2]] <- -loadings[, comp[2]]
-  }
-  if (reverse.dim1 && !is.null(covariates)) {
-    covariates[, comp[1]] <- -covariates[, comp[1]]
-  }
-  if (reverse.dim2 && !is.null(covariates)) {
-    covariates[, comp[2]] <- -covariates[, comp[2]]
-  }
-
-  plot.df <- data.frame(Comp1 = coords[, comp[1]], Comp2 = coords[, comp[2]])
+#' Assemble `plot_beta_diversity()`'s point-layer data frame
+#'
+#' Builds the `Comp1`/`Comp2` base data frame and adds every optional
+#' column: `label`, the animation variable (under its own dynamic column
+#' name), grid/wrap facet column(s) (with per-facet p-values embedded in
+#' strip labels when `p_value` is named), `shape` (only for a
+#' character/factor `shape_name`), and hover text (via `get_hover_text()`,
+#' `utils.R`). `size` is resolved but not added as a `plot_df` column, since
+#' it's mapped via the *local* `size` value directly in
+#' .plot_beta_diversity_base_plot()'s `aes()` — same treatment as `label`/
+#' `shape`.
+#'
+#' @param sample_data,coords,comp Post-filtering `sample_data`/`coords`, and
+#'   the resolved `comp` (from .plot_beta_diversity_select_scaling()).
+#' @param label `NULL` or the resolved (factorized, if character) label
+#'   vector.
+#' @param animation_variable_name,animation_variable `NULL`/`NULL`, or the
+#'   animation column name and its resolved value vector.
+#' @param grid_mode,facet,facet_row,facet_col See [plot_beta_diversity()].
+#' @param p_value From .plot_beta_diversity_pvalues(); embedded into facet
+#'   strip labels when it's named by facet level.
+#' @param shape_name,size_name,hover_variables See [plot_beta_diversity()].
+#' @return `list(plot_df =, shape =, size =)`.
+#' @noRd
+.plot_beta_diversity_build_df <- function(
+  sample_data,
+  coords,
+  comp,
+  label,
+  animation_variable_name,
+  animation_variable,
+  grid_mode,
+  facet,
+  facet_row,
+  facet_col,
+  p_value,
+  shape_name,
+  size_name,
+  hover_variables
+) {
+  plot_df <- data.frame(Comp1 = coords[, comp[1]], Comp2 = coords[, comp[2]])
 
   if (!is.null(label)) {
-    plot.df$label <- label
+    plot_df$label <- label
   }
 
-  if (!is.null(animation.variable)) {
-    plot.df[[animation.variable.name]] <- animation.variable
+  if (!is.null(animation_variable)) {
+    plot_df[[animation_variable_name]] <- animation_variable
   }
 
-  if (grid.mode) {
-    if (!is.null(facet.row)) {
-      facet.row.data <- sample.data[[facet.row]]
-      if (!is.factor(facet.row.data)) {
-        facet.row.data <- factor(facet.row.data)
+  if (grid_mode) {
+    if (!is.null(facet_row)) {
+      facet_row_data <- sample_data[[facet_row]]
+      if (!is.factor(facet_row_data)) {
+        facet_row_data <- factor(facet_row_data)
       }
-      if (is.null(facet.col) && length(p.value) > 1) {
-        plot.df$facet.row <- factor(
+      if (is.null(facet_col) && length(p_value) > 1) {
+        plot_df$facet_row <- factor(
           paste0(
-            facet.row,
+            facet_row,
             " = ",
-            as.character(facet.row.data),
+            as.character(facet_row_data),
             "\n",
-            p.value[as.character(facet.row.data)]
+            p_value[as.character(facet_row_data)]
           ),
           levels = paste0(
-            facet.row,
+            facet_row,
             " = ",
-            as.character(levels(facet.row.data)),
+            as.character(levels(facet_row_data)),
             "\n",
-            p.value[as.character(levels(facet.row.data))]
+            p_value[as.character(levels(facet_row_data))]
           )
         )
       } else {
-        plot.df$facet.row <- factor(
-          paste0(facet.row, " = ", as.character(facet.row.data)),
+        plot_df$facet_row <- factor(
+          paste0(facet_row, " = ", as.character(facet_row_data)),
           levels = paste0(
-            facet.row,
+            facet_row,
             " = ",
-            as.character(levels(facet.row.data))
+            as.character(levels(facet_row_data))
           )
         )
       }
     }
-    if (!is.null(facet.col)) {
-      facet.col.data <- sample.data[[facet.col]]
-      if (!is.factor(facet.col.data)) {
-        facet.col.data <- factor(facet.col.data)
+    if (!is.null(facet_col)) {
+      facet_col_data <- sample_data[[facet_col]]
+      if (!is.factor(facet_col_data)) {
+        facet_col_data <- factor(facet_col_data)
       }
-      if (is.null(facet.row) && length(p.value) > 1) {
-        plot.df$facet.col <- factor(
+      if (is.null(facet_row) && length(p_value) > 1) {
+        plot_df$facet_col <- factor(
           paste0(
-            facet.col,
+            facet_col,
             " = ",
-            as.character(facet.col.data),
+            as.character(facet_col_data),
             "\n",
-            p.value[as.character(facet.col.data)]
+            p_value[as.character(facet_col_data)]
           ),
           levels = paste0(
-            facet.col,
+            facet_col,
             " = ",
-            as.character(levels(facet.col.data)),
+            as.character(levels(facet_col_data)),
             "\n",
-            p.value[as.character(levels(facet.col.data))]
+            p_value[as.character(levels(facet_col_data))]
           )
         )
       } else {
-        plot.df$facet.col <- factor(
-          paste0(facet.col, " = ", as.character(facet.col.data)),
+        plot_df$facet_col <- factor(
+          paste0(facet_col, " = ", as.character(facet_col_data)),
           levels = paste0(
-            facet.col,
+            facet_col,
             " = ",
-            as.character(levels(facet.col.data))
+            as.character(levels(facet_col_data))
           )
         )
       }
     }
   } else if (!is.null(facet)) {
-    facet.data <- sample.data[[facet]]
-    if (is.character(facet.data) | is.factor(facet.data)) {
-      if (!is.factor(facet.data)) {
-        facet.data <- as.factor(facet.data)
+    facet_data <- sample_data[[facet]]
+    if (is.character(facet_data) || is.factor(facet_data)) {
+      if (!is.factor(facet_data)) {
+        facet_data <- as.factor(facet_data)
       }
-      plot.df$facet <- factor(
+      plot_df$facet <- factor(
         paste0(
           facet,
           " = ",
-          as.character(facet.data),
-          if (length(p.value) > 1) {
-            paste0("\n", p.value[as.character(facet.data)])
+          as.character(facet_data),
+          if (length(p_value) > 1) {
+            paste0("\n", p_value[as.character(facet_data)])
           }
         ),
         levels = paste0(
           facet,
           " = ",
-          as.character(levels(facet.data)),
-          if (length(p.value) > 1) {
-            paste0("\n", p.value[as.character(levels(facet.data))])
+          as.character(levels(facet_data)),
+          if (length(p_value) > 1) {
+            paste0("\n", p_value[as.character(levels(facet_data))])
           }
         )
       )
     }
   }
 
-  if (!is.null(shape.name)) {
-    shape <- sample.data[[shape.name]]
-    if (is.character(shape) | is.factor(shape)) {
-      if (!is.factor(shape)) {
-        shape <- as.factor(shape)
-      }
-      plot.df$shape <- shape
-    } else {
-      shape <- NULL
+  shape <- NULL
+  if (!is.null(shape_name)) {
+    shape_vals <- sample_data[[shape_name]]
+    if (is.character(shape_vals) || is.factor(shape_vals)) {
+      shape <- if (is.factor(shape_vals)) shape_vals else as.factor(shape_vals)
+      plot_df$shape <- shape
     }
-  } else {
-    shape <- NULL
   }
 
-  if (!is.null(size.name)) {
-    size <- sample.data[[size.name]]
-  } else {
-    size <- NULL
+  size <- if (!is.null(size_name)) sample_data[[size_name]] else NULL
+
+  plot_df$hover_text <- get_hover_text(sample_data, hover_variables)
+
+  if (".is_fit_sample" %in% colnames(sample_data)) {
+    plot_df$.is_fit_sample <- sample_data$.is_fit_sample
   }
 
-  hover.variables <- colnames(sample.data)[
-    colnames(sample.data) %in% hover.variables
-  ]
+  list(plot_df = plot_df, shape = shape, size = size)
+}
 
-  hover.text.all <- rep(NA, nrow(sample.data))
-  for (i in seq_len(nrow(sample.data))) {
-    sample <- rownames(sample.data)[i]
-    hover.text <- ""
-    values <- sample.data[sample, , drop = FALSE] %>% as("data.frame")
-    for (variable in hover.variables) {
-      value <- values[[variable]]
-      hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
-    }
-    hover.text.all[i] <- hover.text
-  }
-
-  plot.df$hover.text <- hover.text.all
-
-  if (".is_fit_sample" %in% colnames(sample.data)) {
-    plot.df$.is_fit_sample <- sample.data$.is_fit_sample
-  }
-
+#' Build `plot_beta_diversity()`'s base point layer(s) and ellipses
+#'
+#' Draws sample points, split into two `geom_point()` layers (at
+#' `projected_alpha`/`point_alpha`) when `plot_df` has a `.is_fit_sample`
+#' column (i.e. `beta_dispersion_fit` used a `fit_filter`), otherwise one
+#' layer at `point_alpha`; `size_name` additionally picks a
+#' `ggplot2::scale_size()` range vs. a fixed `point_size`. Adds a
+#' [ggplot2::stat_ellipse()] per level of `label` when `ellipses = TRUE` and
+#' `label` is discrete.
+#'
+#' `label`/`shape`/`size` are mapped via `aes()`'s lazy (quosure) evaluation
+#' against these *local* values, not `plot_df` columns — required so the
+#' mapping still resolves correctly when a value is `NULL` (no `plot_df`
+#' column to fall back on).
+#'
+#' @param plot_df,shape,size From .plot_beta_diversity_build_df().
+#' @param label `NULL` or the resolved label vector (see
+#'   .plot_beta_diversity_build_df()'s `label` argument).
+#' @param label_name,shape_name,size_name,point_alpha,point_size,
+#'   projected_alpha,ellipses,fill_ellipses See [plot_beta_diversity()].
+#' @return A `ggplot` object.
+#' @noRd
+.plot_beta_diversity_base_plot <- function(
+  plot_df,
+  label,
+  shape,
+  size,
+  label_name,
+  shape_name,
+  size_name,
+  point_alpha,
+  point_size,
+  projected_alpha,
+  ellipses,
+  fill_ellipses
+) {
   point_aes <- aes(
     x = Comp1,
     y = Comp2,
     color = label, # OK if NULL
-    text = hover.text,
+    text = hover_text,
     shape = shape, # OK if NULL
     size = size # OK if NULL
   )
 
-  if (".is_fit_sample" %in% colnames(plot.df)) {
-    if (!is.null(size.name)) {
+  if (".is_fit_sample" %in% colnames(plot_df)) {
+    if (!is.null(size_name)) {
       plt <- ggplot() +
         geom_point(
           point_aes,
-          plot.df[!plot.df$.is_fit_sample, ],
-          alpha = projected.alpha
+          plot_df[!plot_df$.is_fit_sample, ],
+          alpha = projected_alpha
         ) +
         geom_point(
           point_aes,
-          plot.df[plot.df$.is_fit_sample, ],
-          alpha = point.alpha
+          plot_df[plot_df$.is_fit_sample, ],
+          alpha = point_alpha
         ) +
-        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
-        labs(color = label.name, shape = shape.name, size = size.name)
+        ggplot2::scale_size(range = c(point_size * 0.5, point_size * 3)) +
+        labs(color = label_name, shape = shape_name, size = size_name)
     } else {
       plt <- ggplot() +
         geom_point(
           point_aes,
-          plot.df[!plot.df$.is_fit_sample, ],
-          alpha = projected.alpha,
-          size = point.size
+          plot_df[!plot_df$.is_fit_sample, ],
+          alpha = projected_alpha,
+          size = point_size
         ) +
         geom_point(
           point_aes,
-          plot.df[plot.df$.is_fit_sample, ],
-          alpha = point.alpha,
-          size = point.size
+          plot_df[plot_df$.is_fit_sample, ],
+          alpha = point_alpha,
+          size = point_size
         ) +
-        labs(color = label.name, shape = shape.name, size = size.name)
+        labs(color = label_name, shape = shape_name, size = size_name)
     }
   } else {
-    if (!is.null(size.name)) {
+    if (!is.null(size_name)) {
       plt <- ggplot() +
-        geom_point(point_aes, plot.df, alpha = point.alpha) +
-        ggplot2::scale_size(range = c(point.size * 0.5, point.size * 3)) +
-        labs(color = label.name, shape = shape.name, size = size.name)
+        geom_point(point_aes, plot_df, alpha = point_alpha) +
+        ggplot2::scale_size(range = c(point_size * 0.5, point_size * 3)) +
+        labs(color = label_name, shape = shape_name, size = size_name)
     } else {
       plt <- ggplot() +
-        geom_point(point_aes, plot.df, alpha = point.alpha, size = point.size) +
-        labs(color = label.name, shape = shape.name, size = size.name)
+        geom_point(point_aes, plot_df, alpha = point_alpha, size = point_size) +
+        labs(color = label_name, shape = shape_name, size = size_name)
     }
   }
 
-  if (ellipses & is.factor(label)) {
-    if (fill.ellipses) {
+  if (ellipses && is.factor(label)) {
+    if (fill_ellipses) {
       plt <- plt +
         stat_ellipse(
           aes(x = Comp1, y = Comp2, color = label, fill = label),
-          plot.df,
+          plot_df,
           geom = "polygon",
           alpha = 0.2
         )
     } else {
       plt <- plt +
-        stat_ellipse(aes(x = Comp1, y = Comp2, color = label), plot.df)
+        stat_ellipse(aes(x = Comp1, y = Comp2, color = label), plot_df)
     }
   }
 
-  plt <- plt +
+  plt
+}
+
+#' Add axis labels, title, subtitle, and theme to a `plot_beta_diversity()` plot
+#'
+#' Builds the x/y axis labels (with percent-variance-explained, when
+#' available), the title (method, and model formula for constrained
+#' methods), and the subtitle (taxrank, fit-filter subset, NA-removal,
+#' distance, scaling, biplot arrow cutoffs, and a single embedded p-value
+#' when there's no facet or only one).
+#'
+#' @param plt A `ggplot` object (from .plot_beta_diversity_base_plot()).
+#' @param beta_dispersion_fit A list as returned by [get_beta_diversity()].
+#' @param dim_names,comp,scaling From .plot_beta_diversity_select_scaling().
+#' @param prop_var_explained `NULL` or a named numeric vector (percent of
+#'   variance explained per axis, from `beta_dispersion_fit$eigen_values`).
+#' @param remove_na_from_plot,biplot,biplot_loadings,biplot_covariates,
+#'   arrow_cutoff_load,arrow_cutoff_covar See [plot_beta_diversity()].
+#' @param loadings,covariates From .plot_beta_diversity_select_scaling();
+#'   only their presence/absence is used here (arrow cutoff subtitle text).
+#' @param p_value From .plot_beta_diversity_pvalues().
+#' @return `plt`, with labs/theme layers added.
+#' @noRd
+.plot_beta_diversity_labs <- function(
+  plt,
+  beta_dispersion_fit,
+  dim_names,
+  comp,
+  prop_var_explained,
+  remove_na_from_plot,
+  scaling,
+  biplot,
+  biplot_loadings,
+  loadings,
+  biplot_covariates,
+  covariates,
+  arrow_cutoff_load,
+  arrow_cutoff_covar,
+  p_value
+) {
+  plt +
     labs(
       x = paste0(
-        dim.names[comp[1]],
-        if (!is.null(prop.var.explained)) {
-          paste0(" (", round(prop.var.explained[comp[1]]), "%)")
+        dim_names[comp[1]],
+        if (!is.null(prop_var_explained)) {
+          paste0(" (", round(prop_var_explained[comp[1]]), "%)")
         } else {
           NULL
         }
       ),
       y = paste0(
-        dim.names[comp[2]],
-        if (!is.null(prop.var.explained)) {
-          paste0(" (", round(prop.var.explained[comp[2]]), "%)")
+        dim_names[comp[2]],
+        if (!is.null(prop_var_explained)) {
+          paste0(" (", round(prop_var_explained[comp[2]]), "%)")
         } else {
           NULL
         }
@@ -1824,41 +1798,41 @@ plot_beta_diversity <- function(
       # get rid of backticks in the model (formula) for the title
       title = paste0(
         "Beta-Diversity",
-        if (is.null(model)) {
+        if (is.null(beta_dispersion_fit$model)) {
           ""
         } else {
-          paste0(" ~ ", gsub("`", " ", model))
+          paste0(" ~ ", gsub("`", " ", beta_dispersion_fit$model))
         },
         " (",
-        beta.dispersion.fit$method,
+        beta_dispersion_fit$method,
         ")"
       ),
 
       subtitle = paste0(
         "taxa agglom: ",
-        if (!is.null(taxrank)) {
-          taxrank
+        if (!is.null(beta_dispersion_fit$taxrank)) {
+          beta_dispersion_fit$taxrank
         } else {
           "none"
         },
-        if (!is.null(beta.dispersion.fit$fit_filter)) {
+        if (!is.null(beta_dispersion_fit$fit_filter)) {
           paste0(
             "  fit subset: ",
-            beta.dispersion.fit$fit_filter$name,
+            beta_dispersion_fit$fit_filter$name,
             " in {",
-            paste(beta.dispersion.fit$fit_filter$values, collapse = ", "),
+            paste(beta_dispersion_fit$fit_filter$values, collapse = ", "),
             "}"
           )
         },
-        if (remove.na.from.plot) {
+        if (remove_na_from_plot) {
           "  NA's removed  "
         },
-        if (!is.null(beta.dispersion.fit$dist)) {
-          paste0(" dist=", beta.dispersion.fit$dist)
+        if (!is.null(beta_dispersion_fit$dist)) {
+          paste0(" dist=", beta_dispersion_fit$dist)
         },
         if (
-          is.null(beta.dispersion.fit$method) ||
-            !tolower(beta.dispersion.fit$method) %in% c("pcoa", "tsne", "umap")
+          is.null(beta_dispersion_fit$method) ||
+            !tolower(beta_dispersion_fit$method) %in% c("pcoa", "tsne", "umap")
         ) {
           paste0("  scaling: ", scaling)
         } else {
@@ -1869,19 +1843,19 @@ plot_beta_diversity <- function(
         } else {
           NULL
         },
-        if (biplot.loadings && !is.null(loadings)) {
-          paste0("  taxa=", arrow.cutoff.load)
+        if (biplot_loadings && !is.null(loadings)) {
+          paste0("  taxa=", arrow_cutoff_load)
         } else {
           NULL
         },
-        if (biplot.covariates && !is.null(covariates)) {
-          paste0("  predictors=", arrow.cutoff.covar)
+        if (biplot_covariates && !is.null(covariates)) {
+          paste0("  predictors=", arrow_cutoff_covar)
         } else {
           NULL
         },
-        # add stats to the title only if there no or only one facet
-        if (length(p.value) == 1) {
-          paste0("\n", p.value)
+        # add stats to the title only if there's no facet or only one facet
+        if (length(p_value) == 1) {
+          paste0("\n", p_value)
         } else {
           NULL
         }
@@ -1893,143 +1867,567 @@ plot_beta_diversity <- function(
       plot.subtitle = element_text(size = 10, hjust = 0.5)
     ) +
     ggsci::scale_fill_npg()
+}
 
-  if (biplot & (!is.null(loadings) | !is.null(covariates))) {
-    scale.factor.load <- NULL
-    scale.factor.covar <- NULL
+#' Apply grid/wrap faceting (and grid p-value annotations) to a
+#' `plot_beta_diversity()` plot
+#'
+#' Grid mode facets by `facet_row`/`facet_col` (whichever are non-`NULL`),
+#' additionally annotating each panel with `p_value_df`'s per-cell p-value
+#' text when a full grid was tested; wrap mode facets by `facet` (only if
+#' .plot_beta_diversity_build_df() actually added a `facet` column, i.e.
+#' the faceting variable was character/factor).
+#'
+#' @param plt A `ggplot` object.
+#' @param plot_df From .plot_beta_diversity_build_df(); supplies the
+#'   `facet`/`facet_row`/`facet_col` columns faceted on.
+#' @param grid_mode,facet,facet_row,facet_col See [plot_beta_diversity()].
+#' @param p_value_df From .plot_beta_diversity_pvalues().
+#' @return `plt`, with a facet layer (and grid annotations) added.
+#' @noRd
+.plot_beta_diversity_facets <- function(
+  plt,
+  plot_df,
+  grid_mode,
+  facet,
+  facet_row,
+  facet_col,
+  p_value_df
+) {
+  if (grid_mode) {
+    if (!is.null(facet_row) && !is.null(facet_col)) {
+      plt <- plt + facet_grid(facet_row ~ facet_col, scales = "fixed")
+      if (!is.null(p_value_df) && nrow(p_value_df) > 0) {
+        annot_df <- data.frame(
+          facet_row = factor(
+            paste0(facet_row, " = ", p_value_df$facet_row),
+            levels = levels(plot_df$facet_row)
+          ),
+          facet_col = factor(
+            paste0(facet_col, " = ", p_value_df$facet_col),
+            levels = levels(plot_df$facet_col)
+          ),
+          p_label = p_value_df$p_label,
+          x = Inf,
+          y = Inf
+        )
+        plt <- plt +
+          geom_text(
+            data = annot_df,
+            aes(x = x, y = y, label = p_label),
+            hjust = 1.05,
+            vjust = 1.5,
+            size = 3,
+            inherit.aes = FALSE
+          )
+      }
+    } else if (!is.null(facet_row)) {
+      plt <- plt + facet_grid(rows = vars(facet_row), scales = "fixed")
+    } else if (!is.null(facet_col)) {
+      plt <- plt + facet_grid(cols = vars(facet_col), scales = "fixed")
+    }
+  } else if (!is.null(facet) && "facet" %in% colnames(plot_df)) {
+    plt <- plt +
+      facet_wrap(
+        . ~ facet,
+        scales = "fixed",
+        ncol = smart_facet_ncol(nlevels(plot_df$facet))
+      )
+  }
+  plt
+}
 
-    arrow.df <- data.frame()
+#' Plot a Beta-Diversity Ordination
+#'
+#' Scatter plot of ordination sample scores (`beta_dispersion_fit$coords`,
+#' as returned by [get_beta_diversity()]), optionally colored/shaped/sized/
+#' faceted/animated by `sample_data` columns, annotated with a
+#' [stat_beta_diversity()] result, and/or overlaid with a biplot of taxon
+#' (`loadings`) and/or predictor (`covariates`) arrows.
+#'
+#' @param beta_dispersion_fit A list as returned by [get_beta_diversity()].
+#' @param hover_variables Character vector of `sample_data` column names to
+#'   include in each point's hover text (via the `text` aesthetic, consumed
+#'   by `plotly::ggplotly(tooltip = "text")`). Columns not present in
+#'   `sample_data` are silently skipped. Default `NULL` (no hover text).
+#' @param scaling Which of `beta_dispersion_fit`'s two `vegan` scalings to
+#'   plot (`1`: distances between samples are interpretable; `2`: angles
+#'   between taxa/predictor arrows are interpretable). Falls back to `1`
+#'   with a `warning()` if out of range. Default `1`.
+#' @param comp Length-2 integer vector of ordination axes to plot. Falls
+#'   back to `c(1, 2)` with a `warning()` if invalid (e.g. an axis beyond
+#'   what `beta_dispersion_fit` retained). Default `c(1, 2)`.
+#' @param label_name,label_levels `sample_data` column used to color points
+#'   (only if non-numeric), and optionally the subset/order of its levels
+#'   to keep (samples outside `label_levels` are dropped from the plot; see
+#'   `keep_levels()`/`factorize_levels()`, `utils.R`). Overridden by
+#'   `stat_beta_dispersion$label_name` when `stat_beta_dispersion` is
+#'   supplied. Default `NULL` (no coloring).
+#' @param facet_mode `"wrap"` (facet by `facet`, via
+#'   [ggplot2::facet_wrap()]) or `"grid"` (facet by `facet_row`/`facet_col`,
+#'   via [ggplot2::facet_grid()]). Default `"wrap"`.
+#' @param facet,facet_levels Wrap-mode faceting variable (only used if
+#'   character/factor) and, optionally, the subset/order of its levels to
+#'   keep. Ignored when `facet_mode = "grid"`. Default `NULL` (no facet).
+#' @param facet_row,facet_row_levels,facet_col,facet_col_levels Grid-mode
+#'   row/column faceting variables and their optional level subset/order.
+#'   Ignored when `facet_mode = "wrap"`. Default `NULL` (no facet).
+#' @param shape_name,shape_levels `sample_data` column mapped to point shape
+#'   (only if character/factor), and its optional level subset/order.
+#'   Default `NULL` (no shape mapping).
+#' @param size_name `sample_data` column mapped to point size (rescaled to
+#'   `[point_size * 0.5, point_size * 3]`). Default `NULL` (fixed size,
+#'   `point_size`).
+#' @param animation_variable_name,animation_variable_levels `sample_data`
+#'   column to embed in the returned plot's data (for a later
+#'   [animate_by_variable()] call), and its optional level subset/order.
+#'   Default `NULL` (no animation variable embedded).
+#' @param remove_na_from_plot Logical; drop samples with `NA` in any of
+#'   `label_name`/`shape_name`/`size_name`/`facet`/`facet_row`/`facet_col`/
+#'   `animation_variable_name` before plotting. Default `FALSE`.
+#' @param ellipses Logical; draw a [ggplot2::stat_ellipse()] per level of
+#'   `label_name`, only when `label_name` is discrete. Default `FALSE`.
+#' @param fill_ellipses Logical; fill the ellipses with color instead of
+#'   just outlining them. Only used when `ellipses = TRUE`. Default
+#'   `FALSE`.
+#' @param stat_beta_dispersion `NULL` (default) or the result of
+#'   [stat_beta_diversity()]: its p-value(s) are embedded in the plot's
+#'   subtitle, facet strip labels, or (full-grid mode) per-panel
+#'   annotations, and its `label_name` overrides this call's own
+#'   `label_name`.
+#' @param biplot_loadings,biplot_covariates Logical; draw taxon
+#'   (`biplot_loadings`, from `beta_dispersion_fit$loadings`) and/or
+#'   predictor (`biplot_covariates`, from `beta_dispersion_fit$covariates`)
+#'   arrows. Default `FALSE` (no biplot).
+#' @param arrow_labels Logical; label each drawn arrow with its taxon/
+#'   predictor name (taxa use `arrow_taxonomy_labels` instead, when given).
+#'   Default `FALSE`.
+#' @param arrow_taxonomy_labels `NULL` (default; label taxa by their taxon
+#'   name) or a character vector of `tax_table` ranks (e.g.
+#'   `c("Genus", "Species")`) to build taxon arrow labels from instead
+#'   (e.g. `"Escherichia:Coli"`).
+#' @param color_arrows_by_taxa Logical; color taxon arrows individually by
+#'   `arrow_taxonomy_labels`/taxon name, instead of a single fixed color.
+#'   Default `FALSE`.
+#' @param arrow_cutoff_load,arrow_cutoff_covar Minimum taxon/predictor arrow
+#'   length, normalized to the longest arrow of that type (range `[0, 1]`),
+#'   below which the arrow is hidden. Default `0` (show every arrow).
+#' @param repel Logical; label arrows with [ggrepel::geom_text_repel()]
+#'   instead of [ggplot2::geom_text()]. Incompatible with `plotly`. Default
+#'   `FALSE`.
+#' @param max_overlaps Passed to [ggrepel::geom_text_repel()]'s
+#'   `max.overlaps`, when `repel = TRUE`. Default `10`.
+#' @param marginal_plot `NULL` (default; no marginal plot) or a
+#'   [ggExtra::ggMarginal()] `type` (e.g. `"boxplot"`, `"density"`),
+#'   rendered along both axes. Only applied when `label_name` is discrete,
+#'   there's no facet, and `facet_mode = "wrap"`. Incompatible with
+#'   `plotly`.
+#' @param point_alpha,point_size Alpha/size of sample points. When
+#'   `beta_dispersion_fit` used a `fit_filter`, only fit-subset points use
+#'   `point_alpha` (the rest use `projected_alpha`); `size_name` overrides
+#'   `point_size` with a rescaled range instead of a fixed value. Default
+#'   `1`/`3`.
+#' @param projected_alpha Alpha of samples that were projected onto (but not
+#'   used to fit) the ordination, when `beta_dispersion_fit` used a
+#'   `fit_filter`. Unused otherwise. Default `0.4`.
+#' @param reverse_dim1,reverse_dim2 Logical; negate the first/second plotted
+#'   component (`comp[1]`/`comp[2]`, respectively) of `coords`, `loadings`,
+#'   and `covariates` alike — e.g. to match another ordination's arbitrary
+#'   axis sign/orientation. Default `FALSE`.
+#'
+#' @return A \code{\link[ggplot2]{ggplot}} object, or — when `marginal_plot`
+#'   is used — the `ggExtraPlot`/`gtable` object returned by
+#'   [ggExtra::ggMarginal()] instead.
+#'
+#' @seealso [get_beta_diversity()], [stat_beta_diversity()],
+#'   [beta_diversity()] (a thin wrapper chaining all three),
+#'   [animate_by_variable()]
+#'
+#' @examples
+#' data(ps_16s_refinement)
+#' bd <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
+#' plot_beta_diversity(bd, label_name = "Protocol", ellipses = TRUE)
+#'
+#' @export
+plot_beta_diversity <- function(
+  beta_dispersion_fit,
+  hover_variables = NULL,
+  scaling = 1,
+  comp = c(1, 2),
+  label_name = NULL,
+  label_levels = NULL,
+  facet_mode = "wrap",
+  facet = NULL,
+  facet_levels = NULL,
+  facet_row = NULL,
+  facet_row_levels = NULL,
+  facet_col = NULL,
+  facet_col_levels = NULL,
+  shape_name = NULL,
+  shape_levels = NULL,
+  size_name = NULL,
+  animation_variable_name = NULL,
+  animation_variable_levels = NULL,
+  remove_na_from_plot = FALSE,
+  ellipses = FALSE,
+  fill_ellipses = FALSE,
+  stat_beta_dispersion = NULL,
+  biplot_loadings = FALSE,
+  biplot_covariates = FALSE,
+  arrow_labels = FALSE,
+  arrow_taxonomy_labels = NULL,
+  color_arrows_by_taxa = FALSE,
+  arrow_cutoff_load = 0,
+  arrow_cutoff_covar = 0,
+  repel = FALSE,
+  max_overlaps = 10,
+  marginal_plot = NULL,
+  point_alpha = 1,
+  point_size = 3,
+  projected_alpha = 0.4,
+  reverse_dim1 = FALSE,
+  reverse_dim2 = FALSE
+) {
+  sample_data <- beta_dispersion_fit$sample_data
+  grid_mode <- facet_mode == "grid"
+
+  # for arrow hover info/taxonomy labels only:
+  tax_table <- beta_dispersion_fit$tax_table
+
+  if (is.null(ellipses)) {
+    ellipses <- FALSE
+  }
+
+  # NOTE: species scores indicated by `vegan` = loadings here
+  #       covariates (predictors) scores = covariates (constrained models only)
+  # -> coordinates of arrows for biplot
+
+  # NOTE: Comp (component) and Dim (dimension) are used interchangeably here
+  if (is.null(biplot_loadings)) {
+    biplot_loadings <- FALSE
+  }
+  if (is.null(biplot_covariates)) {
+    biplot_covariates <- FALSE
+  }
+  biplot <- biplot_loadings || biplot_covariates
+
+  axes <- .plot_beta_diversity_select_scaling(
+    beta_dispersion_fit,
+    scaling,
+    comp,
+    reverse_dim1,
+    reverse_dim2
+  )
+  coords <- axes$coords
+  loadings <- axes$loadings
+  covariates <- axes$covariates
+  scaling <- axes$scaling
+  comp <- axes$comp
+  dim_names <- axes$dim_names
+
+  if (!is.null(beta_dispersion_fit$eigen_values)) {
+    prop_var_explained <- beta_dispersion_fit$eigen_values /
+      sum(beta_dispersion_fit$eigen_values[
+        beta_dispersion_fit$eigen_values > 0
+      ]) *
+      100
+  } else {
+    prop_var_explained <- NULL
+  }
+
+  filtered <- .plot_beta_diversity_filter_levels(
+    sample_data,
+    coords,
+    label_name,
+    label_levels
+  )
+  sample_data <- filtered$sample_data
+  coords <- filtered$coords
+
+  filtered <- .plot_beta_diversity_filter_levels(
+    sample_data,
+    coords,
+    shape_name,
+    shape_levels
+  )
+  sample_data <- filtered$sample_data
+  coords <- filtered$coords
+
+  filtered <- .plot_beta_diversity_filter_levels(
+    sample_data,
+    coords,
+    facet,
+    facet_levels,
+    auto_factor = TRUE
+  )
+  sample_data <- filtered$sample_data
+  coords <- filtered$coords
+
+  if (grid_mode) {
+    filtered <- .plot_beta_diversity_filter_levels(
+      sample_data,
+      coords,
+      facet_row,
+      facet_row_levels,
+      auto_factor = TRUE
+    )
+    sample_data <- filtered$sample_data
+    coords <- filtered$coords
+
+    filtered <- .plot_beta_diversity_filter_levels(
+      sample_data,
+      coords,
+      facet_col,
+      facet_col_levels,
+      auto_factor = TRUE
+    )
+    sample_data <- filtered$sample_data
+    coords <- filtered$coords
+  }
+
+  filtered <- .plot_beta_diversity_filter_levels(
+    sample_data,
+    coords,
+    animation_variable_name,
+    animation_variable_levels
+  )
+  sample_data <- filtered$sample_data
+  coords <- filtered$coords
+
+  pvalues <- .plot_beta_diversity_pvalues(
+    stat_beta_dispersion,
+    sample_data,
+    grid_mode,
+    facet,
+    facet_row,
+    facet_col
+  )
+  p_value <- pvalues$p_value
+  p_value_df <- pvalues$p_value_df
+
+  # Remove all NA's from plot data (labels, facets or shape) by removing samples
+  # having NA for at least one of graphical parameters (label, shape, facet, animation)
+  # remove these samples from sample data AND from corresponding coordinates!
+  if (remove_na_from_plot) {
+    samples_wo_na <- rep(TRUE, nrow(sample_data))
+    for (var_name in c(
+      label_name,
+      shape_name,
+      size_name,
+      facet,
+      facet_row,
+      facet_col,
+      animation_variable_name
+    )) {
+      if (!is.null(sample_data[[var_name]])) {
+        samples_wo_na <- samples_wo_na & !is.na(sample_data[[var_name]])
+      }
+    }
+    sample_data <- sample_data[samples_wo_na, ]
+    coords <- coords[samples_wo_na, ]
+  }
+
+  # If stats on group are provided, overwrite the label_name by the one of this group
+  if (!is.null(stat_beta_dispersion$label_name)) {
+    label_name <- stat_beta_dispersion$label_name
+  }
+
+  label <- if (!is.null(label_name)) sample_data[[label_name]] else NULL
+  animation_variable <- if (!is.null(animation_variable_name)) {
+    sample_data[[animation_variable_name]]
+  } else {
+    NULL
+  }
+
+  if (is.character(label)) {
+    label <- factor(label, levels = unique(label))
+  }
+
+  built <- .plot_beta_diversity_build_df(
+    sample_data,
+    coords,
+    comp,
+    label,
+    animation_variable_name,
+    animation_variable,
+    grid_mode,
+    facet,
+    facet_row,
+    facet_col,
+    p_value,
+    shape_name,
+    size_name,
+    hover_variables
+  )
+  plot_df <- built$plot_df
+  shape <- built$shape
+  size <- built$size
+
+  plt <- .plot_beta_diversity_base_plot(
+    plot_df,
+    label,
+    shape,
+    size,
+    label_name,
+    shape_name,
+    size_name,
+    point_alpha,
+    point_size,
+    projected_alpha,
+    ellipses,
+    fill_ellipses
+  )
+
+  plt <- .plot_beta_diversity_labs(
+    plt,
+    beta_dispersion_fit,
+    dim_names,
+    comp,
+    prop_var_explained,
+    remove_na_from_plot,
+    scaling,
+    biplot,
+    biplot_loadings,
+    loadings,
+    biplot_covariates,
+    covariates,
+    arrow_cutoff_load,
+    arrow_cutoff_covar,
+    p_value
+  )
+
+  if (biplot && (!is.null(loadings) || !is.null(covariates))) {
+    scale_factor_load <- NULL
+    scale_factor_covar <- NULL
+
+    arrow_df <- data.frame()
 
     # Plot species arrows = loadings here
-    if (!is.null(loadings) & biplot.loadings) {
-      # Account for absent loadings
-      filtered.loadings <- na.omit(loadings[, comp, drop = FALSE]) # TODO: how come that some loadings are NaN?
-      #       is it for all models?
+    if (!is.null(loadings) && biplot_loadings) {
+      # Account for absent loadings: taxa with zero abundance variance across
+      # the fitted samples have an undefined correlation (PCoA's loadings are
+      # cor(otu_matrix, coords), see .get_beta_diversity_from_distance()) and
+      # are dropped here rather than plotted as NA arrows.
+      filtered_loadings <- na.omit(loadings[, comp, drop = FALSE])
       # Filter arrows by length (get rid of smaller arrows)
-      arrow.lengths <- apply(filtered.loadings, 1, function(x) sqrt(sum(x^2)))
-      filtered.loadings <- filtered.loadings[
-        arrow.lengths / max(arrow.lengths) > arrow.cutoff.load,
+      arrow_lengths <- apply(filtered_loadings, 1, function(x) sqrt(sum(x^2)))
+      filtered_loadings <- filtered_loadings[
+        arrow_lengths / max(arrow_lengths) > arrow_cutoff_load,
         ,
         drop = FALSE
       ]
 
       # If there are loadings left...
-      if (nrow(filtered.loadings) > 0) {
-        arrow.load <- data.frame(
-          Comp1 = filtered.loadings[, 1],
-          Comp2 = filtered.loadings[, 2],
+      if (nrow(filtered_loadings) > 0) {
+        arrow_load <- data.frame(
+          Comp1 = filtered_loadings[, 1],
+          Comp2 = filtered_loadings[, 2],
           type = "load"
         )
 
-        rownames(arrow.load) <- row.names(filtered.loadings)
+        rownames(arrow_load) <- row.names(filtered_loadings)
 
         # Scale the secondary axes for loadings so that loadings and scores are on
         # comparable scale
         # NOTE: both components are scaled by the same factor, so arrows point
         # in the same direction as before, only their size changes!
-        lim.load <- max(abs(arrow.load$Comp1), abs(arrow.load$Comp2))
-        scale.factor.load <- max(abs(coords)) / lim.load
-        arrow.load$Comp1 <- arrow.load$Comp1 * scale.factor.load
-        arrow.load$Comp2 <- arrow.load$Comp2 * scale.factor.load
+        lim_load <- max(abs(arrow_load$Comp1), abs(arrow_load$Comp2))
+        scale_factor_load <- max(abs(coords)) / lim_load
+        arrow_load$Comp1 <- arrow_load$Comp1 * scale_factor_load
+        arrow_load$Comp2 <- arrow_load$Comp2 * scale_factor_load
 
         # If phyloseq object provided, get hover info from it - taxonomy for each species (arrow)
-        if (!is.null(tax.table)) {
-          hover.text.all <- rep(NA, nrow(arrow.load))
-          for (i in 1:nrow(arrow.load)) {
-            # it makes sure that taxa names match
-            taxon <- rownames(arrow.load)[i]
-            hover.text <- ""
-            values <- tax.table[taxon, , drop = FALSE]
-            for (variable in colnames(values)) {
-              value <- values[[variable]]
-              hover.text <- paste0(hover.text, variable, ": ", value, "<br>")
-            }
-            hover.text.all[i] <- hover.text
-          }
-
-          arrow.load$hover.text <- hover.text.all
+        if (!is.null(tax_table)) {
+          arrow_load$hover_text <- get_hover_text(
+            tax_table[rownames(arrow_load), , drop = FALSE],
+            colnames(tax_table)
+          )
         } else {
-          arrow.load$hover.text <- rownames(arrow.load)
+          arrow_load$hover_text <- rownames(arrow_load)
         }
 
-        if (!is.null(arrow.taxonomy.labels)) {
+        if (!is.null(arrow_taxonomy_labels)) {
           # use taxonomy as label instead of taxa names
-          arrow.load$Names <- apply(
-            tax.table[rownames(arrow.load), ],
+          arrow_load$Names <- apply(
+            tax_table[rownames(arrow_load), ],
             1,
             function(row) {
-              gsub("NA", " ", paste(row[arrow.taxonomy.labels], collapse = ":"))
+              gsub("NA", " ", paste(row[arrow_taxonomy_labels], collapse = ":"))
             }
           )
         } else {
-          arrow.load$Names <- rownames(arrow.load)
+          arrow_load$Names <- rownames(arrow_load)
         }
-        arrow.df <- rbind(arrow.df, arrow.load)
+        arrow_df <- rbind(arrow_df, arrow_load)
       }
     }
     # Similar for covariates (predictors in case of constrained model)
-    if (!is.null(covariates) & biplot.covariates) {
+    if (!is.null(covariates) && biplot_covariates) {
       # Filter out absent data or short arrows
-      filtered.covariates <- na.omit(covariates[, comp, drop = FALSE])
-      arrow.lengths <- apply(filtered.covariates, 1, function(x) sqrt(sum(x^2)))
-      filtered.covariates <- filtered.covariates[
-        arrow.lengths / max(arrow.lengths) > arrow.cutoff.covar,
+      filtered_covariates <- na.omit(covariates[, comp, drop = FALSE])
+      arrow_lengths <- apply(
+        filtered_covariates,
+        1,
+        function(x) sqrt(sum(x^2))
+      )
+      filtered_covariates <- filtered_covariates[
+        arrow_lengths / max(arrow_lengths) > arrow_cutoff_covar,
         ,
         drop = FALSE
       ]
       # If some are left...
-      if (nrow(filtered.covariates) > 0) {
-        arrow.covar <- data.frame(
-          Comp1 = filtered.covariates[, 1],
-          Comp2 = filtered.covariates[, 2],
+      if (nrow(filtered_covariates) > 0) {
+        arrow_covar <- data.frame(
+          Comp1 = filtered_covariates[, 1],
+          Comp2 = filtered_covariates[, 2],
           type = "covar"
         )
-        rownames(arrow.covar) <- row.names(filtered.covariates)
+        rownames(arrow_covar) <- row.names(filtered_covariates)
 
         # Scale in the same manner as for loading but notice that they are scaled
         # by a different factor, so that all are of comparable size on plot
-        lim.covar <- max(abs(arrow.covar$Comp1), abs(arrow.covar$Comp2))
-        scale.factor.covar <- max(abs(coords)) / lim.covar
-        arrow.covar$Comp1 <- arrow.covar$Comp1 * scale.factor.covar
-        arrow.covar$Comp2 <- arrow.covar$Comp2 * scale.factor.covar
+        lim_covar <- max(abs(arrow_covar$Comp1), abs(arrow_covar$Comp2))
+        scale_factor_covar <- max(abs(coords)) / lim_covar
+        arrow_covar$Comp1 <- arrow_covar$Comp1 * scale_factor_covar
+        arrow_covar$Comp2 <- arrow_covar$Comp2 * scale_factor_covar
         # Hover text is just the name of covariate
-        arrow.covar$hover.text <- rownames(arrow.covar)
-        arrow.covar$Names <- gsub("`", "", rownames(arrow.covar))
-        arrow.df <- rbind(arrow.df, arrow.covar)
+        arrow_covar$hover_text <- rownames(arrow_covar)
+        arrow_covar$Names <- gsub("`", "", rownames(arrow_covar))
+        arrow_df <- rbind(arrow_df, arrow_covar)
       }
     }
 
     # If there are loadings and/or covariates, plot arrows
-    if (nrow(arrow.df) > 0) {
-      arrow.params <- arrow(
+    if (nrow(arrow_df) > 0) {
+      arrow_params <- arrow(
         type = "closed",
         angle = 20,
         length = unit(0.1, "inches")
       )
 
-      if ("load" %in% arrow.df$type) {
-        if (color.arrows.by.taxa) {
+      if ("load" %in% arrow_df$type) {
+        if (color_arrows_by_taxa) {
           plt <- plt +
             geom_segment(
-              data = arrow.df[arrow.df$type == "load", ],
+              data = arrow_df[arrow_df$type == "load", ],
               aes(
                 x = 0,
                 y = 0,
                 xend = Comp1,
                 yend = Comp2,
-                text = hover.text,
+                text = hover_text,
                 color = Names
               ), # Arrow from (0,0) to each point
-              arrow = arrow.params,
+              arrow = arrow_params,
               size = 0.7, # Size of the arrows
               alpha = 0.7 # Transparency of the arrows
             )
         } else {
           plt <- plt +
             geom_segment(
-              data = arrow.df[arrow.df$type == "load", ],
-              aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover.text), # Arrow from (0,0) to each point
-              arrow = arrow.params,
+              data = arrow_df[arrow_df$type == "load", ],
+              aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
+              arrow = arrow_params,
               color = "darkgrey",
               size = 0.7, # Size of the arrows
               alpha = 0.7 # Transparency of the arrows
@@ -2037,109 +2435,72 @@ plot_beta_diversity <- function(
         }
       }
 
-      if ("covar" %in% arrow.df$type) {
+      if ("covar" %in% arrow_df$type) {
         plt <- plt +
           geom_segment(
-            data = arrow.df[arrow.df$type == "covar", ],
-            aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover.text), # Arrow from (0,0) to each point
-            arrow = arrow.params,
+            data = arrow_df[arrow_df$type == "covar", ],
+            aes(x = 0, y = 0, xend = Comp1, yend = Comp2, text = hover_text), # Arrow from (0,0) to each point
+            arrow = arrow_params,
             color = "darkred",
             size = 0.7, # Size of the arrows
             alpha = 0.7 # Transparency of the arrows
           )
       }
-      if (arrow.labels) {
+      if (arrow_labels) {
         if (repel) {
           plt <- plt +
             ggrepel::geom_text_repel(
-              data = arrow.df,
+              data = arrow_df,
               aes(x = Comp1, y = Comp2, label = Names),
-              max.overlaps = max.overlaps,
+              max.overlaps = max_overlaps,
               show.legend = FALSE
             )
         } else {
           plt <- plt +
             geom_text(
-              data = arrow.df,
-              aes(x = Comp1, y = Comp2, label = Names, text = hover.text)
+              data = arrow_df,
+              aes(x = Comp1, y = Comp2, label = Names, text = hover_text)
             )
         }
       }
 
       # if there are marginal plots or covariates and loadings at the same time,
       # don't show secondary axis names to avoid visual mess
-      # TODO: or show them finally?
       if (
-        is.null(marginal.plot) &
-          xor(is.null(scale.factor.load), is.null(scale.factor.covar)) # <=> only loadings or covariates, not both
+        is.null(marginal_plot) &&
+          xor(is.null(scale_factor_load), is.null(scale_factor_covar)) # <=> only loadings or covariates, not both
       ) {
-        scale.factor <- c(scale.factor.load, scale.factor.covar) # = the one which is not NULL
+        scale_factor <- c(scale_factor_load, scale_factor_covar) # = the one which is not NULL
         plt <- plt +
           scale_x_continuous(
             sec.axis = sec_axis(
-              trans = ~ . / scale.factor,
-              name = paste0(
-                ifelse(raw.loadings, 'Loadings ', 'Correlations '),
-                dim.names[comp[1]]
-              )
+              trans = ~ . / scale_factor,
+              name = paste0("Loadings ", dim_names[comp[1]])
             )
           ) +
           scale_y_continuous(
             sec.axis = sec_axis(
-              trans = ~ . / scale.factor,
-              name = paste0(
-                ifelse(raw.loadings, 'Loadings ', 'Correlations '),
-                dim.names[comp[2]]
-              )
+              trans = ~ . / scale_factor,
+              name = paste0("Loadings ", dim_names[comp[2]])
             )
           )
       }
     }
   }
-  if (grid.mode) {
-    if (!is.null(facet.row) && !is.null(facet.col)) {
-      plt <- plt + facet_grid(facet.row ~ facet.col, scales = "fixed")
-      if (!is.null(p.value.df) && nrow(p.value.df) > 0) {
-        annot.df <- data.frame(
-          facet.row = factor(
-            paste0(facet.row, " = ", p.value.df$facet_row),
-            levels = levels(plot.df$facet.row)
-          ),
-          facet.col = factor(
-            paste0(facet.col, " = ", p.value.df$facet_col),
-            levels = levels(plot.df$facet.col)
-          ),
-          p.label = p.value.df$p_label,
-          x = Inf,
-          y = Inf
-        )
-        plt <- plt +
-          geom_text(
-            data = annot.df,
-            aes(x = x, y = y, label = p.label),
-            hjust = 1.05,
-            vjust = 1.5,
-            size = 3,
-            inherit.aes = FALSE
-          )
-      }
-    } else if (!is.null(facet.row)) {
-      plt <- plt + facet_grid(rows = vars(facet.row), scales = "fixed")
-    } else if (!is.null(facet.col)) {
-      plt <- plt + facet_grid(cols = vars(facet.col), scales = "fixed")
-    }
-  } else if (!is.null(facet) && "facet" %in% colnames(plot.df)) {
-    plt <- plt +
-      facet_wrap(
-        . ~ facet,
-        scales = "fixed",
-        ncol = smart_facet_ncol(nlevels(plot.df$facet))
-      )
-  }
+
+  plt <- .plot_beta_diversity_facets(
+    plt,
+    plot_df,
+    grid_mode,
+    facet,
+    facet_row,
+    facet_col,
+    p_value_df
+  )
 
   # Marginal plot in case of factor variable - boxplot, density...
   if (
-    !is.null(marginal.plot) & is.factor(label) & is.null(facet) & !grid.mode
+    !is.null(marginal_plot) && is.factor(label) && is.null(facet) && !grid_mode
   ) {
     plt <- plt +
       theme(
@@ -2148,7 +2509,7 @@ plot_beta_diversity <- function(
       ) # place legend to the left so that it doesn't interfere with the marginal plot
     plt <- ggExtra::ggMarginal(
       plt,
-      type = marginal.plot,
+      type = marginal_plot,
       groupColour = TRUE,
       groupFill = TRUE
     )

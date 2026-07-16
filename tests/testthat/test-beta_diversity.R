@@ -397,6 +397,362 @@ test_that("beta_diversity forwards ... to plot_beta_diversity", {
   expect_true(any(vapply(plt$layers, function(l) inherits(l$stat, "StatEllipse"), logical(1))))
 })
 
+# ---- plot_beta_diversity() ----
+# Kept suppressWarnings() around the same pre-existing "unknown aesthetics"
+# geom_point() warning noted above.
+
+make_bd_constrained_fit <- function(n_samples = 14, seed = 42) {
+  ps <- make_bd_ps(n_samples = n_samples, seed = seed)
+  get_beta_diversity(ps, method = "RDA", model = "group", dist = "bray")
+}
+
+test_that("plot_beta_diversity plots Comp1/Comp2 from the first scaling by default", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit))
+  expect_s3_class(plt, "ggplot")
+  expect_equal(plt$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 1]))
+  expect_equal(plt$layers[[1]]$data$Comp2, unname(fit$coords[[1]][, 2]))
+})
+
+test_that("plot_beta_diversity selects the requested scaling", {
+  fit <- make_bd_constrained_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, scaling = 2))
+  expect_equal(plt$layers[[1]]$data$Comp1, unname(fit$coords[[2]][, 1]))
+})
+
+muffle_unknown_aes <- function(w) {
+  if (grepl("unknown aesthetics", conditionMessage(w))) {
+    invokeRestart("muffleWarning")
+  }
+}
+
+test_that("plot_beta_diversity warns and falls back to scaling 1 for an out-of-range scaling", {
+  fit <- make_bd_fit()
+  withCallingHandlers(
+    expect_warning(
+      plt <- plot_beta_diversity(fit, scaling = 99),
+      "Wrong scaling, scaling 1 is used"
+    ),
+    warning = muffle_unknown_aes
+  )
+  expect_equal(plt$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 1]))
+})
+
+test_that("plot_beta_diversity warns and resets to c(1, 2) for invalid comp", {
+  fit <- make_bd_fit()
+  withCallingHandlers(
+    expect_warning(
+      plt <- plot_beta_diversity(fit, comp = c(1, 2, 3)),
+      "Wrong components, forced to first two components"
+    ),
+    warning = muffle_unknown_aes
+  )
+  expect_equal(plt$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 1]))
+})
+
+test_that("plot_beta_diversity plots the requested comp axes", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, comp = c(2, 3)))
+  expect_equal(plt$layers[[1]]$data$Comp1, unname(fit$coords[[1]][, 2]))
+  expect_equal(plt$layers[[1]]$data$Comp2, unname(fit$coords[[1]][, 3]))
+})
+
+test_that("plot_beta_diversity filters samples by label_levels and reorders factor levels", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "facet1",
+    label_levels = c("F2", "F1")
+  ))
+  expect_equal(levels(plt$layers[[1]]$data$label), c("F2", "F1"))
+  expect_equal(nrow(plt$layers[[1]]$data), nrow(fit$sample_data))
+})
+
+test_that("plot_beta_diversity filters samples by shape_levels", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    shape_name = "facet1",
+    shape_levels = "F1"
+  ))
+  expect_equal(nrow(plt$layers[[1]]$data), sum(fit$sample_data$facet1 == "F1"))
+})
+
+test_that("plot_beta_diversity filters samples by facet_levels in wrap mode", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    facet = "facet2",
+    facet_levels = "G1"
+  ))
+  expect_equal(nrow(plt$layers[[1]]$data), sum(fit$sample_data$facet2 == "G1"))
+})
+
+test_that("plot_beta_diversity filters samples by facet_row_levels/facet_col_levels in grid mode", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    facet_mode = "grid",
+    facet_row = "facet1",
+    facet_row_levels = "F1",
+    facet_col = "facet2"
+  ))
+  expect_equal(nrow(plt$layers[[1]]$data), sum(fit$sample_data$facet1 == "F1"))
+})
+
+test_that("plot_beta_diversity removes samples with NA in a graphical variable when remove_na_from_plot = TRUE", {
+  fit <- make_bd_fit()
+  fit$sample_data$facet1[1] <- NA
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "facet1",
+    remove_na_from_plot = TRUE
+  ))
+  expect_equal(nrow(plt$layers[[1]]$data), nrow(fit$sample_data) - 1L)
+})
+
+test_that("plot_beta_diversity negates the first component's coordinates when reverse_dim1 = TRUE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, reverse_dim1 = TRUE))
+  expect_equal(plt$layers[[1]]$data$Comp1, -unname(fit$coords[[1]][, 1]))
+  expect_equal(plt$layers[[1]]$data$Comp2, unname(fit$coords[[1]][, 2]))
+})
+
+test_that("plot_beta_diversity negates the second component's coordinates when reverse_dim2 = TRUE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, reverse_dim2 = TRUE))
+  expect_equal(plt$layers[[1]]$data$Comp2, -unname(fit$coords[[1]][, 2]))
+})
+
+test_that("plot_beta_diversity adds a StatEllipse layer when ellipses = TRUE and label is a factor", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, label_name = "facet1", ellipses = TRUE))
+  expect_true(any(vapply(plt$layers, function(l) inherits(l$stat, "StatEllipse"), logical(1))))
+})
+
+test_that("plot_beta_diversity does not add ellipses when label is numeric", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, label_name = "cont_var", ellipses = TRUE))
+  expect_false(any(vapply(plt$layers, function(l) inherits(l$stat, "StatEllipse"), logical(1))))
+})
+
+test_that("plot_beta_diversity fills ellipses with color when fill_ellipses = TRUE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "facet1",
+    ellipses = TRUE,
+    fill_ellipses = TRUE
+  ))
+  ellipse_layer <- Filter(function(l) inherits(l$stat, "StatEllipse"), plt$layers)[[1]]
+  expect_equal(ellipse_layer$geom_params$outline.type %||% NULL, NULL)
+  expect_s3_class(ellipse_layer$geom, "GeomPolygon")
+})
+
+test_that("plot_beta_diversity facet_wraps by facet in wrap mode", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, facet = "facet2"))
+  expect_s3_class(plt$facet, "FacetWrap")
+})
+
+test_that("plot_beta_diversity facet_grids by facet_row x facet_col in grid mode", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    facet_mode = "grid",
+    facet_row = "facet1",
+    facet_col = "facet2"
+  ))
+  expect_s3_class(plt$facet, "FacetGrid")
+})
+
+test_that("plot_beta_diversity populates hover_text from hover_variables", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, hover_variables = "facet1"))
+  expect_true(all(grepl("^facet1: (F1|F2)<br>$", plt$layers[[1]]$data$hover_text)))
+})
+
+test_that("plot_beta_diversity maps size_name to the size aesthetic and rescales point size", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, size_name = "cont_var"))
+  # size aesthetic is rescaled to a point-size range by scale_size(), so check
+  # rank order is preserved against the raw variable rather than exact values.
+  expect_equal(rank(ggplot2::layer_data(plt)$size), rank(fit$sample_data$cont_var))
+  expect_true(any(vapply(plt$scales$scales, function(s) "size" %in% s$aesthetics, logical(1))))
+})
+
+test_that("plot_beta_diversity maps shape_name to the shape aesthetic for a factor column", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, shape_name = "facet1"))
+  expect_true("shape" %in% names(plt$layers[[1]]$data))
+  expect_setequal(as.character(plt$layers[[1]]$data$shape), c("F1", "F2"))
+})
+
+test_that("plot_beta_diversity embeds a single p-value in the subtitle when there's no facet", {
+  fit <- make_bd_fit()
+  stat <- stat_beta_diversity(fit, label_name = "facet1")
+  plt <- suppressWarnings(plot_beta_diversity(fit, stat_beta_dispersion = stat))
+  expect_true(grepl(strsplit(stat$p_value[[1]], "\n")[[1]][1], plt$labels$subtitle, fixed = TRUE))
+})
+
+test_that("plot_beta_diversity overrides label_name with stat_beta_dispersion$label_name", {
+  fit <- make_bd_fit()
+  stat <- stat_beta_diversity(fit, label_name = "facet1")
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "facet2",
+    stat_beta_dispersion = stat
+  ))
+  expect_setequal(as.character(unique(plt$layers[[1]]$data$label)), c("F1", "F2"))
+})
+
+test_that("plot_beta_diversity annotates grid-mode facets with p_value_df text", {
+  fit <- make_bd_fit()
+  stat <- suppressMessages(stat_beta_diversity(
+    fit,
+    label_name = "group",
+    facet_mode = "grid",
+    facet_row = "facet1",
+    facet_col = "facet2"
+  ))
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    facet_mode = "grid",
+    facet_row = "facet1",
+    facet_col = "facet2",
+    stat_beta_dispersion = stat
+  ))
+  text_layer <- Filter(
+    function(l) inherits(l$geom, "GeomText") && "p_label" %in% names(l$data),
+    plt$layers
+  )
+  expect_length(text_layer, 1L)
+  expect_equal(nrow(text_layer[[1]]$data), nrow(stat$p_value_df))
+})
+
+test_that("plot_beta_diversity draws two point layers with different alpha when a fit_filter is active", {
+  ps <- make_bd_ps(n_samples = 14)
+  fit <- get_beta_diversity(
+    ps,
+    method = "CCA",
+    model = "group",
+    fit_filter_name = "batch",
+    fit_filter_values = c("x", "y")
+  )
+  plt <- suppressWarnings(plot_beta_diversity(fit, projected_alpha = 0.1, point_alpha = 0.9))
+  point_layers <- Filter(function(l) inherits(l$geom, "GeomPoint"), plt$layers)
+  expect_length(point_layers, 2L)
+  expect_setequal(
+    vapply(point_layers, function(l) l$aes_params$alpha, numeric(1)),
+    c(0.1, 0.9)
+  )
+})
+
+test_that("plot_beta_diversity draws loading arrows and filters short ones by arrow_cutoff_load", {
+  fit <- make_bd_fit()
+  plt_all <- suppressWarnings(plot_beta_diversity(fit, biplot_loadings = TRUE))
+  segment_all <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt_all$layers)
+  expect_length(segment_all, 1L)
+  expect_equal(nrow(segment_all[[1]]$data), sum(!is.na(fit$loadings[[1]][, 1])))
+
+  plt_cut <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    arrow_cutoff_load = 0.99
+  ))
+  segment_cut <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt_cut$layers)
+  expect_lt(nrow(segment_cut[[1]]$data), nrow(segment_all[[1]]$data))
+})
+
+test_that("plot_beta_diversity draws covariate arrows for a constrained fit", {
+  fit <- make_bd_constrained_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, biplot_covariates = TRUE))
+  segment_layers <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt$layers)
+  expect_length(segment_layers, 1L)
+  expect_equal(nrow(segment_layers[[1]]$data), nrow(fit$covariates[[1]]))
+})
+
+test_that("plot_beta_diversity labels arrows with geom_text when arrow_labels = TRUE and repel = FALSE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    arrow_labels = TRUE,
+    repel = FALSE
+  ))
+  text_layers <- Filter(function(l) inherits(l$geom, "GeomText"), plt$layers)
+  expect_length(text_layers, 1L)
+  expect_setequal(text_layers[[1]]$data$Names, rownames(na.omit(fit$loadings[[1]])))
+})
+
+test_that("plot_beta_diversity labels arrows with ggrepel when repel = TRUE", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    arrow_labels = TRUE,
+    repel = TRUE
+  ))
+  expect_true(any(vapply(
+    plt$layers,
+    function(l) inherits(l$geom, "GeomTextRepel"),
+    logical(1)
+  )))
+})
+
+test_that("plot_beta_diversity labels arrows using taxonomy ranks when arrow_taxonomy_labels is given", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    biplot_loadings = TRUE,
+    arrow_labels = TRUE,
+    arrow_taxonomy_labels = "Phylum"
+  ))
+  text_layers <- Filter(function(l) inherits(l$geom, "GeomText"), plt$layers)
+  expect_true(all(text_layers[[1]]$data$Names %in% fit$tax_table$Phylum))
+})
+
+test_that("plot_beta_diversity labels the secondary axis 'Loadings' (raw.loadings distinction dropped)", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, biplot_loadings = TRUE))
+  x_scale <- Find(function(s) "x" %in% s$aesthetics, plt$scales$scales)
+  expect_match(x_scale$secondary.axis$name, "^Loadings ")
+})
+
+test_that("plot_beta_diversity has dropped the dead raw.loadings/raw_loadings argument", {
+  expect_false("raw_loadings" %in% names(formals(plot_beta_diversity)))
+  expect_false("raw.loadings" %in% names(formals(plot_beta_diversity)))
+})
+
+test_that("plot_beta_diversity wraps the plot in ggMarginal when marginal_plot is set, no facet, no grid", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "facet1",
+    marginal_plot = "boxplot"
+  ))
+  expect_s3_class(plt, "ggExtraPlot")
+})
+
+test_that("plot_beta_diversity adds the animation variable as a plot_df column", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit, animation_variable_name = "facet1"))
+  expect_true("facet1" %in% names(plt$layers[[1]]$data))
+})
+
+test_that("plot_beta_diversity's title includes the method and, for constrained fits, the model formula", {
+  fit <- make_bd_constrained_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit))
+  expect_match(plt$labels$title, "RDA", fixed = TRUE)
+  expect_match(plt$labels$title, "group", fixed = TRUE)
+})
+
+test_that("plot_beta_diversity's subtitle reports taxrank as 'none' when NULL", {
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(fit))
+  expect_match(plt$labels$subtitle, "taxa agglom: none", fixed = TRUE)
+})
+
 # ---- animate_by_variable() ----
 
 test_that("animate_by_variable returns a gganim/gif_image object by default", {
@@ -404,7 +760,7 @@ test_that("animate_by_variable returns a gganim/gif_image object by default", {
   plt <- suppressWarnings(beta_diversity(
     ps,
     group = "group",
-    animation.variable.name = "group"
+    animation_variable_name = "group"
   ))
   anim <- animate_by_variable(
     plt,
@@ -423,7 +779,7 @@ test_that("animate_by_variable returns NULL when return_anim = FALSE", {
   plt <- suppressWarnings(beta_diversity(
     ps,
     group = "group",
-    animation.variable.name = "group"
+    animation_variable_name = "group"
   ))
   anim <- animate_by_variable(
     plt,
@@ -443,7 +799,7 @@ test_that("animate_by_variable writes a file to save_path when given", {
   plt <- suppressWarnings(beta_diversity(
     ps,
     group = "group",
-    animation.variable.name = "group"
+    animation_variable_name = "group"
   ))
   out <- tempfile(fileext = ".gif")
   on.exit(unlink(out), add = TRUE)

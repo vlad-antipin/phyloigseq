@@ -2,49 +2,184 @@
 % Please edit documentation in R/beta_diversity.R
 \name{plot_beta_diversity}
 \alias{plot_beta_diversity}
-\title{Plot Beta-Diversity Ordination}
+\title{Plot a Beta-Diversity Ordination}
 \usage{
 plot_beta_diversity(
-  beta.dispersion.fit,
-  hover.variables = NULL,
+  beta_dispersion_fit,
+  hover_variables = NULL,
   scaling = 1,
   comp = c(1, 2),
-  label.name = NULL,
-  label.levels = NULL,
-  facet.mode = "wrap",
+  label_name = NULL,
+  label_levels = NULL,
+  facet_mode = "wrap",
   facet = NULL,
-  facet.levels = NULL,
-  facet.row = NULL,
-  facet.row.levels = NULL,
-  facet.col = NULL,
-  facet.col.levels = NULL,
-  shape.name = NULL,
-  shape.levels = NULL,
-  size.name = NULL,
-  animation.variable.name = NULL,
-  animation.variable.levels = NULL,
-  remove.na.from.plot = FALSE,
+  facet_levels = NULL,
+  facet_row = NULL,
+  facet_row_levels = NULL,
+  facet_col = NULL,
+  facet_col_levels = NULL,
+  shape_name = NULL,
+  shape_levels = NULL,
+  size_name = NULL,
+  animation_variable_name = NULL,
+  animation_variable_levels = NULL,
+  remove_na_from_plot = FALSE,
   ellipses = FALSE,
-  fill.ellipses = FALSE,
-  stat.beta.dispersion = NULL,
-  biplot.loadings = FALSE,
-  biplot.covariates = FALSE,
-  arrow.labels = FALSE,
-  arrow.taxonomy.labels = NULL,
-  color.arrows.by.taxa = FALSE,
-  arrow.cutoff.load = 0,
-  arrow.cutoff.covar = 0,
+  fill_ellipses = FALSE,
+  stat_beta_dispersion = NULL,
+  biplot_loadings = FALSE,
+  biplot_covariates = FALSE,
+  arrow_labels = FALSE,
+  arrow_taxonomy_labels = NULL,
+  color_arrows_by_taxa = FALSE,
+  arrow_cutoff_load = 0,
+  arrow_cutoff_covar = 0,
   repel = FALSE,
-  max.overlaps = 10,
-  marginal.plot = NULL,
-  raw.loadings = TRUE,
-  point.alpha = 1,
-  point.size = 3,
-  projected.alpha = 0.4,
-  reverse.dim1 = FALSE,
-  reverse.dim2 = FALSE
+  max_overlaps = 10,
+  marginal_plot = NULL,
+  point_alpha = 1,
+  point_size = 3,
+  projected_alpha = 0.4,
+  reverse_dim1 = FALSE,
+  reverse_dim2 = FALSE
 )
 }
+\arguments{
+\item{beta_dispersion_fit}{A list as returned by \code{\link[=get_beta_diversity]{get_beta_diversity()}}.}
+
+\item{hover_variables}{Character vector of \code{sample_data} column names to
+include in each point's hover text (via the \code{text} aesthetic, consumed
+by \code{plotly::ggplotly(tooltip = "text")}). Columns not present in
+\code{sample_data} are silently skipped. Default \code{NULL} (no hover text).}
+
+\item{scaling}{Which of \code{beta_dispersion_fit}'s two \code{vegan} scalings to
+plot (\code{1}: distances between samples are interpretable; \code{2}: angles
+between taxa/predictor arrows are interpretable). Falls back to \code{1}
+with a \code{warning()} if out of range. Default \code{1}.}
+
+\item{comp}{Length-2 integer vector of ordination axes to plot. Falls
+back to \code{c(1, 2)} with a \code{warning()} if invalid (e.g. an axis beyond
+what \code{beta_dispersion_fit} retained). Default \code{c(1, 2)}.}
+
+\item{label_name, label_levels}{\code{sample_data} column used to color points
+(only if non-numeric), and optionally the subset/order of its levels
+to keep (samples outside \code{label_levels} are dropped from the plot; see
+\code{keep_levels()}/\code{factorize_levels()}, \code{utils.R}). Overridden by
+\code{stat_beta_dispersion$label_name} when \code{stat_beta_dispersion} is
+supplied. Default \code{NULL} (no coloring).}
+
+\item{facet_mode}{\code{"wrap"} (facet by \code{facet}, via
+\code{\link[ggplot2:facet_wrap]{ggplot2::facet_wrap()}}) or \code{"grid"} (facet by \code{facet_row}/\code{facet_col},
+via \code{\link[ggplot2:facet_grid]{ggplot2::facet_grid()}}). Default \code{"wrap"}.}
+
+\item{facet, facet_levels}{Wrap-mode faceting variable (only used if
+character/factor) and, optionally, the subset/order of its levels to
+keep. Ignored when \code{facet_mode = "grid"}. Default \code{NULL} (no facet).}
+
+\item{facet_row, facet_row_levels, facet_col, facet_col_levels}{Grid-mode
+row/column faceting variables and their optional level subset/order.
+Ignored when \code{facet_mode = "wrap"}. Default \code{NULL} (no facet).}
+
+\item{shape_name, shape_levels}{\code{sample_data} column mapped to point shape
+(only if character/factor), and its optional level subset/order.
+Default \code{NULL} (no shape mapping).}
+
+\item{size_name}{\code{sample_data} column mapped to point size (rescaled to
+\verb{[point_size * 0.5, point_size * 3]}). Default \code{NULL} (fixed size,
+\code{point_size}).}
+
+\item{animation_variable_name, animation_variable_levels}{\code{sample_data}
+column to embed in the returned plot's data (for a later
+\code{\link[=animate_by_variable]{animate_by_variable()}} call), and its optional level subset/order.
+Default \code{NULL} (no animation variable embedded).}
+
+\item{remove_na_from_plot}{Logical; drop samples with \code{NA} in any of
+\code{label_name}/\code{shape_name}/\code{size_name}/\code{facet}/\code{facet_row}/\code{facet_col}/
+\code{animation_variable_name} before plotting. Default \code{FALSE}.}
+
+\item{ellipses}{Logical; draw a \code{\link[ggplot2:stat_ellipse]{ggplot2::stat_ellipse()}} per level of
+\code{label_name}, only when \code{label_name} is discrete. Default \code{FALSE}.}
+
+\item{fill_ellipses}{Logical; fill the ellipses with color instead of
+just outlining them. Only used when \code{ellipses = TRUE}. Default
+\code{FALSE}.}
+
+\item{stat_beta_dispersion}{\code{NULL} (default) or the result of
+\code{\link[=stat_beta_diversity]{stat_beta_diversity()}}: its p-value(s) are embedded in the plot's
+subtitle, facet strip labels, or (full-grid mode) per-panel
+annotations, and its \code{label_name} overrides this call's own
+\code{label_name}.}
+
+\item{biplot_loadings, biplot_covariates}{Logical; draw taxon
+(\code{biplot_loadings}, from \code{beta_dispersion_fit$loadings}) and/or
+predictor (\code{biplot_covariates}, from \code{beta_dispersion_fit$covariates})
+arrows. Default \code{FALSE} (no biplot).}
+
+\item{arrow_labels}{Logical; label each drawn arrow with its taxon/
+predictor name (taxa use \code{arrow_taxonomy_labels} instead, when given).
+Default \code{FALSE}.}
+
+\item{arrow_taxonomy_labels}{\code{NULL} (default; label taxa by their taxon
+name) or a character vector of \code{tax_table} ranks (e.g.
+\code{c("Genus", "Species")}) to build taxon arrow labels from instead
+(e.g. \code{"Escherichia:Coli"}).}
+
+\item{color_arrows_by_taxa}{Logical; color taxon arrows individually by
+\code{arrow_taxonomy_labels}/taxon name, instead of a single fixed color.
+Default \code{FALSE}.}
+
+\item{arrow_cutoff_load, arrow_cutoff_covar}{Minimum taxon/predictor arrow
+length, normalized to the longest arrow of that type (range \verb{[0, 1]}),
+below which the arrow is hidden. Default \code{0} (show every arrow).}
+
+\item{repel}{Logical; label arrows with \code{\link[ggrepel:geom_text_repel]{ggrepel::geom_text_repel()}}
+instead of \code{\link[ggplot2:geom_text]{ggplot2::geom_text()}}. Incompatible with \code{plotly}. Default
+\code{FALSE}.}
+
+\item{max_overlaps}{Passed to \code{\link[ggrepel:geom_text_repel]{ggrepel::geom_text_repel()}}'s
+\code{max.overlaps}, when \code{repel = TRUE}. Default \code{10}.}
+
+\item{marginal_plot}{\code{NULL} (default; no marginal plot) or a
+\code{\link[ggExtra:ggMarginal]{ggExtra::ggMarginal()}} \code{type} (e.g. \code{"boxplot"}, \code{"density"}),
+rendered along both axes. Only applied when \code{label_name} is discrete,
+there's no facet, and \code{facet_mode = "wrap"}. Incompatible with
+\code{plotly}.}
+
+\item{point_alpha, point_size}{Alpha/size of sample points. When
+\code{beta_dispersion_fit} used a \code{fit_filter}, only fit-subset points use
+\code{point_alpha} (the rest use \code{projected_alpha}); \code{size_name} overrides
+\code{point_size} with a rescaled range instead of a fixed value. Default
+\code{1}/\code{3}.}
+
+\item{projected_alpha}{Alpha of samples that were projected onto (but not
+used to fit) the ordination, when \code{beta_dispersion_fit} used a
+\code{fit_filter}. Unused otherwise. Default \code{0.4}.}
+
+\item{reverse_dim1, reverse_dim2}{Logical; negate the first/second plotted
+component (\code{comp[1]}/\code{comp[2]}, respectively) of \code{coords}, \code{loadings},
+and \code{covariates} alike — e.g. to match another ordination's arbitrary
+axis sign/orientation. Default \code{FALSE}.}
+}
+\value{
+A \code{\link[ggplot2]{ggplot}} object, or — when \code{marginal_plot}
+is used — the \code{ggExtraPlot}/\code{gtable} object returned by
+\code{\link[ggExtra:ggMarginal]{ggExtra::ggMarginal()}} instead.
+}
 \description{
-Plot Beta-Diversity Ordination
+Scatter plot of ordination sample scores (\code{beta_dispersion_fit$coords},
+as returned by \code{\link[=get_beta_diversity]{get_beta_diversity()}}), optionally colored/shaped/sized/
+faceted/animated by \code{sample_data} columns, annotated with a
+\code{\link[=stat_beta_diversity]{stat_beta_diversity()}} result, and/or overlaid with a biplot of taxon
+(\code{loadings}) and/or predictor (\code{covariates}) arrows.
+}
+\examples{
+data(ps_16s_refinement)
+bd <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
+plot_beta_diversity(bd, label_name = "Protocol", ellipses = TRUE)
+
+}
+\seealso{
+\code{\link[=get_beta_diversity]{get_beta_diversity()}}, \code{\link[=stat_beta_diversity]{stat_beta_diversity()}},
+\code{\link[=beta_diversity]{beta_diversity()}} (a thin wrapper chaining all three),
+\code{\link[=animate_by_variable]{animate_by_variable()}}
 }
