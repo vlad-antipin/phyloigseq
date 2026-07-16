@@ -2,44 +2,49 @@
 % Please edit documentation in R/beta_diversity.R
 \name{plot_beta_diversity}
 \alias{plot_beta_diversity}
-\title{Plot Beta-Diversity}
+\title{Plot Beta-Diversity Ordination}
 \usage{
 plot_beta_diversity(
-  fraction_id_name = NULL,
-  fraction_ids = NULL,
-  scaling = 1,
   beta.dispersion.fit,
-  stat.beta.dispersion,
-  axis_x = 1,
-  axis_y = 2,
-  nf = 5,
-  type = "boxplot",
-  color_vector = c("cyan4", "brown", "deepskyblue", "black", "red"),
-  legend_title = NULL,
-  lwd = 1,
-  conf = 0.9,
-  cex = 2,
-  font = 2,
-  pch = 20,
-  draw = "lines",
-  ylimits = "auto",
-  xlimits = "auto",
-  text = FALSE,
-  ncol = 1,
-  species = FALSE,
-  x.intersp = 1,
-  y.intersp = 0.5,
-  where = "topleft",
-  inset = 0.2,
-  pca = TRUE,
-  stat.cex = 2,
-  legend.cex = 2,
-  widths = c(1, 1),
-  heights = c(1, 1),
-  margins = c(1, 1, 1, 1),
-  ...
+  hover.variables = NULL,
+  scaling = 1,
+  comp = c(1, 2),
+  label.name = NULL,
+  label.levels = NULL,
+  facet.mode = "wrap",
+  facet = NULL,
+  facet.levels = NULL,
+  facet.row = NULL,
+  facet.row.levels = NULL,
+  facet.col = NULL,
+  facet.col.levels = NULL,
+  shape.name = NULL,
+  shape.levels = NULL,
+  size.name = NULL,
+  animation.variable.name = NULL,
+  animation.variable.levels = NULL,
+  remove.na.from.plot = FALSE,
+  ellipses = FALSE,
+  fill.ellipses = FALSE,
+  stat.beta.dispersion = NULL,
+  biplot.loadings = FALSE,
+  biplot.covariates = FALSE,
+  arrow.labels = FALSE,
+  arrow.taxonomy.labels = NULL,
+  color.arrows.by.taxa = FALSE,
+  arrow.cutoff.load = 0,
+  arrow.cutoff.covar = 0,
+  repel = FALSE,
+  max.overlaps = 10,
+  marginal.plot = NULL,
+  raw.loadings = TRUE,
+  point.alpha = 1,
+  point.size = 3,
+  projected.alpha = 0.4,
+  reverse.dim1 = FALSE,
+  reverse.dim2 = FALSE
 )
 }
 \description{
-Plot Beta-Diversity
+Plot Beta-Diversity Ordination
 }
