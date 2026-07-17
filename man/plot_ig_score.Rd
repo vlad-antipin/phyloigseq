@@ -18,7 +18,7 @@ plot_ig_score(
   exclude_na = TRUE,
   transpose = FALSE,
   signif_colors = (ggsci::pal_npg())(2),
-  add_stats = TRUE
+  add_stats = FALSE
 )
 }
 \arguments{

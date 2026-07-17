@@ -3,12 +3,9 @@
 #' Package containing wrappers mainly around \pkg{phyloseq} and \pkg{vegan} packages
 #' for downstream analysis of 16S amplicon sequencing results and allowing to further
 #' analyze the Ig-Seq data, computing and plotting various Ig scores. The functions
-#' from this package are used in PhyloIgSeq Shiny Web application on
-#'  \url{https://www.immulab.fr/cms/index.php/team/tools/lab-tools}.
+#' from this package are used in the PhyloIgSeq Shiny web application at
+#'  \url{https://www.funkycells.com/main/index.php/lab-tools/phyloigseq}.
 #'
-#' @import openxlsx
-#' @import DT
-#' @import ade4
 #' @import vegan
 #' @import Rtsne
 #' @import umap
@@ -17,7 +14,6 @@
 #' @import tidyr
 #' @import ggpubr
 #' @import tools
-#' @import htmlwidgets
 #' @import rstatix
 #' @import scales
 #' @import phyloseq
@@ -33,10 +29,10 @@
 #' @import sp
 #' @importFrom ComplexHeatmap Heatmap HeatmapAnnotation anno_text
 #' @importFrom grid gpar unit
-#' @import ragg
 #' @import gganimate
 #' @import gifski
-#' @importFrom utils globalVariables
+#' @importFrom stats as.dendrogram as.dist as.formula cor cor.test hclust kruskal.test median na.exclude na.omit p.adjust predict quantile rmultinom runif sd setNames var weighted.mean
+#' @importFrom utils combn globalVariables head modifyList tail
 "_PACKAGE"
 
 #' Is `name` a Valid, Non-Numeric Column of `df`?
@@ -248,8 +244,20 @@ IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # scores to come:
 # "purity_corrected_prob_index", "purity_corrected_prob_ratio")
 
-# Prevent R CMD check NOTE about undefined global variable
-utils::globalVariables("IG_SCORES")
+# Prevent R CMD check NOTEs about undefined global variables: IG_SCORES (a
+# top-level exported binding referenced unqualified elsewhere in this
+# package) plus data-frame/aes() column names used via NSE in dplyr/ggplot2
+# pipelines throughout R/*.R, and `position` (captured unevaluated by
+# `hasArg()` in `geom_jitter()` above).
+utils::globalVariables(c(
+  "IG_SCORES",
+  "A", "M", "Comp1", "Comp2", "Depth", "Names", "Reads", "Richness",
+  "Sample", "Site", "Species", "Threshold", "TotalReads",
+  "agglom_score", "comparison", "ellipse_level", "hover_text",
+  "null_abundance", "null_change", "obs_abundance", "obs_change",
+  "p_label", "point_color", "position", "prop_var", "sample_id",
+  "taxon_id", "tooltip", "x", "y", "zero_treatment"
+))
 
 #' Reorient a Phyloseq OTU Table to Taxa-as-Columns
 #'

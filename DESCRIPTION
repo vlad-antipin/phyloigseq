@@ -1,22 +1,27 @@
 Package: PhyloIgSeq
-Title: Ig Coating Analysis from Phyloseq Data
-Version: 0.0.0.9000
+Title: Immunoglobulin Coating and Diversity Analysis for 'phyloseq'
+Version: 0.1.0
 Authors@R: c(
-    person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre")),
-    person("Martin", "Larsen", role = c("aut", "ths")))
-Description: Provides wrappers for phyloseq functions, adapting them for
-    usage in a web application as well for analysis of diversity and Ig
-    coating.
+    person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre", "cph")),
+    person("Martin", "Larsen", role = c("aut", "ths", "cph")))
+Description: Extends 'phyloseq' with tools for microbiota diversity analysis
+    and immunoglobulin (Ig) coating quantification from 16S ribosomal RNA
+    (rRNA) sequencing data. Provides a sparse-matrix engine for
+    beta-diversity and UniFrac distances that scales to large amplicon
+    sequence variant (ASV) tables without densifying the count matrix,
+    classical and novel scoring methods (including a sliding Z-score) for
+    IgSeq experiments with positive- and negative-sorted fractions, and
+    approximate phylogenies built from taxonomic rank data when a
+    sequencing-based tree is unavailable. Designed to support both direct
+    analysis scripts and a companion 'shiny' web application.
 License: MIT + file LICENSE
 Depends: 
     R (>= 3.5)
 Imports:
-    ade4,
     ape,
     car,
     ComplexHeatmap,
     dplyr,
-    DT,
     gganimate,
     ggExtra,
     ggplot2,
@@ -27,18 +32,15 @@ Imports:
     gifski,
     grid,
     gtools,
-    htmlwidgets,
     latex2exp,
     magrittr,
     Matrix,
     methods,
     softImpute,
     microbiome,
-    openxlsx,
     phyloseq,
     phytools,
     speedyseq,
-    ragg,
     rlang,
     rstatix,
     Rtsne,

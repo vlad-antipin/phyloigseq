@@ -2647,12 +2647,12 @@ plot_beta_diversity <- function(
 #' @examples
 #' \donttest{
 #' data(ps_16s_refinement)
-#' # animation.variable.name must also be passed to plot_beta_diversity()
+#' # animation_variable_name must also be passed to plot_beta_diversity()
 #' # (via `...`) so the variable is embedded in the plot's data first.
 #' bd <- beta_diversity(
 #'   ps_16s_refinement,
 #'   group = "Protocol",
-#'   animation.variable.name = "Protocol"
+#'   animation_variable_name = "Protocol"
 #' )
 #' animate_by_variable(bd, "Protocol", nframes = 10, fps = 5)
 #' }

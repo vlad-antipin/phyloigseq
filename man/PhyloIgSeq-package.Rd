@@ -9,16 +9,16 @@
 Package containing wrappers mainly around \pkg{phyloseq} and \pkg{vegan} packages
 for downstream analysis of 16S amplicon sequencing results and allowing to further
 analyze the Ig-Seq data, computing and plotting various Ig scores. The functions
-from this package are used in PhyloIgSeq Shiny Web application on
-\url{https://www.immulab.fr/cms/index.php/team/tools/lab-tools}.
+from this package are used in the PhyloIgSeq Shiny web application at
+\url{https://www.funkycells.com/main/index.php/lab-tools/phyloigseq}.
 }
 \author{
-\strong{Maintainer}: Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr}
+\strong{Maintainer}: Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr} [copyright holder]
 
 Authors:
 \itemize{
-  \item Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr}
-  \item Martin Larsen [thesis advisor]
+  \item Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr} [copyright holder]
+  \item Martin Larsen [thesis advisor, copyright holder]
 }
 
 }
