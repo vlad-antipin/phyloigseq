@@ -1,0 +1,170 @@
+---
+title: "Diversity Analysis with PhyloIgSeq"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Diversity Analysis with PhyloIgSeq}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+This vignette covers PhyloIgSeq's `phyloseq`-extension side: filtering, alpha/beta
+diversity, and compositional heatmaps, on a standard 16S `phyloseq` object. For the
+package's namesake Ig-coating scoring pipeline, see
+`vignette("igseq-scoring", package = "PhyloIgSeq")` instead.
+
+```{r setup}
+library(PhyloIgSeq)
+library(phyloseq)
+```
+
+## Data
+
+The examples below use `ps_16s_refinement`, a bundled `phyloseq` object comparing
+different 16S sequencing protocols: 515 taxa across 37 samples, with a taxonomy table,
+sample metadata, and a phylogenetic tree.
+
+```{r data}
+data(ps_16s_refinement)
+ps_16s_refinement
+sample_variables(ps_16s_refinement)
+```
+
+## Filtering
+
+`filter_reads()` removes low-depth samples and low-abundance taxa by total read count.
+`plot_reads()` shows the read-count distributions a threshold would act on, so you can
+pick one before filtering:
+
+```{r plot-reads}
+plot_reads(ps_16s_refinement, min_sample_sum = 1000, min_taxa_sum = 5)
+```
+
+```{r filter}
+ps <- filter_reads(ps_16s_refinement, min_sample_sum = 1000, min_taxa_sum = 5)
+ps
+```
+
+The rest of this vignette uses `ps`, the filtered object.
+
+## Alpha diversity
+
+`get_alpha_diversity()` computes one or more per-sample diversity measures;
+`plot_alpha_diversity()` renders the result, optionally grouped/colored by a
+`sample_data` column:
+
+```{r alpha}
+alpha_div <- get_alpha_diversity(ps, measure = "Shannon")
+head(alpha_div$diversity)
+plot_alpha_diversity(alpha_div, x = "Concentration", group = "SampleOrigin")
+```
+
+`alpha_diversity()` is a thin wrapper chaining both calls, for when you don't need the
+intermediate `get_alpha_diversity()` result:
+
+```{r alpha-wrapper}
+alpha_diversity(ps, x = "Concentration", group = "SampleOrigin")
+```
+
+## Beta diversity
+
+### Unconstrained ordination
+
+`get_beta_diversity()` ordinates samples by inter-sample dissimilarity — distance-based
+(PCoA, tSNE, UMAP), direct-on-abundance (NMDS, PCA, CA, DCA), or constrained (CCA, RDA,
+dbRDA; see below). `plot_beta_diversity()` renders the result, `scree_plot()` shows how
+much variance each axis explains, and `stat_beta_diversity()` runs a PERMANOVA against a
+grouping variable:
+
+```{r beta-unconstrained}
+beta_div <- get_beta_diversity(ps, method = "pcoa", dist = "bray")
+plot_beta_diversity(beta_div, label_name = "SampleOrigin", ellipses = TRUE)
+scree_plot(beta_div$eigen_values)
+stat_beta_diversity(beta_div, label_name = "SampleOrigin")$p_value
+```
+
+`beta_diversity()` chains all three in one call:
+
+```{r beta-wrapper}
+beta_diversity(ps, group = "SampleOrigin", stat = TRUE)
+```
+
+### Constrained ordination
+
+Passing `method = "CCA"`/`"RDA"`/`"dbRDA"` with a `model` formula constrains the
+ordination to a `sample_data` variable, e.g. to see how much of the community
+composition a technical covariate like the mechanical lysis protocol explains:
+
+```{r beta-constrained}
+beta_cca <- get_beta_diversity(
+  ps,
+  taxrank = "Genus",
+  method = "CCA",
+  model = "Mechanical_Lyse"
+)
+plot_beta_diversity(beta_cca, label_name = "Mechanical_Lyse")
+```
+
+## Compositional heatmap
+
+`get_phylo_heatmap()` prepares an abundance matrix, sample dendrogram, and taxon
+ordering; `plot_phylo_heatmap()` renders it as a `ComplexHeatmap::Heatmap()`, limited to
+the top `nb_top_taxa` by abundance:
+
+```{r heatmap, fig.height = 6}
+heatmap_data <- get_phylo_heatmap(ps, taxrank_for_heatmap = "Genus")
+plot_phylo_heatmap(heatmap_data, top_annotation_vars = "Protocol", nb_top_taxa = 20)
+```
+
+## Working with large datasets: the sparse engine
+
+Everything above also works, unchanged, on a *sparse* `phyloseq` object.
+`as_sparse_phyloseq()` replaces a dense OTU table with a `dgCMatrix`-backed one;
+`sparse_distance()`/`sparse_unifrac()` then compute Bray-Curtis, Jaccard, (weighted)
+UniFrac and other distances directly on it, without ever densifying the table. They are
+drop-in, numerically equivalent replacements for `phyloseq::distance()`/
+`phyloseq::UniFrac()`:
+
+```{r sparse}
+ps_sparse <- as_sparse_phyloseq(ps)
+class(otu_table(ps_sparse))
+
+bc_sparse <- sparse_distance(ps_sparse, method = "bray")
+```
+
+UniFrac needs a `phy_tree`. When no sequencing-based tree is available,
+`get_taxonomy_tree()` builds an approximate one from `tax_table` ranks alone — a
+heuristic, not a substitute for a real phylogeny, but enough to keep UniFrac-family
+distances available:
+
+```{r taxonomy-tree}
+phy_tree(ps_sparse) <- get_taxonomy_tree(ps_sparse)
+sparse_unifrac(ps_sparse, method = "wunifrac")
+```
+
+`get_beta_diversity()`'s distance-based methods (PCoA/tSNE/UMAP) and
+`get_phylo_heatmap()` already call `sparse_distance()` internally, so no other code
+needs to change to benefit — the recommended workflow for a large ASV/OTU table is
+simply to convert it with `as_sparse_phyloseq()` once, right after filtering, and pass
+the sparse object into every function downstream:
+
+```{r sparse-workflow}
+beta_sparse <- get_beta_diversity(ps_sparse, method = "PCoA", dist = "bray")
+all.equal(beta_sparse$coords, beta_div$coords)
+```
+
+## Session info
+
+```{r session}
+sessionInfo()
+```

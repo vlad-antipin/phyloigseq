@@ -1,0 +1,201 @@
+---
+title: "Ig-Coating Scoring with PhyloIgSeq"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Ig-Coating Scoring with PhyloIgSeq}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+This vignette covers the package's namesake pipeline: quantifying immunoglobulin (Ig)
+coating per taxon per sample from Ig-Seq sort-fraction 16S data (Ig+/Ig-, optionally a
+second Ig- replicate and/or a pre-sort fraction). For general `phyloseq` diversity
+analysis, see `vignette("diversity-analysis", package = "PhyloIgSeq")` instead — the two
+are complementary and, as the last section here shows, IgSeq scores can themselves be
+fed back into that vignette's diversity functions.
+
+```{r setup}
+library(PhyloIgSeq)
+library(phyloseq)
+```
+
+## Data
+
+The examples below use `ps_igseq`, a small, anonymized toy `phyloseq` object from a
+mouse IgA-Seq experiment: 4703 taxa, 30 samples (rows), each belonging to one of 8
+biological samples split across up to three sort fractions (`Pos`, `Neg1`, `Neg2`,
+recorded in the `sorting_fraction` column).
+
+```{r data}
+data(ps_igseq)
+ps_igseq
+sample_data(ps_igseq)
+```
+
+## Building a PhyloIgSeq object
+
+`getPhyloIgSeq()` is the pipeline's entry point. It reshapes the per-fraction rows into
+one profile per biological sample (`sample_id_name`), rarefies fractions to a comparable
+depth, and computes every score named in `scores` for each taxon:
+
+```{r build}
+pis <- getPhyloIgSeq(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2",
+  confidence_levels = c(0.95, 0.99),
+  scores = c("slide_z", "palm", "kau")
+)
+pis
+```
+
+Two samples in this toy dataset (`sample_6`, `sample_7`) have duplicated fraction rows
+and are excluded automatically, with a `warning()` naming which sample and why —
+`getPhyloIgSeq()` skips rows it can't interpret rather than aborting the whole batch, so
+watch for this warning on your own data too.
+
+The result is a `PhyloIgSeq` object: `ig_coating` holds one row per taxon/sample, with
+the requested scores as columns (also recorded in `score_names`) alongside supporting
+fraction/diagnostic columns. `get_ig_score()` pulls out a single score without having to
+know which of the other columns are metadata:
+
+```{r get-score}
+head(get_ig_score(pis, score_name = "slide_z", sample_ids = "sample_1"))
+```
+
+## Classical Ig scores
+
+`compute_ig_score()` is the lower-level function behind `palm`/`kau`/`prob_index`/
+`prob_ratio` (the names in `IG_SCORES`): closed-form indices computed directly from
+pos/neg(/pre) abundance vectors, with no sliding window. Useful on its own when you
+already have abundance vectors and don't need the full `PhyloIgSeq` pipeline:
+
+```{r classical-scores}
+IG_SCORES
+
+pos <- c(120, 45, 0, 300)
+neg <- c(80, 60, 10, 250)
+compute_ig_score(method = "kau", pos = pos, neg = neg)
+compute_ig_score(method = "palm", pos = pos, neg = neg)
+```
+
+## The sliding Z-score
+
+`slide_z` is this package's own scoring statistic. Classical scores like Palm/Kau assume
+one global null distribution for "not coated"; the sliding Z-score instead estimates a
+*local* null along the abundance axis (MA-plot-style), so that low- and high-abundance
+taxa are judged against a null appropriate to their own abundance range rather than a
+single package-wide one. `plot_slide_z()` shows this directly, plotting each taxon's
+observed vs. null log-ratio with confidence ellipses (from `confidence_levels`, set
+above) marking the local null at each abundance level:
+
+```{r slide-z}
+plot_slide_z(pis, sample_ids = "sample_1")
+```
+
+## Visualizing and agglomerating scores
+
+`plot_ig_score()` renders a score agglomerated by taxon and sample group, as a
+boxplot/violin or a bubble plot:
+
+```{r plot-ig-score}
+PhyloIgSeq::plot_ig_score(pis, plot_type = "boxplot", score_name = "slide_z", taxrank_score = "Genus")
+```
+
+`agglomPhyloIgSeq()` performs that agglomeration on the `PhyloIgSeq` object itself
+(every score in `ig_coating`, not just the one being plotted), optionally weighting or
+filtering by a fraction-abundance column:
+
+```{r agglom}
+pis_genus <- agglomPhyloIgSeq(
+  pis,
+  abundance_fraction = "Pos",
+  taxrank = "Genus",
+  agglom_method = "median"
+)
+head(pis_genus@ig_coating)
+```
+
+## Exporting scores for downstream analysis
+
+`PhyloIgSeq_to_phyloseq()` reshapes one score column into a samples-by-taxa "OTU table"
+of score values and wraps it back into a standard `phyloseq` object, so the rest of the
+`phyloseq` ecosystem (and PhyloIgSeq's own diversity functions, see below) can be applied
+to Ig-coating scores directly. It offers two independent code paths, chosen with
+`imputation_method`:
+
+- For a small or already-agglomerated score matrix (e.g. `pis_genus` above), a dense
+  matrix with ordinary imputation (`"KNN"`, `"Central Tendency"`, or, simplest, replacing
+  missing scores with `0`) is usually fine:
+
+  ```{r export-dense}
+  ps_scores_dense <- PhyloIgSeq_to_phyloseq(
+    pis_genus,
+    score_name = "slide_z",
+    imputation_method = "Replace NA with 0"
+  )
+  ps_scores_dense
+  ```
+
+- A **raw ASV/OTU-level** score matrix, by contrast, is typically mostly missing (most
+  taxa aren't observed with a usable abundance in most samples) — densifying it first
+  would be wasteful and would let arbitrary `0`s dominate downstream distances.
+  `imputation_method = "SVD"` avoids this: missing entries stay structurally missing in
+  an `incomplete_otu_table` (see `?incomplete_otu_table-class`), backed by
+  `softImpute::Incomplete()`, and a low-rank approximation
+  (`softImpute::softImpute()`, tuned by `svd_rank`/`svd_lambda`) is used to impute values
+  only on demand. This is the recommended path for large, sparse score matrices:
+
+  ```{r export-svd}
+  ps_scores_svd <- PhyloIgSeq_to_phyloseq(
+    pis,
+    score_name = "slide_z",
+    imputation_method = "SVD",
+    svd_rank = 5L
+  )
+  class(otu_table(ps_scores_svd))
+  ```
+
+## IgSeq diversity: feeding scores back into the diversity functions
+
+Because `PhyloIgSeq_to_phyloseq()`'s output is a standard `phyloseq` object, it plugs
+directly into the functions from `vignette("diversity-analysis")` — with
+`from_igseq = TRUE`, `get_alpha_diversity()` instead computes "richness" by bucketing
+taxa into down-/not-significantly-/up-coated groups by their score, an Ig-coating
+analogue of alpha diversity:
+
+```{r igseq-alpha}
+igseq_alpha <- get_alpha_diversity(ps_scores_dense, from_igseq = TRUE)
+head(igseq_alpha$diversity)
+plot_igseq_richness(igseq_alpha, group = "sex", color = "sex")
+```
+
+`get_beta_diversity()`/`plot_beta_diversity()` need no `from_igseq` switch at all — an
+Ig-score "OTU table" ordinates exactly like an abundance one, giving an IgSeq beta
+diversity view of which samples have similar coating profiles (here using the SVD-backed
+export, so the ordination never densifies the underlying score matrix):
+
+```{r igseq-beta}
+igseq_beta <- get_beta_diversity(ps_scores_svd, method = "PCoA", dist = "euclidean")
+plot_beta_diversity(igseq_beta, label_name = "sex")
+```
+
+## Session info
+
+```{r session}
+sessionInfo()
+```

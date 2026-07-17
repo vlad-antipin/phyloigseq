@@ -661,7 +661,12 @@ plot_slide_z <- function(
 #' matching the non-faceted axis swap done by `coord_flip()` elsewhere in `plot_ig_score()`.
 #'
 #' @noRd
-.ig_score_facet_grid <- function(taxrank_facet, group_facet, transpose, scales) {
+.ig_score_facet_grid <- function(
+  taxrank_facet,
+  group_facet,
+  transpose,
+  scales
+) {
   row_var <- if (transpose) group_facet else taxrank_facet
   col_var <- if (transpose) taxrank_facet else group_facet
   facet_grid(
@@ -735,17 +740,24 @@ plot_slide_z <- function(
       limits = c(
         max(
           boundary$left_boundary,
-          boundary$midpoint - max(abs(plot_data$agglom_score - boundary$midpoint))
+          boundary$midpoint -
+            max(abs(plot_data$agglom_score - boundary$midpoint))
         ),
         min(
           boundary$right_boundary,
-          boundary$midpoint + max(abs(plot_data$agglom_score - boundary$midpoint))
+          boundary$midpoint +
+            max(abs(plot_data$agglom_score - boundary$midpoint))
         )
       ),
       guide = guide_colourbar(title.position = "top", title.hjust = 0.5)
     ) +
     guides(size = "none") +
-    .ig_score_facet_grid(taxrank_facet, group_facet, transpose, scales = "free") +
+    .ig_score_facet_grid(
+      taxrank_facet,
+      group_facet,
+      transpose,
+      scales = "free"
+    ) +
     theme_minimal() +
     labs(x = NULL, y = NULL, fill = paste(score_agglom_fn, score_name)) +
     .ig_score_base_theme()
@@ -778,7 +790,10 @@ plot_slide_z <- function(
     ifelse(plot_data$agglom_score < boundary$left_lim, "low", "ns")
   )
 
-  plt <- ggplot(data = plot_data, aes(x = agglom_score, y = .data[[taxrank_score]]))
+  plt <- ggplot(
+    data = plot_data,
+    aes(x = agglom_score, y = .data[[taxrank_score]])
+  )
   plt <- plt +
     if (plot_type == "violin") geom_violin() else geom_boxplot(outliers = FALSE)
 
@@ -802,7 +817,11 @@ plot_slide_z <- function(
       )
     ) +
     scale_color_manual(
-      values = c("high" = signif_colors[1], "low" = signif_colors[2], "ns" = "darkgrey")
+      values = c(
+        "high" = signif_colors[1],
+        "low" = signif_colors[2],
+        "ns" = "darkgrey"
+      )
     ) +
     guides(size = "none", color = "none") +
     scale_size_continuous(range = c(1, 2))
@@ -818,7 +837,10 @@ plot_slide_z <- function(
   }
 
   plt +
-    geom_vline(xintercept = unique(c(boundary$left_lim, boundary$right_lim)), linetype = 2) +
+    geom_vline(
+      xintercept = unique(c(boundary$left_lim, boundary$right_lim)),
+      linetype = 2
+    ) +
     .ig_score_facet_grid(
       taxrank_facet,
       group_facet,
@@ -901,7 +923,7 @@ plot_ig_score <- function(
   exclude_na = TRUE,
   transpose = FALSE,
   signif_colors = ggsci::pal_npg()(2),
-  add_stats = TRUE
+  add_stats = FALSE
 ) {
   plot_type <- match.arg(plot_type)
   score_agglom_fn <- match.arg(score_agglom_fn)
@@ -1164,8 +1186,7 @@ agglomPhyloIgSeq <- function(
   ] <- "taxon_id"
 
   # Update taxonomy
-  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[
-    ,
+  phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[,
     seq_len(which(colnames(phyloigseq_obj@tax_table) == taxrank))
   ] %>%
     distinct()
@@ -1272,7 +1293,11 @@ agglomPhyloIgSeq <- function(
   if (has_matching_total_reads) {
     total_reads_df <- total_reads
     names(total_reads_df)[2] <- "total_reads"
-    ig_coating_agglom <- merge(ig_coating_agglom, total_reads_df, by = "sample_id") %>%
+    ig_coating_agglom <- merge(
+      ig_coating_agglom,
+      total_reads_df,
+      by = "sample_id"
+    ) %>%
       group_by(sample_id)
   } else {
     ig_coating_agglom <- ig_coating_agglom %>%
@@ -1359,8 +1384,11 @@ to_wider_ig_score <- function(
     all_na_taxa <- taxon_cols[observed_frac == 0]
     if (length(all_na_taxa) > 0) {
       warning(
-        "to_wider_ig_score: excluding ", length(all_na_taxa),
-        " taxon/taxa from '", score, "' with no observed value in any sample: ",
+        "to_wider_ig_score: excluding ",
+        length(all_na_taxa),
+        " taxon/taxa from '",
+        score,
+        "' with no observed value in any sample: ",
         paste(all_na_taxa, collapse = ", "),
         call. = FALSE
       )
@@ -1396,7 +1424,8 @@ to_wider_ig_score <- function(
 
   tax_table_ig_score <- as.matrix(phyloigseq_obj@tax_table)
   tax_table_ig_score <- tax_table_ig_score[
-    !is.na(tax_table_ig_score[, "taxon_id"]), ,
+    !is.na(tax_table_ig_score[, "taxon_id"]),
+    ,
     drop = FALSE
   ]
   rownames(tax_table_ig_score) <- tax_table_ig_score[, "taxon_id"]
@@ -1522,7 +1551,8 @@ to_wider_ig_score <- function(
   # (see its own docs); keep tax_table in sync so it never claims a taxon that
   # doesn't (or, after imputation below, no longer safely can) appear in otu_table.
   phyloigseq_obj@tax_table <- phyloigseq_obj@tax_table[
-    phyloigseq_obj@tax_table$taxon_id %in% colnames(otu_table_ig_score), ,
+    phyloigseq_obj@tax_table$taxon_id %in% colnames(otu_table_ig_score),
+    ,
     drop = FALSE
   ]
 

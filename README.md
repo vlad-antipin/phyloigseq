@@ -45,7 +45,7 @@ plot_alpha_diversity(alpha, x = "Protocol")
 
 # --- Beta diversity (Bray-Curtis PCoA) ---------------------------------------
 beta <- get_beta_diversity(ps_16s_refinement, method = "PCoA", dist = "bray")
-ggplot_beta_diversity(beta)
+plot_beta_diversity(beta)
 
 # --- Same distances via the sparse engine, without densifying the table -----
 ps_sparse <- as_sparse_phyloseq(ps_16s_refinement)
@@ -56,15 +56,19 @@ phy_tree(ps_16s_refinement) <- get_taxonomy_tree(ps_16s_refinement)
 sparse_unifrac(as_sparse_phyloseq(ps_16s_refinement), method = "wunifrac")
 ```
 
-IgSeq scoring works on Ig+/Ig− fraction data, identified by columns in `sample_data`:
+IgSeq scoring works on Ig+/Ig− (and optionally pre-sort) fraction data, identified by
+columns in `sample_data`:
 
 ```r
+data(ps_igseq) # bundled example: 4703 taxa x 30 samples across 8 biological samples
+
 igseq <- getPhyloIgSeq(
-  physeq,
-  sample_id_name = "sample_id",   # column identifying each biological sample
-  fraction_id_name = "fraction",  # column indicating the sort fraction
-  positive_fraction_name = "IgA+",
-  first_negative_fraction_name = "IgA-"
+  ps_igseq,
+  sample_id_name = "sample_id",           # column identifying each biological sample
+  fraction_id_name = "sorting_fraction",  # column indicating the sort fraction
+  positive_fraction_name = "Pos",
+  first_negative_fraction_name = "Neg1",
+  second_negative_fraction_name = "Neg2"
 )
 plot_ig_score(igseq, score_name = "slide_z")
 ```
@@ -77,7 +81,11 @@ compute_ig_score(method = "kau", pos = c(120, 45, 0, 300), neg = c(80, 60, 10, 2
 
 ## Documentation
 
-- `vignette("introduction", package = "PhyloIgSeq")`
+- `vignette("diversity-analysis", package = "PhyloIgSeq")` — filtering, alpha/beta
+  diversity, compositional heatmaps, and the sparse engine for large datasets.
+- `vignette("igseq-scoring", package = "PhyloIgSeq")` — building a `PhyloIgSeq` object,
+  computing and visualizing Ig scores, the sliding Z-score, and exporting scores for
+  downstream diversity analysis.
 - `?getPhyloIgSeq`, `?compute_slide_z`, `?sparse_distance`, `?sparse_unifrac`, `?get_taxonomy_tree`
 
 ## License
