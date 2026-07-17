@@ -180,7 +180,6 @@ get_phylo_heatmap <- function(
   # Taxa must be rows for heatmap
   if (!taxa_are_rows(physeq)) {
     heat_matrix <- t(heat_matrix)
-    message("Abundance matrix transposed so that taxa are rows.")
   }
   rownames(heat_matrix) <- taxa_names(physeq)
 
@@ -245,7 +244,6 @@ plot_phylo_heatmap <- function(
   taxa_order <- if (sort_taxa_by_diff_abundance) {
     .sort_taxa_by_diff_abundance(heat_matrix, sample_data, var_for_diff_abundance)
   } else {
-    message("Taxa sorted by abundance.")
     heatmap_data$taxa_sorted_by_abundance
   }
   heat_matrix <- heat_matrix[taxa_order, , drop = FALSE]

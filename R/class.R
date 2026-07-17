@@ -3,7 +3,7 @@ setClassUnion("characterOrNULL", c("character", "NULL"))
 setClassUnion("listOrNULL", c("list", "NULL"))
 #' PhyloIgSeq class
 #'
-#' An S4 class to represent the results of an Ig-Seq experiment, including Ig coating scores,
+#' An S4 class to represent the results of an IgSeq experiment, including Ig coating scores,
 #' fractions, and taxonomic or sample-level metadata.
 #'
 #' @details

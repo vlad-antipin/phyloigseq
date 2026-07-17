@@ -2,7 +2,7 @@
 #'
 #' Package containing wrappers mainly around \pkg{phyloseq} and \pkg{vegan} packages
 #' for downstream analysis of 16S amplicon sequencing results and allowing to further
-#' analyze the Ig-Seq data, computing and plotting various Ig scores. The functions
+#' analyze the IgSeq data, computing and plotting various Ig scores. The functions
 #' from this package are used in the PhyloIgSeq Shiny web application at
 #'  \url{https://www.funkycells.com/main/index.php/lab-tools/phyloigseq}.
 #'

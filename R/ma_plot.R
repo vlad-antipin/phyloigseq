@@ -1,9 +1,9 @@
 # Implements the idea of MA plot (from microarray analysis) to abundance analysis
 
-#' Compute MA-Plot Coordinates Between Ig-Seq Fractions
+#' Compute MA-Plot Coordinates Between IgSeq Fractions
 #'
 #' Computes MA-plot-style coordinates (borrowed from microarray analysis: `M`
-#' = log-ratio, `A` = log-abundance) between a positive Ig-Seq fraction and a
+#' = log-ratio, `A` = log-abundance) between a positive IgSeq fraction and a
 #' negative fraction, per taxon. If a second negative fraction is supplied,
 #' the same coordinates are also computed between the two negative
 #' fractions, to serve as an empirical null distribution (see
@@ -279,7 +279,7 @@ get_ma_plot_data <- function(
 }
 
 
-#' Plot an Ig-Seq MA Plot
+#' Plot an IgSeq MA Plot
 #'
 #' Draws the MA-plot coordinates produced by [get_ma_plot_data()] for one
 #' biological sample: log-abundance (`A`) on the x-axis, log-ratio (`M`) on
@@ -377,7 +377,7 @@ plot_ma <-
 
     plt <- plt +
       labs(
-        title = paste0("Ig-Seq MA plot for sample ", ma_plot_data$sample_id),
+        title = paste0("IgSeq MA plot for sample ", ma_plot_data$sample_id),
         subtitle = paste0(
           ma_plot_data$nb_zero_taxa,
           " taxa with zero abundances in at least one fraction"

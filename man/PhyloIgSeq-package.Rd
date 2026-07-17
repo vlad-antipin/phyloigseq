@@ -8,9 +8,18 @@
 \description{
 Package containing wrappers mainly around \pkg{phyloseq} and \pkg{vegan} packages
 for downstream analysis of 16S amplicon sequencing results and allowing to further
-analyze the Ig-Seq data, computing and plotting various Ig scores. The functions
+analyze the IgSeq data, computing and plotting various Ig scores. The functions
 from this package are used in the PhyloIgSeq Shiny web application at
 \url{https://www.funkycells.com/main/index.php/lab-tools/phyloigseq}.
+}
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/vlad-antipin/phyloigseq}
+  \item \url{https://vlad-antipin.github.io/phyloigseq/}
+  \item Report bugs at \url{https://github.com/vlad-antipin/phyloigseq/issues}
+}
+
 }
 \author{
 \strong{Maintainer}: Vladislav Antipin \email{Vladislav.Antipin@etu.sorbonne-universite.fr} [copyright holder]

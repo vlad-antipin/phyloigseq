@@ -101,6 +101,8 @@ convention. \code{list()} for unconstrained methods.}
 plots / percent-explained-variance), or \code{NULL} for methods without
 them (NMDS).}
 \item{dist}{The \code{dist} argument, passed through.}
+\item{transform_abundances}{The \code{transform_abundances} argument,
+passed through.}
 \item{method}{\code{method}, in its original (non-lowercased) casing.}
 \item{model}{The (possibly \code{confounders}-augmented) model formula
 string, for constrained methods; \code{NULL} otherwise.}

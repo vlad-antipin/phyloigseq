@@ -2,7 +2,7 @@
 % Please edit documentation in R/ma_plot.R
 \name{get_ma_coordinates}
 \alias{get_ma_coordinates}
-\title{Compute MA-Plot Coordinates Between Ig-Seq Fractions}
+\title{Compute MA-Plot Coordinates Between IgSeq Fractions}
 \usage{
 get_ma_coordinates(
   sorted_sample_df,
@@ -38,7 +38,7 @@ fraction); otherwise \code{NA}.
 }
 \description{
 Computes MA-plot-style coordinates (borrowed from microarray analysis: \code{M}
-= log-ratio, \code{A} = log-abundance) between a positive Ig-Seq fraction and a
+= log-ratio, \code{A} = log-abundance) between a positive IgSeq fraction and a
 negative fraction, per taxon. If a second negative fraction is supplied,
 the same coordinates are also computed between the two negative
 fractions, to serve as an empirical null distribution (see

@@ -2,7 +2,7 @@
 % Please edit documentation in R/ma_plot.R
 \name{plot_ma}
 \alias{plot_ma}
-\title{Plot an Ig-Seq MA Plot}
+\title{Plot an IgSeq MA Plot}
 \usage{
 plot_ma(ma_plot_data, ellipses = FALSE, type = c("facet", "superposed"))
 }

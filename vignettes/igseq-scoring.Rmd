@@ -19,7 +19,7 @@ knitr::opts_chunk$set(
 ```
 
 This vignette covers the package's namesake pipeline: quantifying immunoglobulin (Ig)
-coating per taxon per sample from Ig-Seq sort-fraction 16S data (Ig+/Ig-, optionally a
+coating per taxon per sample from IgSeq sort-fraction 16S data (Ig+/Ig-, optionally a
 second Ig- replicate and/or a pre-sort fraction). For general `phyloseq` diversity
 analysis, see `vignette("diversity-analysis", package = "PhyloIgSeq")` instead — the two
 are complementary and, as the last section here shows, IgSeq scores can themselves be

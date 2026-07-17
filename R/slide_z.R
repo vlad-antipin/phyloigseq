@@ -1,6 +1,6 @@
 #' Get the Sliding Z-Score for One Biological Sample
 #'
-#' Orchestrates the package's sliding Z-score, its novel Ig-Seq scoring
+#' Orchestrates the package's sliding Z-score, its novel IgSeq scoring
 #' statistic: computes MA-plot coordinates ([get_ma_coordinates()]) between
 #' the positive and (first) negative fraction of one biological sample,
 #' estimates a *local* null distribution along the abundance axis

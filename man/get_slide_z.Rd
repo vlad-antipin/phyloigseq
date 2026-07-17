@@ -74,7 +74,7 @@ whole batch — callers are expected to check for this rather than
 assume every sample succeeded.
 }
 \description{
-Orchestrates the package's sliding Z-score, its novel Ig-Seq scoring
+Orchestrates the package's sliding Z-score, its novel IgSeq scoring
 statistic: computes MA-plot coordinates (\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}) between
 the positive and (first) negative fraction of one biological sample,
 estimates a \emph{local} null distribution along the abundance axis

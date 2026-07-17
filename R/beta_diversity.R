@@ -387,7 +387,11 @@
   # For RDA/CCA project all samples using WA scores; dbRDA has no standard projection.
   # capscale (dbRDA) inherits from "rda"/"cca" so check method name, not class.
   get_constrained_coords <- function(scaling) {
-    if (!is.null(fit_sample_names) && method %in% c("rda", "cca")) {
+    # No free (unconditioned) predictor — e.g. confounders-only partial RDA/CCA
+    # — leaves fit$CCA NULL, so there are no "wa" scores to predict(); fall
+    # through to the scores()-based branch below instead.
+    has_free_predictor <- !is.null(fit$CCA) && fit$CCA$rank > 0
+    if (!is.null(fit_sample_names) && method %in% c("rda", "cca") && has_free_predictor) {
       otu_all <- as(otu_table(reverseASV(physeq)), "matrix")
       # predict(type="wa") defaults to model="CCA" — constrained axes only.
       # Explicitly fetch residual (CA) axes too and combine up to n_axes.
@@ -403,7 +407,8 @@
     }
     if (!is.null(fit_sample_names)) {
       sc <- scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
-      return(.warn_and_na_fill("dbRDA", sample_names(physeq), fit_sample_names, sc))
+      method_label <- c(rda = "RDA", cca = "CCA", dbrda = "dbRDA")[[method]]
+      return(.warn_and_na_fill(method_label, sample_names(physeq), fit_sample_names, sc))
     }
     scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
   }
@@ -509,6 +514,8 @@
 #'       plots / percent-explained-variance), or `NULL` for methods without
 #'       them (NMDS).}
 #'     \item{dist}{The `dist` argument, passed through.}
+#'     \item{transform_abundances}{The `transform_abundances` argument,
+#'       passed through.}
 #'     \item{method}{`method`, in its original (non-lowercased) casing.}
 #'     \item{model}{The (possibly `confounders`-augmented) model formula
 #'       string, for constrained methods; `NULL` otherwise.}
@@ -603,7 +610,7 @@ get_beta_diversity <- function(
       ndims = ndims,
       fit_sample_names = fit_sample_names
     )
-  } else if (!is.null(model)) {
+  } else if (!is.null(model) || length(confounders) > 0) {
     ord <- .get_beta_diversity_constrained(
       physeq = physeq,
       physeq_fit = physeq_fit,
@@ -643,6 +650,7 @@ get_beta_diversity <- function(
     eigen_values = eigen_values, # NULL if no eigen values provided for this method
 
     dist = dist, # distance metric
+    transform_abundances = transform_abundances, # abundance transform applied before ordination
     method = method_orig, # name of ordination method
     model = if (method %in% c("rda", "cca", "dbrda")) {
       ord$model # confounders-augmented, from .get_beta_diversity_constrained()
@@ -1792,6 +1800,10 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
         } else {
           "none"
         },
+        paste0(
+          "  transform: ",
+          beta_dispersion_fit$transform_abundances %||% "identity"
+        ),
         if (!is.null(beta_dispersion_fit$fit_filter)) {
           paste0(
             "  fit subset: ",
