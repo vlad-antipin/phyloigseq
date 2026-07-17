@@ -469,11 +469,7 @@ plot_slide_z <- function(
       )
     ) +
     theme_minimal() +
-    theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(size = 10, hjust = 0.5),
-      legend.title = element_text(face = "bold", hjust = 0.5)
-    )
+    .plot_title_theme()
   return(plt)
 }
 
@@ -684,28 +680,24 @@ plot_slide_z <- function(
 #'
 #' @noRd
 .ig_score_base_theme <- function() {
-  theme(
-    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 10, hjust = 0.5),
-    legend.title = element_text(face = "bold", hjust = 0.5),
-    legend.direction = "horizontal",
-    axis.text.y.left = element_text(angle = 0, hjust = 1),
-    strip.text.y.right = element_text(angle = 0, hjust = 0),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
-  )
+  .plot_title_theme() +
+    theme(
+      legend.direction = "horizontal",
+      axis.text.y.left = element_text(angle = 0, hjust = 1),
+      strip.text.y.right = element_text(angle = 0, hjust = 0),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+    )
 }
 
 #' @noRd
 .ig_score_transpose_theme <- function() {
-  theme(
-    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 10, hjust = 0.5),
-    legend.title = element_text(face = "bold", hjust = 0.5),
-    legend.direction = "horizontal",
-    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-    strip.text.y.right = element_text(angle = 0, hjust = 0),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
-  )
+  .plot_title_theme() +
+    theme(
+      legend.direction = "horizontal",
+      axis.text.x.bottom = element_text(angle = 45, hjust = 1),
+      strip.text.y.right = element_text(angle = 0, hjust = 0),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+    )
 }
 
 #' Bubbleplot Render Path For `plot_ig_score()`

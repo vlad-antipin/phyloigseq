@@ -107,14 +107,8 @@ get_alpha_diversity <- function(
   fraction_ids = NULL,
   measure = "Shannon"
 ) {
-  if (!is(physeq, "phyloseq")) {
-    stop("Need a phyloseq object")
-  }
-
-  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-  if (taxa_are_rows(physeq)) {
-    physeq <- t(physeq)
-  }
+  .check_phyloseq(physeq)
+  physeq <- reverseASV(physeq)
 
   if (from_igseq) {
     return(get_igseq_richness(
@@ -125,30 +119,13 @@ get_alpha_diversity <- function(
     ))
   }
 
-  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
-    physeq <- prune_samples(
-      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
-      physeq
-    )
-  }
-
-  # NOTE: agglomerate taxa BEFORE transforming the data
-  if (!is.null(taxrank)) {
-    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
-    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
-  }
-
-  if (!is.null(transform_abundances) && transform_abundances != "identity") {
-    physeq <- microbiome::transform(
-      physeq,
-      transform = transform_abundances,
-      target = "OTU", # TODO: and still, clr will scale over samples
-      shift = 0, # pseudocount added (shifts baseline)
-      scale = 1, # if transform is "scale"
-      log10 = TRUE,
-      reference = 1
-    )
-  }
+  physeq <- .filter_glom_transform_physeq(
+    physeq,
+    fraction_id_name = fraction_id_name,
+    fraction_ids = fraction_ids,
+    taxrank = taxrank,
+    transform_abundances = transform_abundances
+  )
 
   if (
     is(otu_table(physeq), "sparse_otu_table") && identical(measure, "Shannon")

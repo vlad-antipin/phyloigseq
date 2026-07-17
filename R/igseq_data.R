@@ -72,20 +72,13 @@ group_sorted_samples <- function(
   if (!transform_by_sample %in% c("identity", "compositional")) {
     transform_by_sample <- "identity"
   }
-  if (class(physeq) != "phyloseq") {
-    stop("Need a phyloseq object")
-  }
+  .check_phyloseq(physeq)
 
   if (nsamples(physeq) == 0) {
     stop("No samples are present")
   }
 
-  if (!is.null(fraction_id_name) & !is.null(fraction_ids)) {
-    physeq <- prune_samples(
-      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
-      physeq
-    )
-  }
+  physeq <- .prune_by_fraction(physeq, fraction_id_name, fraction_ids)
 
   if (!is.null(taxrank)) {
     physeq <- tax_glom(physeq = physeq, taxrank = taxrank)

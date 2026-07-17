@@ -169,11 +169,7 @@ plot_reads <- function(physeq, min_sample_sum = NA, min_taxa_sum = NA) {
     ylab("Count") +
     ggtitle("Distribution of Total Reads by Sample and Taxon") +
     theme_minimal() +
-    ggplot2::theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(size = 10, hjust = 0.5),
-      legend.title = element_text(face = "bold", hjust = 0.5)
-    )
+    .plot_title_theme()
 
   return(plot)
 }

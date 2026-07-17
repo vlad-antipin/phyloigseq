@@ -265,6 +265,99 @@ reverseASV <- function(physeq) {
   return(physeq)
 }
 
+#' Guard That `physeq` Is a `phyloseq` Object
+#'
+#' Internal. Shared class guard used at the top of every function that
+#' requires a `phyloseq` input. Stops with `error_message` otherwise.
+#'
+#' @param physeq Any object.
+#' @param error_message Message passed to `stop()` if `physeq` is not a
+#'   `phyloseq` object.
+#'
+#' @return `NULL`, invisibly. Called for its side effect (stopping on a bad
+#'   input).
+#'
+#' @noRd
+.check_phyloseq <- function(physeq, error_message = "Need a phyloseq object") {
+  if (!is(physeq, "phyloseq")) {
+    stop(error_message)
+  }
+  invisible(NULL)
+}
+
+#' Restrict a Phyloseq Object to a Sort Fraction
+#'
+#' Internal. Prunes `physeq` down to the samples where
+#' `sample_data(physeq)[[fraction_id_name]] %in% fraction_ids`, if both are
+#' supplied; returns `physeq` unchanged otherwise.
+#'
+#' @param physeq A `phyloseq` object.
+#' @param fraction_id_name,fraction_ids Sample-data column name and the
+#'   values of it to keep. Both must be non-`NULL` for pruning to happen.
+#'
+#' @return `physeq`, pruned or unchanged.
+#'
+#' @noRd
+.prune_by_fraction <- function(physeq, fraction_id_name, fraction_ids) {
+  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
+    physeq <- prune_samples(
+      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
+      physeq
+    )
+  }
+  physeq
+}
+
+#' Prune, Agglomerate, and Transform a Phyloseq Object
+#'
+#' Internal. Shared tail of [get_alpha_diversity()]'s/[get_beta_diversity()]'s
+#' preprocessing, applied in this order: restrict to a sort fraction (via
+#' `.prune_by_fraction()`), optionally agglomerate to `taxrank` (via
+#' [tax_glom()], renaming taxa to the agglomerated rank name), then optionally
+#' apply an abundance transform via [microbiome::transform()].
+#'
+#' @param physeq A `phyloseq` object, already oriented taxa-as-columns (see
+#'   `reverseASV()`).
+#' @param fraction_id_name,fraction_ids Passed to `.prune_by_fraction()`.
+#' @param taxrank `NULL` (no agglomeration) or a taxonomic rank to
+#'   agglomerate to via [tax_glom()].
+#' @param transform_abundances `NULL`/`"identity"` (no transform) or a
+#'   transform name passed to [microbiome::transform()].
+#'
+#' @return `physeq`, preprocessed.
+#'
+#' @noRd
+.filter_glom_transform_physeq <- function(
+  physeq,
+  fraction_id_name,
+  fraction_ids,
+  taxrank,
+  transform_abundances
+) {
+  physeq <- .prune_by_fraction(physeq, fraction_id_name, fraction_ids)
+
+  # NOTE: agglomerate taxa BEFORE transforming the data
+  if (!is.null(taxrank)) {
+    physeq <- tax_glom(physeq = physeq, taxrank = taxrank)
+    # NOTE: names of taxa are not necessarily unique!
+    taxa_names(physeq) <- make.unique(tax_table(physeq)[, taxrank])
+  }
+
+  if (!is.null(transform_abundances) && transform_abundances != "identity") {
+    physeq <- microbiome::transform(
+      physeq,
+      transform = transform_abundances,
+      target = "OTU", # TODO: and still, clr will scale over samples
+      shift = 0, # pseudocount added (shifts baseline)
+      scale = 1, # if transform is "scale"
+      log10 = TRUE,
+      reference = 1
+    )
+  }
+
+  physeq
+}
+
 #' `ggplot2::geom_jitter()` with Vertical Jitter Off by Default
 #'
 #' Internal. Shadows [ggplot2::geom_jitter()] within this package's namespace
@@ -281,6 +374,25 @@ geom_jitter <- function(..., height = 0) {
   } else {
     ggplot2::geom_jitter(..., height = height)
   }
+}
+
+#' Shared Title/Subtitle/Legend-Title `theme()` Block
+#'
+#' Internal. The bold-title/subtitle/legend-title styling repeated verbatim
+#' across [plot_ma()], [plot_slide_z()], `.ig_score_base_theme()`,
+#' `.ig_score_transpose_theme()` (all `ig_score.R`), and [plot_reads()]
+#' (`filter.R`). Callers that need more theme elements add them with a
+#' further `+ theme(...)`.
+#'
+#' @return A [ggplot2::theme()] object.
+#'
+#' @noRd
+.plot_title_theme <- function() {
+  theme(
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    legend.title = element_text(face = "bold", hjust = 0.5)
+  )
 }
 
 #' Is `x` Within `interval`?
@@ -967,9 +1079,7 @@ plot_phylo_tree <- function(
   ladderize = "left",
   ...
 ) {
-  if (is.null(physeq) || !is(physeq, "phyloseq")) {
-    stop("Need a phyloseq object")
-  }
+  .check_phyloseq(physeq)
   if (is.null(access(physeq, "phy_tree"))) {
     stop("Phyloseq object has to contain a tree")
   }
@@ -977,12 +1087,7 @@ plot_phylo_tree <- function(
     stop('`ladderize` must be NULL, "left", or "right"')
   }
 
-  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
-    physeq <- prune_samples(
-      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
-      physeq
-    )
-  }
+  physeq <- .prune_by_fraction(physeq, fraction_id_name, fraction_ids)
 
   if (!is.null(taxrank)) {
     physeq <- tax_glom(physeq = physeq, taxrank = taxrank)

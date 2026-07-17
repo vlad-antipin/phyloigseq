@@ -390,11 +390,7 @@ plot_ma <-
         )
       ) +
       theme_minimal() +
-      theme(
-        plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 10, hjust = 0.5),
-        legend.title = element_text(face = "bold", hjust = 0.5)
-      ) +
+      .plot_title_theme() +
       scale_color_manual(values = c("darkgray", ggsci::pal_npg()(4)))
     #ggsci::scale_color_npg()
 

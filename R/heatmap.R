@@ -54,21 +54,9 @@ get_phylo_heatmap <- function(
   distance = "bray",
   vars_to_remove_na = c()
 ) {
-  if (!is(physeq, "phyloseq")) {
-    stop("Need a phyloseq object")
-  }
-
-  if (!is.null(fraction_id_name) && !is.null(fraction_ids)) {
-    physeq <- prune_samples(
-      sample_data(physeq)[[fraction_id_name]] %in% fraction_ids,
-      physeq
-    )
-  }
-
-  # Force taxa to be columns of otu table - like in internal phyloseq function phyloseq:::veganifyOTU()
-  if (taxa_are_rows(physeq)) {
-    physeq <- t(physeq)
-  }
+  .check_phyloseq(physeq)
+  physeq <- .prune_by_fraction(physeq, fraction_id_name, fraction_ids)
+  physeq <- reverseASV(physeq)
 
   distance <- .resolve_heatmap_distance(physeq, distance)
 
