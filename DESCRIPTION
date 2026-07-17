@@ -15,7 +15,9 @@ Description: Extends 'phyloseq' with tools for microbiota diversity analysis
     sequencing-based tree is unavailable. Designed to support both direct
     analysis scripts and a companion 'shiny' web application.
 License: MIT + file LICENSE
-Depends: 
+URL: https://github.com/vlad-antipin/phyloigseq, https://vlad-antipin.github.io/phyloigseq/
+BugReports: https://github.com/vlad-antipin/phyloigseq/issues
+Depends:
     R (>= 3.5)
 Imports:
     ape,
