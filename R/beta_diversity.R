@@ -36,6 +36,77 @@
   all_scores
 }
 
+#' Fraction of non-zero cells in an `otu_table`
+#'
+#' Cheap for a [sparse_otu_table-class]: reads the backing `dgCMatrix`'s `@x`
+#' length directly, no densification. For a plain (dense) `otu_table`, counts
+#' non-zero cells in the matrix the caller already has in hand.
+#'
+#' Used to decide whether the sparse-matrix euclidean kernel
+#' (`euclidean_sparse()`) is actually worth using: a table with a
+#' zero-destroying transform applied upstream (e.g. CLR, which replaces true
+#' zeros with a small pseudocount) has effectively no sparsity left to
+#' exploit, and representing it as a `dgCMatrix` just adds sparse-matrix
+#' bookkeeping overhead on top of what would otherwise be a plain dense BLAS
+#' `crossprod()` -- benchmarked to be ~40-70% slower than the dense path once
+#' density exceeds ~0.7 at realistic sample/taxa counts (100-300 samples,
+#' 2000-5000 taxa).
+#'
+#' @param ot An `otu_table` (sparse or dense).
+#' @return Numeric in `[0, 1]`.
+#' @noRd
+.otu_table_density <- function(ot) {
+  if (is(ot, "sparse_otu_table")) {
+    length(ot@sparse_data@x) / prod(dim(ot@sparse_data))
+  } else {
+    mat <- as(ot, "matrix")
+    sum(mat != 0, na.rm = TRUE) / length(mat)
+  }
+}
+
+# Below this density, the sparse euclidean kernel (dgCMatrix crossprod) beats
+# the dense decostand()+vegdist() reference with a comfortable margin (>=2x
+# at both benchmarked sizes); above it, dense wins and can be meaningfully
+# faster once density approaches 1 (e.g. after a CLR transform).
+.EUCLIDEAN_SPARSE_DENSITY_THRESHOLD <- 0.5
+
+#' Standardized (z-scored per taxon) euclidean distance, sparse when it's
+#' actually worth it
+#'
+#' Shared by every place in [get_beta_diversity()] where `"euclidean"` is
+#' offered as a distance metric (the unconstrained PCoA/tSNE/UMAP branch and
+#' dbRDA) -- unlike raw [sparse_distance()], euclidean is always standardized
+#' here so that high-abundance taxa don't dominate the distance in
+#' ordination, matching `PCA`'s and `RDA`'s hardcoded `scale = TRUE`
+#' (`.get_beta_diversity_from_abundance()`'s `pca` branch and
+#' `.get_beta_diversity_constrained()`'s `rda` branch): `PCA`/`RDA` and their
+#' distance-based counterparts `PCoA`/`dbRDA` + Euclidean are meant to agree
+#' exactly (up to axis sign).
+#'
+#' Routes through the sparse kernel (`euclidean_sparse()`) when
+#' `.otu_table_density()` says it's worth it, else falls back to the dense
+#' `decostand("standardize")` + `vegdist("euclidean")` reference the sparse
+#' kernel was verified against.
+#'
+#' @param physeq A `phyloseq` object (already reversed to `taxa_are_rows =
+#'   FALSE` by the caller).
+#' @return A [stats::dist] object.
+#' @noRd
+.standardized_euclidean <- function(physeq) {
+  if (.otu_table_density(otu_table(physeq)) <= .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD) {
+    euclidean_sparse(physeq, standardize = TRUE)
+  } else {
+    otu_mat <- as(otu_table(physeq), "matrix")
+    vegdist(
+      decostand(
+        otu_mat[, apply(otu_mat, 2, var, na.rm = TRUE) > 0],
+        method = "standardize"
+      ),
+      method = "euclidean"
+    )
+  }
+}
+
 #' Distance-based ordination methods (PCoA, tSNE, UMAP)
 #'
 #' Handles the `get_beta_diversity()` methods that first reduce `physeq` to a
@@ -91,16 +162,19 @@
       # NOTE: if transform_abundances was applied above (e.g. CLR, Hellinger), this
       # z-score step stacks on top of it. For CLR that is still useful (removes
       # scale differences between taxa); for Hellinger it is redundant but harmless.
-      # TODO: consider routing through sparse_distance() once standardization can be
-      # done sparsely, to avoid materializing the full dense OTU matrix here.
-      if (!is.null(dist) && dist %in% c("euclidean", "manhattan")) {
+      # Euclidean goes through .standardized_euclidean() (sparse when worth it, see
+      # .otu_table_density()); manhattan has no equivalent sparse identity and always
+      # takes the dense path below.
+      if (!is.null(dist) && dist == "euclidean") {
+        dist_matrix <- .standardized_euclidean(physeq)
+      } else if (!is.null(dist) && dist == "manhattan") {
         otu_mat <- as(otu_table(physeq), "matrix")
         dist_matrix <- vegdist(
           decostand(
             otu_mat[, apply(otu_mat, 2, var, na.rm = TRUE) > 0],
             method = "standardize"
           ),
-          method = dist
+          method = "manhattan"
         )
       } else {
         dist_matrix <- sparse_distance(physeq, method = dist)
@@ -374,15 +448,25 @@
       "~",
       model
     ))
-    fit <- vegan::rda(formula, data = df_fit, na.action = na.exclude)
+    # scale = TRUE (z-score each taxon) matches PCA's hardcoded scale = TRUE
+    # above and dbRDA's standardized euclidean below, so RDA and dbRDA +
+    # Euclidean agree exactly (up to axis sign) -- see .standardized_euclidean().
+    fit <- vegan::rda(formula, data = df_fit, scale = TRUE, na.action = na.exclude)
   } else if (method == "dbrda") {
     # Unlike RDA/CCA, dbRDA is fundamentally distance-based: capscale()
     # accepts a pre-computed dist object as the formula LHS and skips its own
-    # (dense) vegdist() call entirely when given one, so fitting it off
-    # sparse_distance() keeps dbRDA off the dense path — verified numerically
-    # identical (site scores, eigenvalues, permutation F-stat) to passing the
-    # raw matrix + dist= method name.
-    dist_obj <- sparse_distance(physeq_fit, method = dist)
+    # (dense) vegdist() call entirely when given one. Euclidean goes through
+    # .standardized_euclidean() (matching RDA's scale = TRUE and staying
+    # sparse whenever the table actually is, see .otu_table_density()); every
+    # other metric goes through sparse_distance() directly, keeping dbRDA off
+    # the dense path -- verified numerically identical (site scores,
+    # eigenvalues, permutation F-stat) to passing the raw matrix + dist=
+    # method name.
+    dist_obj <- if (dist == "euclidean") {
+      .standardized_euclidean(physeq_fit)
+    } else {
+      sparse_distance(physeq_fit, method = dist)
+    }
     formula <- as.formula(paste("dist_obj", "~", model))
     fit <- vegan::capscale(formula, data = df_fit, na.action = na.exclude)
   } else {

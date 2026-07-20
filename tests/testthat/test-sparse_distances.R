@@ -34,6 +34,18 @@ make_pair <- function(
   list(dense = ps_dense, sparse = ps_sparse)
 }
 
+# Reference standardized euclidean, matching the dense path in
+# .get_beta_diversity_from_distance() (R/beta_diversity.R): drop zero-variance
+# taxa, z-score the rest (decostand "standardize"), then euclidean.
+ref_standardized_euclidean <- function(ps) {
+  m <- as(otu_table(ps), "matrix")
+  ot <- if (taxa_are_rows(otu_table(ps))) t(m) else m
+  vegan::vegdist(
+    vegan::decostand(ot[, apply(ot, 2, var, na.rm = TRUE) > 0], "standardize"),
+    method = "euclidean"
+  )
+}
+
 # Reference distance: phyloseq::distance for methods it supports;
 # vegan decostand + vegdist for chord and hellinger.
 ref_distance <- function(ps, method) {
@@ -336,6 +348,73 @@ test_that("[euclidean] two-sample hand-computed formula (1)", {
     1,
     tolerance = 1e-12
   )
+})
+
+# ---- Euclidean standardize = TRUE (used internally by get_beta_diversity()'s
+# sparse-optimized PCoA/euclidean path -- see .otu_table_density() in
+# R/beta_diversity.R) ----
+
+test_that("[euclidean standardize] matches dense decostand+vegdist reference (tar = TRUE)", {
+  expect_equal(
+    as.numeric(euclidean_sparse(pair$sparse, standardize = TRUE)),
+    as.numeric(ref_standardized_euclidean(pair$dense)),
+    tolerance = 1e-8
+  )
+})
+
+test_that("[euclidean standardize] matches dense decostand+vegdist reference (tar = FALSE)", {
+  expect_equal(
+    as.numeric(euclidean_sparse(pair_t$sparse, standardize = TRUE)),
+    as.numeric(ref_standardized_euclidean(pair_t$dense)),
+    tolerance = 1e-8
+  )
+})
+
+test_that("[euclidean standardize] accepts plain dense phyloseq (no sparse_otu_table)", {
+  expect_equal(
+    as.numeric(euclidean_sparse(pair$dense, standardize = TRUE)),
+    as.numeric(ref_standardized_euclidean(pair$dense)),
+    tolerance = 1e-8
+  )
+})
+
+test_that("[euclidean standardize] default is FALSE (unchanged raw euclidean)", {
+  expect_equal(
+    as.numeric(euclidean_sparse(pair$sparse)),
+    as.numeric(sparse_distance(pair$sparse, method = "euclidean")),
+    tolerance = 1e-12
+  )
+})
+
+test_that("[euclidean standardize] a constant-nonzero (zero-variance) taxon is dropped, not NaN", {
+  # t1 is constant (7) across both samples -> zero variance, must be excluded
+  # exactly like the dense reference's `apply(x, 2, var) > 0` filter.
+  mat <- matrix(c(7L, 1L, 3L, 7L, 4L, 9L), nrow = 3, ncol = 2)
+  rownames(mat) <- paste0("t", 1:3)
+  colnames(mat) <- c("s1", "s2")
+  ps <- phyloseq(otu_table(mat, taxa_are_rows = TRUE))
+  ps_sparse <- ps
+  otu_table(ps_sparse) <- sparse_otu_table(otu_table(ps_sparse))
+
+  result <- euclidean_sparse(ps_sparse, standardize = TRUE)
+  expect_false(anyNA(as.numeric(result)))
+  expect_equal(
+    as.numeric(result),
+    as.numeric(ref_standardized_euclidean(ps)),
+    tolerance = 1e-8
+  )
+})
+
+test_that("[euclidean standardize] works at low sparsity (50%) and full density (0%)", {
+  for (sparsity in c(0.5, 0)) {
+    p <- make_pair(n_taxa = 50, n_samples = 10, sparsity = sparsity, seed = 9)
+    expect_equal(
+      as.numeric(euclidean_sparse(p$sparse, standardize = TRUE)),
+      as.numeric(ref_standardized_euclidean(p$dense)),
+      tolerance = 1e-8,
+      info = paste("sparsity =", sparsity)
+    )
+  }
 })
 
 # ---- Canberra specific ----

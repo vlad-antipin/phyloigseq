@@ -117,9 +117,29 @@ manhattan_sparse <- function(ps) {
 }
 
 # Euclidean via the dot-product identity: ||xi - xj||^2 = ||xi||^2 + ||xj||^2 - 2*(xi.xj)
-euclidean_sparse <- function(ps) {
+#
+# `standardize = TRUE` reproduces vegan::decostand(x, "standardize") (per-taxon
+# z-score) followed by euclidean: decostand() also centers each taxon, but
+# centering drops out of a euclidean distance identically (verified numerically
+# against the dense reference), so scaling each taxon by 1/sd alone reproduces
+# it while preserving the zero pattern -- no new non-zeros are introduced, so
+# this stays sparse. Zero-variance taxa are dropped first (matching the
+# `var > 0` filter the dense reference applies before decostand(), which exists
+# to avoid a 0/0 during scaling); dropping them is exact, not an approximation,
+# since a constant taxon becomes the all-zero vector after centering anyway and
+# so never contributes to the distance.
+euclidean_sparse <- function(ps, standardize = FALSE) {
   sp <- get_sp_taxa_by_samples(ps)
   nms <- colnames(sp)
+  if (standardize) {
+    n <- ncol(sp)
+    row_mean <- Matrix::rowSums(sp) / n
+    row_var <- (Matrix::rowSums(sp^2) - n * row_mean^2) / (n - 1)
+    keep <- row_var > 0
+    sp <- sp[keep, , drop = FALSE]
+    row_sd <- sqrt(row_var[keep])
+    sp@x <- sp@x / row_sd[sp@i + 1L]
+  }
   D <- as.matrix(Matrix::crossprod(sp)) # n x n dot-product matrix
   norm2 <- diag(D)
   n <- ncol(sp)

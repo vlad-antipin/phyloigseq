@@ -211,6 +211,140 @@ test_that("get_beta_diversity agglomerates by taxrank before ordination", {
   expect_equal(nrow(bd$loadings[[1]]), 3L)
 })
 
+# ---- get_beta_diversity(dist = "euclidean"): sparse/dense density gating ----
+# make_bd_ps() itself is unusable here: rpois(lambda = 20) essentially never
+# returns 0, so it's already ~100% dense regardless of the sparsity this
+# section wants to control.
+
+make_bd_ps_density <- function(
+  n_samples = 10,
+  n_taxa = 60,
+  sparsity = 0.9,
+  seed = 42
+) {
+  set.seed(seed)
+  samp_nms <- paste0("S", seq_len(n_samples))
+  taxa_nms <- paste0("T", seq_len(n_taxa))
+  mat <- matrix(0L, n_taxa, n_samples, dimnames = list(taxa_nms, samp_nms))
+  n_nz <- max(2L, round((1 - sparsity) * n_taxa * n_samples))
+  mat[sample(n_taxa * n_samples, n_nz)] <- sample(1L:5000L, n_nz, replace = TRUE)
+  mat[1, ] <- mat[1, ] + 5 # avoid an all-zero taxon
+  mat[, 1] <- mat[, 1] + 5 # avoid an all-zero sample
+
+  sdata <- data.frame(
+    group = rep(c("A", "B"), length.out = n_samples),
+    row.names = samp_nms
+  )
+  taxtab <- matrix(taxa_nms, nrow = n_taxa, dimnames = list(taxa_nms, "taxon_id"))
+
+  phyloseq(
+    otu_table(mat, taxa_are_rows = TRUE),
+    sample_data(sdata),
+    tax_table(taxtab)
+  )
+}
+
+# Reference PCoA-on-standardized-euclidean, independent of which internal
+# branch get_beta_diversity() takes (dense decostand()+vegdist() vs the
+# sparse euclidean_sparse(standardize = TRUE) kernel).
+ref_pcoa_euclidean_coords <- function(ps, n_axes) {
+  otu_mat <- as(otu_table(reverseASV(ps)), "matrix")
+  ref <- vegan::vegdist(
+    vegan::decostand(
+      otu_mat[, apply(otu_mat, 2, var, na.rm = TRUE) > 0],
+      "standardize"
+    ),
+    method = "euclidean"
+  )
+  fit <- vegan::wcmdscale(ref, eig = TRUE)
+  vegan::scores(fit, display = "sites", choices = seq_len(n_axes))
+}
+
+test_that(".otu_table_density counts non-zero cells for a dense otu_table", {
+  ps <- make_bd_ps_density(sparsity = 0.9)
+  mat <- as(otu_table(ps), "matrix")
+  expect_equal(.otu_table_density(otu_table(ps)), sum(mat != 0) / length(mat))
+})
+
+test_that(".otu_table_density reads nnz directly from a sparse_otu_table", {
+  ps <- make_bd_ps_density(sparsity = 0.9)
+  ps_sparse <- as_sparse_phyloseq(ps)
+  mat <- as(otu_table(ps), "matrix")
+  expect_equal(
+    .otu_table_density(otu_table(ps_sparse)),
+    sum(mat != 0) / length(mat)
+  )
+})
+
+test_that("get_beta_diversity(dist='euclidean') matches the dense reference below the sparse-density threshold", {
+  ps <- make_bd_ps_density(sparsity = 0.9)
+  expect_lt(.otu_table_density(otu_table(ps)), .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD)
+  bd <- get_beta_diversity(ps, method = "PCoA", dist = "euclidean")
+  n_axes <- ncol(bd$coords[[1]])
+  ref_coords <- ref_pcoa_euclidean_coords(ps, n_axes)
+  cors <- sapply(
+    seq_len(n_axes),
+    function(k) abs(cor(bd$coords[[1]][, k], ref_coords[, k]))
+  )
+  expect_equal(cors, rep(1, n_axes), tolerance = 1e-6)
+})
+
+test_that("get_beta_diversity(dist='euclidean') matches the dense reference above the sparse-density threshold (e.g. post-CLR)", {
+  ps <- make_bd_ps_density(sparsity = 0) # fully dense, mimics a CLR-transformed table
+  expect_gt(.otu_table_density(otu_table(ps)), .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD)
+  bd <- get_beta_diversity(ps, method = "PCoA", dist = "euclidean")
+  n_axes <- ncol(bd$coords[[1]])
+  ref_coords <- ref_pcoa_euclidean_coords(ps, n_axes)
+  cors <- sapply(
+    seq_len(n_axes),
+    function(k) abs(cor(bd$coords[[1]][, k], ref_coords[, k]))
+  )
+  expect_equal(cors, rep(1, n_axes), tolerance = 1e-6)
+})
+
+# `sign_invariant_cor()` is used below to compare two ordinations' site
+# scores axis-by-axis: eigen-decomposition-based methods (PCA/PCoA, RDA/dbRDA)
+# are only defined up to an arbitrary sign flip per axis, so a plain
+# `expect_equal()` on the raw coordinates would be a false negative.
+sign_invariant_cor <- function(a, b, n_axes) {
+  sapply(seq_len(n_axes), function(k) abs(cor(a[, k], b[, k])))
+}
+
+test_that("PCA and PCoA + Euclidean agree exactly, up to axis sign (same math, different route)", {
+  ps <- make_bd_ps_density(sparsity = 0.9)
+  expect_lt(.otu_table_density(otu_table(ps)), .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD)
+  bd_pca <- get_beta_diversity(ps, method = "PCA")
+  bd_pcoa <- get_beta_diversity(ps, method = "PCoA", dist = "euclidean")
+  n_axes <- min(ncol(bd_pca$coords[[1]]), ncol(bd_pcoa$coords[[1]]))
+  cors <- sign_invariant_cor(bd_pca$coords[[1]], bd_pcoa$coords[[1]], n_axes)
+  expect_equal(cors, rep(1, n_axes), tolerance = 1e-6)
+})
+
+test_that("RDA and dbRDA + Euclidean agree exactly, up to axis sign (RDA's scale=TRUE matches dbRDA's standardized euclidean)", {
+  ps <- make_bd_ps_density(sparsity = 0.9)
+  expect_lt(.otu_table_density(otu_table(ps)), .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD)
+  bd_rda <- get_beta_diversity(ps, method = "RDA", model = "group")
+  bd_dbrda <- get_beta_diversity(ps, method = "dbRDA", model = "group", dist = "euclidean")
+  n_axes <- min(ncol(bd_rda$coords[[1]]), ncol(bd_dbrda$coords[[1]]))
+  cors <- sign_invariant_cor(bd_rda$coords[[1]], bd_dbrda$coords[[1]], n_axes)
+  expect_equal(cors, rep(1, n_axes), tolerance = 1e-6)
+  expect_equal(
+    as.numeric(bd_rda$eigen_values[seq_len(n_axes)]),
+    as.numeric(bd_dbrda$eigen_values[seq_len(n_axes)]),
+    tolerance = 1e-6
+  )
+})
+
+test_that("RDA and dbRDA + Euclidean still agree above the sparse-density threshold (e.g. post-CLR)", {
+  ps <- make_bd_ps_density(sparsity = 0) # fully dense, mimics a CLR-transformed table
+  expect_gt(.otu_table_density(otu_table(ps)), .EUCLIDEAN_SPARSE_DENSITY_THRESHOLD)
+  bd_rda <- get_beta_diversity(ps, method = "RDA", model = "group")
+  bd_dbrda <- get_beta_diversity(ps, method = "dbRDA", model = "group", dist = "euclidean")
+  n_axes <- min(ncol(bd_rda$coords[[1]]), ncol(bd_dbrda$coords[[1]]))
+  cors <- sign_invariant_cor(bd_rda$coords[[1]], bd_dbrda$coords[[1]], n_axes)
+  expect_equal(cors, rep(1, n_axes), tolerance = 1e-6)
+})
+
 # ---- stat_beta_diversity() ----
 
 make_bd_fit <- function(n_samples = 24, seed = 42) {
