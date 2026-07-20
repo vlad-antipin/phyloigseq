@@ -21,7 +21,8 @@ getPhyloIgSeq(
   window_size = 50,
   empirical_null_distribution = TRUE,
   confidence_levels = NULL,
-  scores = IG_SCORES
+  scores = IG_SCORES,
+  taxon_id_source = c("sequential", "original")
 )
 }
 \arguments{
@@ -58,6 +59,13 @@ getPhyloIgSeq(
 \item{confidence_levels}{Optional. Confidence levels for scoring.}
 
 \item{scores}{Vector of score names to compute.}
+
+\item{taxon_id_source}{How to derive the \code{taxon_id} used throughout \code{ig_coating}/\code{tax_table}:
+\code{"sequential"} (default) renumbers taxa as fresh sequential integers, recoverable via
+\code{tax_table$taxon_name}; \code{"original"} uses \code{physeq}'s own (possibly \code{taxrank}-agglomerated,
+and not necessarily ASV-level if \code{physeq} was already agglomerated upstream) taxa name
+directly as \code{taxon_id}, matching the identifiers shown by \code{\link[=group_sorted_samples]{group_sorted_samples()}} when
+called directly (e.g. for a single-sample preview).}
 }
 \value{
 A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per

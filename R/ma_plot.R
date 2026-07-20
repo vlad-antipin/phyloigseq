@@ -389,7 +389,6 @@ plot_ma <-
           "Log-Ratio: $\\log_{2}\\left(\\frac{\\fraction_{1}}{\\fraction_{2}}\\right)$"
         )
       ) +
-      theme_minimal() +
       .plot_title_theme() +
       scale_color_manual(values = c("darkgray", ggsci::pal_npg()(4)))
     #ggsci::scale_color_npg()

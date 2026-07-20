@@ -359,24 +359,32 @@
     )
   }
 
-  formula <- as.formula(paste(
-    "as(otu_table(reverseASV(physeq_fit)), 'matrix')",
-    "~",
-    model
-  ))
   df_fit <- as(sample_data(physeq_fit), "data.frame")
 
   if (method == "cca") {
+    formula <- as.formula(paste(
+      "as(otu_table(reverseASV(physeq_fit)), 'matrix')",
+      "~",
+      model
+    ))
     fit <- vegan::cca(formula, data = df_fit, na.action = na.exclude)
   } else if (method == "rda") {
+    formula <- as.formula(paste(
+      "as(otu_table(reverseASV(physeq_fit)), 'matrix')",
+      "~",
+      model
+    ))
     fit <- vegan::rda(formula, data = df_fit, na.action = na.exclude)
   } else if (method == "dbrda") {
-    fit <- vegan::capscale(
-      formula,
-      data = df_fit,
-      na.action = na.exclude,
-      dist = dist
-    )
+    # Unlike RDA/CCA, dbRDA is fundamentally distance-based: capscale()
+    # accepts a pre-computed dist object as the formula LHS and skips its own
+    # (dense) vegdist() call entirely when given one, so fitting it off
+    # sparse_distance() keeps dbRDA off the dense path — verified numerically
+    # identical (site scores, eigenvalues, permutation F-stat) to passing the
+    # raw matrix + dist= method name.
+    dist_obj <- sparse_distance(physeq_fit, method = dist)
+    formula <- as.formula(paste("dist_obj", "~", model))
+    fit <- vegan::capscale(formula, data = df_fit, na.action = na.exclude)
   } else {
     stop("Invalid method")
   }
@@ -1205,12 +1213,7 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
     xlab("Dimension") +
     ylab("% of variability explained") +
     ggtitle("Scree plot") +
-    theme_minimal() +
-    ggplot2::theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(size = 10, hjust = 0.5),
-      legend.title = element_text(face = "bold", hjust = 0.5)
-    )
+    .plot_title_theme()
   return(plt)
 }
 
@@ -1850,11 +1853,7 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
         }
       )
     ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(size = 10, hjust = 0.5)
-    ) +
+    .plot_title_theme() +
     ggsci::scale_fill_npg()
 }
 

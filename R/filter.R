@@ -168,7 +168,6 @@ plot_reads <- function(physeq, min_sample_sum = NA, min_taxa_sum = NA) {
     xlab("Total Reads") +
     ylab("Count") +
     ggtitle("Distribution of Total Reads by Sample and Taxon") +
-    theme_minimal() +
     .plot_title_theme()
 
   return(plot)

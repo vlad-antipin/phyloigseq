@@ -447,8 +447,6 @@ plot_alpha_diversity <- function(
     }
   }
 
-  plt <- plt + theme_minimal()
-
   if (is_valid_facet_row && is_valid_facet_col) {
     plt <- plt +
       facet_grid(
@@ -481,10 +479,7 @@ plot_alpha_diversity <- function(
 
   plt <- plt +
     labs(title = "Alpha Diversity") +
-    theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      legend.title = element_text(face = "bold", hjust = 0.5)
-    )
+    .plot_title_theme()
   if (!is.null(group) && !is.numeric(full_sample_data[[group]])) {
     plt <- plt +
       ggsci::scale_fill_npg()
@@ -718,5 +713,5 @@ plot_igseq_richness <- function(igseq_richness, group, color, exclude_ns = FALSE
     geom_jitter() +
     geom_violin(alpha = 0.1) +
     facet_grid(~significance) +
-    theme_minimal()
+    .plot_title_theme()
 }

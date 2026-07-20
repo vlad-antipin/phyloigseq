@@ -468,7 +468,6 @@ plot_slide_z <- function(
         }
       )
     ) +
-    theme_minimal() +
     .plot_title_theme()
   return(plt)
 }
@@ -689,8 +688,7 @@ plot_slide_z <- function(
     theme(
       legend.direction = "horizontal",
       axis.text.y.left = element_text(angle = 0, hjust = 1),
-      strip.text.y.right = element_text(angle = 0, hjust = 0),
-      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+      strip.text.y.right = element_text(angle = 0, hjust = 0)
     )
 }
 
@@ -700,8 +698,7 @@ plot_slide_z <- function(
     theme(
       legend.direction = "horizontal",
       axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-      strip.text.y.right = element_text(angle = 0, hjust = 0),
-      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+      strip.text.y.right = element_text(angle = 0, hjust = 0)
     )
 }
 
@@ -758,7 +755,6 @@ plot_slide_z <- function(
       transpose,
       scales = "free"
     ) +
-    theme_minimal() +
     labs(x = NULL, y = NULL, fill = paste(score_agglom_fn, score_name)) +
     .ig_score_base_theme()
 }
@@ -847,7 +843,6 @@ plot_slide_z <- function(
       transpose,
       scales = if (transpose) "free_x" else "free_y"
     ) +
-    theme_minimal() +
     labs(x = paste(score_agglom_fn, score_name), y = NULL) +
     .ig_score_base_theme()
 }

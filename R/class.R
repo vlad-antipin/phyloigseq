@@ -179,6 +179,12 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param empirical_null_distribution Logical. Whether to estimate null distribution.
 #' @param confidence_levels Optional. Confidence levels for scoring.
 #' @param scores Vector of score names to compute.
+#' @param taxon_id_source How to derive the `taxon_id` used throughout `ig_coating`/`tax_table`:
+#'   `"sequential"` (default) renumbers taxa as fresh sequential integers, recoverable via
+#'   `tax_table$taxon_name`; `"original"` uses `physeq`'s own (possibly `taxrank`-agglomerated,
+#'   and not necessarily ASV-level if `physeq` was already agglomerated upstream) taxa name
+#'   directly as `taxon_id`, matching the identifiers shown by [group_sorted_samples()] when
+#'   called directly (e.g. for a single-sample preview).
 #'
 #' @return A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per
 #'   taxon/sample with the requested \code{scores} as columns (also recorded in \code{score_names})
@@ -220,9 +226,11 @@ getPhyloIgSeq <- function(
   window_size = 50,
   empirical_null_distribution = TRUE,
   confidence_levels = NULL,
-  scores = IG_SCORES
+  scores = IG_SCORES,
   # TODO: purity corrected scores
+  taxon_id_source = c("sequential", "original")
 ) {
+  taxon_id_source <- match.arg(taxon_id_source)
   if (is.null(second_negative_fraction_name) & empirical_null_distribution) {
     warning(
       "No second negative fraction furnished, cannot model empirical null ( Ig-.1 vs Ig-.2) distribution...\n"
@@ -235,10 +243,18 @@ getPhyloIgSeq <- function(
   }
 
   original_taxa_names <- taxa_names(physeq)
-  # To make matching and computation easier, don't carry long strings as taxa names
-  taxon_ids <- seq_along(original_taxa_names)
-  names(original_taxa_names) <- taxon_ids # keep the mapping
-  taxa_names(physeq) <- taxon_ids
+  if (taxon_id_source == "sequential") {
+    # To make matching and computation easier, don't carry long strings as taxa names
+    taxon_ids <- seq_along(original_taxa_names)
+    names(original_taxa_names) <- taxon_ids # keep the mapping
+    taxa_names(physeq) <- taxon_ids
+  } else {
+    # "original": keep physeq's own (possibly taxrank-agglomerated) taxa_names
+    # as taxon_id directly instead of renumbering — original_taxa_names becomes
+    # an identity mapping so downstream lookups (e.g. `taxon_name = original_taxa_names[taxon_ids_to_keep]`
+    # below) still work unchanged.
+    names(original_taxa_names) <- original_taxa_names
+  }
 
   all_fraction_names <- c(
     positive_fraction_name,

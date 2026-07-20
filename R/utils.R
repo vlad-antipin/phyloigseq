@@ -384,23 +384,25 @@ geom_jitter <- function(..., height = 0) {
   }
 }
 
-#' Shared Title/Subtitle/Legend-Title `theme()` Block
+#' Shared Base Theme + Title/Subtitle/Legend-Title `theme()` Block
 #'
-#' Internal. The bold-title/subtitle/legend-title styling repeated verbatim
-#' across [plot_ma()], [plot_slide_z()], `.ig_score_base_theme()`,
-#' `.ig_score_transpose_theme()` (all `ig_score.R`), and [plot_reads()]
-#' (`filter.R`). Callers that need more theme elements add them with a
-#' further `+ theme(...)`.
+#' Internal. The one shared look-and-feel for every plot in the package:
+#' [ggplot2::theme_bw()] as the base (so facets get a visible panel border
+#' and boxed strip label for free, instead of `theme_minimal()`'s none), plus
+#' bold title/subtitle/legend-title styling on top. Change the defaults here
+#' to re-style every plot at once. Callers that need more theme elements add
+#' them with a further `+ theme(...)`.
 #'
 #' @return A [ggplot2::theme()] object.
 #'
 #' @noRd
 .plot_title_theme <- function() {
-  theme(
-    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 10, hjust = 0.5),
-    legend.title = element_text(face = "bold", hjust = 0.5)
-  )
+  theme_bw() +
+    theme(
+      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 10, hjust = 0.5),
+      legend.title = element_text(face = "bold", hjust = 0.5)
+    )
 }
 
 #' Is `x` Within `interval`?
@@ -535,13 +537,8 @@ plot_rarefaction <- function(ps, step = 100, show_legend = TRUE) {
     )
 
   p <- p +
-    theme_minimal() +
+    .plot_title_theme() +
     ggplot2::theme(
-      plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(size = 10, hjust = 0.5),
-      legend.title = if (show_legend) {
-        element_text(face = "bold", hjust = 0.5)
-      },
       legend.position = if (show_legend) {
         "right"
       } else {
@@ -605,7 +602,7 @@ plot_seq_depth <- function(
   if (type == "bar") {
     p <- ggplot(depth_df, aes(x = Sample, y = Depth)) +
       geom_bar(stat = "identity") +
-      theme_bw() +
+      .plot_title_theme() +
       labs(x = "Sample", y = "Sequencing depth") +
       theme(axis.text.x = element_text(angle = 90, hjust = 1))
   } else {
@@ -619,7 +616,7 @@ plot_seq_depth <- function(
     p <- ggplot(depth_df, aes(x = .data[[x_var]], y = Depth)) +
       geom_boxplot(outlier.shape = NA) +
       geom_jitter(width = 0.2, alpha = 0.7) +
-      theme_bw() +
+      .plot_title_theme() +
       labs(x = x_var, y = "Sequencing depth")
 
     if (!is.null(facet_var)) {
