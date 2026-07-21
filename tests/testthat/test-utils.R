@@ -380,6 +380,119 @@ test_that("make_unique_taxa_table cascades correctly across three rank columns",
   expect_equal(result$Species, c("caccae", "caccae", "caccae.1"))
 })
 
+# ---- reorder_taxonomy_columns ----
+
+test_that("reorder_taxonomy_columns leaves a well-formed table unchanged", {
+  taxa_table <- data.frame(
+    Kingdom = c("Bacteria", "Bacteria", "Bacteria", "Bacteria"),
+    Genus = c("Bacteroides", "Bacteroides", "Anaerostipes", "Anaerostipes"),
+    Species = c("caccae", "vulgatus", "hadrus", "caccae")
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(result$taxa_table, taxa_table)
+  expect_equal(result$moved, character(0))
+})
+
+test_that("reorder_taxonomy_columns relocates a leading fully-unique ASV id column", {
+  taxa_table <- data.frame(
+    ASV = paste0("asv", 1:4),
+    Genus = c("Bacteroides", "Bacteroides", "Anaerostipes", "Anaerostipes"),
+    Species = c("caccae", "vulgatus", "hadrus", "caccae"),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(colnames(result$taxa_table), c("Genus", "Species", "ASV"))
+  expect_equal(result$moved, "ASV")
+  expect_equal(result$taxa_table$Genus, taxa_table$Genus)
+})
+
+test_that("reorder_taxonomy_columns relocates two leading id columns of different cardinality", {
+  taxa_table <- data.frame(
+    ASV = paste0("asv", 1:6),
+    OTU_id = c("otu1", "otu2", "otu3", "otu4", "otu5", "otu5"),
+    Genus = c(
+      "Bacteroides",
+      "Bacteroides",
+      "Bacteroides",
+      "Anaerostipes",
+      "Anaerostipes",
+      "Anaerostipes"
+    ),
+    Species = c("caccae", "caccae", "vulgatus", "hadrus", "hadrus", "caccae"),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(colnames(result$taxa_table), c("Genus", "Species", "ASV", "OTU_id"))
+  expect_equal(result$moved, c("ASV", "OTU_id"))
+})
+
+test_that("reorder_taxonomy_columns still relocates a leading id column tied with a later column", {
+  # ASV (4 uniques) happens to tie with Species (also fully unique) further right, but
+  # the anomaly is local (ASV vs its immediate neighbour Genus), so it's still flagged.
+  taxa_table <- data.frame(
+    ASV = paste0("asv", 1:4),
+    Genus = c("Bacteroides", "Bacteroides", "Anaerostipes", "Anaerostipes"),
+    Species = paste0("sp", 1:4),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(colnames(result$taxa_table), c("Genus", "Species", "ASV"))
+  expect_equal(result$moved, "ASV")
+})
+
+test_that("reorder_taxonomy_columns does not flag exactly tied adjacent leading columns (known limitation)", {
+  # ASV and OTU_id both have 4 (fully unique) distinct values -- an exact tie at the
+  # very first comparison, which the local/adjacent check can't disambiguate from a
+  # legitimate rank column, so it conservatively leaves the table untouched.
+  taxa_table <- data.frame(
+    ASV = paste0("asv", 1:4),
+    OTU_id = paste0("otu", 1:4),
+    Genus = c("Bacteroides", "Bacteroides", "Anaerostipes", "Anaerostipes"),
+    Species = c("caccae", "caccae", "hadrus", "hadrus"),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(result$taxa_table, taxa_table)
+  expect_equal(result$moved, character(0))
+})
+
+test_that("reorder_taxonomy_columns ignores a dip occurring later in an otherwise normal hierarchy", {
+  # Class (8) dips below Phylum (15) -- a plausible real-world sparse-classification
+  # artifact, not a leading id column -- so nothing before it should be touched.
+  taxa_table <- data.frame(
+    Kingdom = rep("Bacteria", 8),
+    Phylum = paste0("phy", c(1, 2, 3, 4, 5, 6, 7, 8)),
+    Class = paste0("cls", c(1, 1, 2, 2, 3, 3, 4, 4)),
+    Species = paste0("sp", 1:8),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(result$taxa_table, taxa_table)
+  expect_equal(result$moved, character(0))
+})
+
+test_that("reorder_taxonomy_columns detects a leading id column even with a highly unique final rank", {
+  # Regression test: a legitimately high-cardinality trailing rank (e.g. an implicit
+  # ASV/species-name rank) must not mask an anomaly anchored at the front.
+  taxa_table <- data.frame(
+    ASV_id = paste0("id", 1:20),
+    Phylum = rep(c("Bacteroidota", "Firmicutes"), 10),
+    Class = paste0("cls", rep(1:4, 5)),
+    Species = paste0("sp", 1:20),
+    stringsAsFactors = FALSE
+  )
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(colnames(result$taxa_table), c("Phylum", "Class", "Species", "ASV_id"))
+  expect_equal(result$moved, "ASV_id")
+})
+
+test_that("reorder_taxonomy_columns leaves single-column tables unchanged", {
+  taxa_table <- data.frame(Genus = c("Bacteroides", "Anaerostipes"))
+  result <- reorder_taxonomy_columns(taxa_table)
+  expect_equal(result$taxa_table, taxa_table)
+  expect_equal(result$moved, character(0))
+})
+
 # ---- impute_with_central_tendency ----
 
 test_that("impute_with_central_tendency fills numeric NAs with the column mean/median", {

@@ -251,12 +251,37 @@ IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
 # `hasArg()` in `geom_jitter()` above).
 utils::globalVariables(c(
   "IG_SCORES",
-  "A", "M", "Comp1", "Comp2", "Depth", "Names", "Reads", "Richness",
-  "Sample", "Site", "Species", "Threshold", "TotalReads",
-  "agglom_score", "comparison", "ellipse_level", "hover_text",
-  "null_abundance", "null_change", "obs_abundance", "obs_change",
-  "p_label", "point_color", "position", "prop_var", "sample_id",
-  "taxon_id", "tooltip", "x", "y", "zero_treatment"
+  "A",
+  "M",
+  "Comp1",
+  "Comp2",
+  "Depth",
+  "Names",
+  "Reads",
+  "Richness",
+  "Sample",
+  "Site",
+  "Species",
+  "Threshold",
+  "TotalReads",
+  "agglom_score",
+  "comparison",
+  "ellipse_level",
+  "hover_text",
+  "null_abundance",
+  "null_change",
+  "obs_abundance",
+  "obs_change",
+  "p_label",
+  "point_color",
+  "position",
+  "prop_var",
+  "sample_id",
+  "taxon_id",
+  "tooltip",
+  "x",
+  "y",
+  "zero_treatment"
 ))
 
 #' Reorient a Phyloseq OTU Table to Taxa-as-Columns
@@ -699,7 +724,8 @@ rarefy_abundances <-
         ]
       } else {
         abundance_table <- abundance_table[
-          sample_sums_fn(abundance_table) >= common_count_sum, ,
+          sample_sums_fn(abundance_table) >= common_count_sum,
+          ,
           drop = FALSE
         ]
       }
@@ -726,7 +752,8 @@ rarefy_abundances <-
     if (trim_taxa) {
       if (taxa_are_rows) {
         abundance_table <- abundance_table[
-          taxa_sums_fn(abundance_table) > 0, ,
+          taxa_sums_fn(abundance_table) > 0,
+          ,
           drop = FALSE
         ]
       } else {
@@ -898,6 +925,87 @@ make_unique_taxa_table <- function(taxa_table) {
   return(taxa_table)
 }
 
+#' Relocate Identifier-Like Leading Columns In A Taxonomy Table
+#'
+#' Some pipelines/tools export taxonomy tables with an ASV/OTU identifier column
+#' glued onto the front of the rank columns instead of into row names. Because
+#' [make_unique_taxa_table()], [tax_glom()] and PhyloIgSeq's taxonomy-tree builders
+#' (e.g. [build_taxonomy_tree_hierarchy()]) all assume rank columns run from highest
+#' (leftmost) to lowest/finest (rightmost) rank, a leading identifier column silently
+#' corrupts every one of them. This detects such columns with a heuristic and moves
+#' them after the last rank column.
+#'
+#' @details
+#' Heuristic: a genuine rank hierarchy starts coarse (Kingdom/Phylum have few distinct
+#' values) and gets finer (more distinct values) moving right, so a column is only
+#' suspicious if it is *more* unique than the column immediately after it -- a local
+#' drop that shouldn't happen this early in a real hierarchy. Starting from column 1,
+#' columns are added to the suspect prefix for as long as each one strictly outnumbers
+#' its very next neighbour; the scan stops (and nothing further right is touched) at
+#' the first column that isn't strictly more unique than its neighbour. This is
+#' deliberately anchored to the front and deliberately local: identifier columns are
+#' assumed to be prepended (a contiguous run starting at column 1), and comparing only
+#' to the immediate neighbour (rather than to every column further right) means a dip
+#' occurring later in the table -- e.g. a sparsely-classified middle rank with fewer
+#' distinct values than the rank before it, which is common in real data -- is left
+#' alone, and a legitimately high-cardinality final rank (taxon names are often
+#' appended as an implicit finest rank, see [make_unique_taxa_table()]) can't mask an
+#' anomaly at the front by making "everything to the right" look falsely diverse.
+#' Because the check only looks one column ahead, two or more leading identifier
+#' columns with *exactly* tied distinct-value counts are not flagged: an exact tie is
+#' genuinely ambiguous from distinct-value counts alone, and stopping there is the
+#' safer trade-off given the alternative is risking misclassification of real rank
+#' columns elsewhere in the table.
+#'
+#' @param taxa_table A taxonomy matrix/data frame (e.g. a `phyloseq::tax_table`), ranks
+#'   as columns ordered from highest (leftmost) to lowest (rightmost), taxa as rows.
+#'
+#' @return A list with `taxa_table` (columns reordered so that flagged columns are
+#'   moved after the last rank column, relative order otherwise unchanged) and `moved`
+#'   (character vector of the column names that were relocated, in their original
+#'   left-to-right order; empty if none were flagged).
+#'
+#' @examples
+#' taxa_table <- data.frame(
+#'   ASV = paste0("asv", 1:4),
+#'   Genus = c("Bacteroides", "Bacteroides", "Anaerostipes", "Anaerostipes"),
+#'   Species = c("caccae", "caccae", "hadrus", "hadrus")
+#' )
+#' reorder_taxonomy_columns(taxa_table)
+#'
+#' @export
+reorder_taxonomy_columns <- function(taxa_table) {
+  n <- ncol(taxa_table)
+  if (n < 2) {
+    return(list(taxa_table = taxa_table, moved = character(0)))
+  }
+
+  nunique <- vapply(
+    seq_len(n),
+    function(i) length(unique(taxa_table[, i])),
+    integer(1)
+  )
+
+  moved <- integer(0)
+  for (i in seq_len(n - 1)) {
+    if (nunique[i] > nunique[i + 1]) {
+      moved <- c(moved, i)
+    } else {
+      break
+    }
+  }
+
+  if (length(moved) == 0) {
+    return(list(taxa_table = taxa_table, moved = character(0)))
+  }
+
+  new_order <- c(setdiff(seq_len(n), moved), moved)
+  list(
+    taxa_table = taxa_table[, new_order, drop = FALSE],
+    moved = colnames(taxa_table)[moved]
+  )
+}
+
 #' Impute Missing Values With A Column's Central Tendency
 #'
 #' Fills `NA`s column-wise: numeric columns with their mean/median/mode (per
@@ -980,7 +1088,10 @@ dataImpute <- function(
   add_imputation_indicators = FALSE
 ) {
   method <- match.arg(method)
-  data_to_impute <- data_tmp[, !colnames(data_tmp) %in% exceptions, drop = FALSE]
+  data_to_impute <- data_tmp[,
+    !colnames(data_tmp) %in% exceptions,
+    drop = FALSE
+  ]
 
   if (method == "KNN") {
     all_na_cols <- colnames(data_to_impute)[
@@ -989,7 +1100,8 @@ dataImpute <- function(
     if (length(all_na_cols) > 0) {
       stop(
         "dataImpute: method = \"KNN\" cannot impute column(s) with no observed ",
-        "values: ", paste(all_na_cols, collapse = ", "),
+        "values: ",
+        paste(all_na_cols, collapse = ", "),
         ". Drop them first or choose a different `method`.",
         call. = FALSE
       )
