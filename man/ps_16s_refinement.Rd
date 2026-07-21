@@ -8,7 +8,10 @@
 A \code{\link[phyloseq]{phyloseq}} object with:
 \describe{
 \item{otu_table}{515 taxa x 37 samples}
-\item{sample_data}{37 samples x 9 variables}
+\item{sample_data}{37 samples x 10 variables, including
+\code{LogConcentration}, the base-10 logarithm of \code{Concentration}
+(e.g. \code{8} for \code{"10^8"}), provided as a continuous sample
+variable}
 \item{tax_table}{515 taxa x 7 taxonomic ranks (Kingdom to Species)}
 \item{phy_tree}{515 tips, 513 internal nodes}
 }
@@ -18,7 +21,7 @@ ps_16s_refinement
 }
 \description{
 A \code{phyloseq} object used to benchmark and compare different 16S
-sequencing approaches. Contains 515 taxa across 37 samples with 9 sample
+sequencing approaches. Contains 515 taxa across 37 samples with 10 sample
 metadata variables, 7 taxonomic ranks, and a phylogenetic tree.
 }
 \examples{
