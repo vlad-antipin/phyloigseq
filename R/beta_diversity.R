@@ -408,12 +408,12 @@
 #' `predict(fit, newdata, type = "lc"/"working", ...)` hard-errors for the
 #' *whole* call (`na.fail.default(...)`, from `vegan`'s internal
 #' `ordiParseFormula()`) if even one row of `newdata` has an `NA` in a model
-#' variable, and `model.matrix()` (used by [.pcca_fitted_all()]) silently
+#' variable, and `model.matrix()` (used by `.pcca_fitted_all()`) silently
 #' *drops* incomplete rows instead -- causing a row-count mismatch a few
 #' lines later when the result is combined with something that still has
 #' every row. Both defeat "project every sample that can be projected, leave
 #' the rest `NA`" (the same treatment already given to samples a *method*
-#' can't project, e.g. [.warn_and_na_fill()]). This restricts `f_complete`
+#' can't project, e.g. `.warn_and_na_fill()`). This restricts `f_complete`
 #' to the complete-case rows only, then reinserts `NA` rows for the rest, so
 #' ordinary matrix arithmetic downstream (subtracting/projecting) propagates
 #' `NA` to just those samples' final coordinates instead of the whole
@@ -512,7 +512,7 @@
 #' `NULL`, only `fit$pCCA`) -- there, every requested axis is "residual"
 #' (there's no constrained part to compute at all), and the quantity
 #' subtracted before projecting onto `fit$CA$v` is the confounders' own
-#' fitted values ([.pcca_fitted_all()]) instead of the free predictor's.
+#' fitted values (`.pcca_fitted_all()`) instead of the free predictor's.
 #'
 #' @param fit An `rda`-class object from `vegan::rda()`.
 #' @param otu_all Numeric matrix, all samples (fit + out-of-fit) x taxa,
@@ -524,7 +524,7 @@
 #'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`).
 #' @param predictor_vars Character vector of every model/confounder column
 #'   name `df_all` needs to be complete in -- passed through to
-#'   [.predictor_complete_cases()], which `NA`-fills (rather than errors on)
+#'   `.predictor_complete_cases()`, which `NA`-fills (rather than errors on)
 #'   any sample missing one of them.
 #' @return Numeric matrix, all samples x `n_axes`, columns named `PC1`,
 #'   `PC2`, ...
@@ -623,12 +623,12 @@
 #' @param scaling `1` or `2` (vegan scaling convention).
 #' @param confounders Character vector of confounder column names; only used
 #'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`) --
-#'   see [.pcca_fitted_all()], the `capscale` analogue of which this
+#'   see `.pcca_fitted_all()`, the `capscale` analogue of which this
 #'   function's confounders-only branch uses in place of `predict(type =
 #'   "lc")`.
 #' @param predictor_vars Character vector of every model/confounder column
 #'   name `df_all` needs to be complete in -- passed through to
-#'   [.predictor_complete_cases()], which `NA`-fills (rather than errors on)
+#'   `.predictor_complete_cases()`, which `NA`-fills (rather than errors on)
 #'   any sample missing one of them.
 #' @return Numeric matrix, all samples (`rownames(dist_matrix_all)`) x up to
 #'   `n_axes` columns, named like `scores(fit, display = "sites")` (`CAP1`,

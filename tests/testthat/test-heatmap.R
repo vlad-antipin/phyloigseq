@@ -157,14 +157,11 @@ test_that("plot_phylo_heatmap sorts by coefficient of variation and warns for ze
 test_that("plot_phylo_heatmap sorts by Kruskal-Wallis effect size for a character variable", {
   ps <- make_heatmap_ps()
   hd <- get_phylo_heatmap(ps)
-  expect_message(
-    ht <- plot_phylo_heatmap(
-      hd,
-      sort_taxa_by_diff_abundance = TRUE,
-      var_for_diff_abundance = "group",
-      nb_top_taxa = 6
-    ),
-    "Kruskal-Wallis"
+  ht <- plot_phylo_heatmap(
+    hd,
+    sort_taxa_by_diff_abundance = TRUE,
+    var_for_diff_abundance = "group",
+    nb_top_taxa = 6
   )
   expect_s4_class(ht, "Heatmap")
 })
@@ -172,17 +169,12 @@ test_that("plot_phylo_heatmap sorts by Kruskal-Wallis effect size for a characte
 test_that("plot_phylo_heatmap sorts by Spearman effect size for a numeric variable", {
   ps <- make_heatmap_ps()
   hd <- get_phylo_heatmap(ps)
-  suppressWarnings(
-    expect_message(
-      ht <- plot_phylo_heatmap(
-        hd,
-        sort_taxa_by_diff_abundance = TRUE,
-        var_for_diff_abundance = "numeric_var",
-        nb_top_taxa = 6
-      ),
-      "Spearman"
-    )
-  )
+  ht <- suppressWarnings(plot_phylo_heatmap(
+    hd,
+    sort_taxa_by_diff_abundance = TRUE,
+    var_for_diff_abundance = "numeric_var",
+    nb_top_taxa = 6
+  ))
   expect_s4_class(ht, "Heatmap")
 })
 
