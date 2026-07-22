@@ -108,10 +108,13 @@ get_phylo_heatmap <- function(
     return("bray")
   }
   if (
-    is.null(access(physeq, "phy_tree")) && distance %in% c("unifrac", "wunifrac")
+    is.null(access(physeq, "phy_tree")) &&
+      distance %in% c("unifrac", "wunifrac")
   ) {
     message(
-      "Using \"", distance, "\" distance requires a phylogenetic tree in the ",
+      "Using \"",
+      distance,
+      "\" distance requires a phylogenetic tree in the ",
       "phyloseq object; bray-curtis distance selected instead."
     )
     return("bray")
@@ -152,7 +155,11 @@ get_phylo_heatmap <- function(
 #'
 #' @return A list with `heat_matrix` and `taxa_sorted_by_abundance`.
 #' @noRd
-.build_heat_matrix <- function(physeq, taxrank_for_heatmap, transform_abundances) {
+.build_heat_matrix <- function(
+  physeq,
+  taxrank_for_heatmap,
+  transform_abundances
+) {
   if (!is.null(taxrank_for_heatmap)) {
     physeq <- tax_glom(physeq, taxrank = taxrank_for_heatmap)
     # NOTE: names of taxa are not necessarily unique!
@@ -183,7 +190,10 @@ get_phylo_heatmap <- function(
   }
   rownames(heat_matrix) <- taxa_names(physeq)
 
-  list(heat_matrix = heat_matrix, taxa_sorted_by_abundance = taxa_sorted_by_abundance)
+  list(
+    heat_matrix = heat_matrix,
+    taxa_sorted_by_abundance = taxa_sorted_by_abundance
+  )
 }
 
 #' Plot a Phylogenetic Heatmap
@@ -242,7 +252,11 @@ plot_phylo_heatmap <- function(
   dendrogram <- heatmap_data$dendrogram
 
   taxa_order <- if (sort_taxa_by_diff_abundance) {
-    .sort_taxa_by_diff_abundance(heat_matrix, sample_data, var_for_diff_abundance)
+    .sort_taxa_by_diff_abundance(
+      heat_matrix,
+      sample_data,
+      var_for_diff_abundance
+    )
   } else {
     heatmap_data$taxa_sorted_by_abundance
   }
@@ -258,7 +272,10 @@ plot_phylo_heatmap <- function(
   }
 
   top_annotation <- .build_top_annotation(sample_data, top_annotation_vars)
-  bottom_annotation <- .build_bottom_annotation(sample_data, bottom_annotation_var)
+  bottom_annotation <- .build_bottom_annotation(
+    sample_data,
+    bottom_annotation_var
+  )
 
   Heatmap(
     heat_matrix,
@@ -289,7 +306,11 @@ plot_phylo_heatmap <- function(
 #'
 #' @return A character vector of taxa names, ordered by decreasing effect.
 #' @noRd
-.sort_taxa_by_diff_abundance <- function(heat_matrix, sample_data, var_for_diff_abundance) {
+.sort_taxa_by_diff_abundance <- function(
+  heat_matrix,
+  sample_data,
+  var_for_diff_abundance
+) {
   if (is.null(var_for_diff_abundance)) {
     return(.cv_taxa_order(heat_matrix))
   }
@@ -300,9 +321,12 @@ plot_phylo_heatmap <- function(
     .spearman_effect_size_order(heat_matrix, var_for_diff)
   } else {
     stop(
-      "`var_for_diff_abundance` (\"", var_for_diff_abundance, "\") must be a ",
+      "`var_for_diff_abundance` (\"",
+      var_for_diff_abundance,
+      "\") must be a ",
       "character, factor, or numeric sample_data variable, not ",
-      class(var_for_diff)[1], "."
+      class(var_for_diff)[1],
+      "."
     )
   }
 }
@@ -316,7 +340,6 @@ plot_phylo_heatmap <- function(
 #' @return A character vector of taxa names, ordered by decreasing CV.
 #' @noRd
 .cv_taxa_order <- function(heat_matrix) {
-  message("Taxa sorted by coefficient of variation.")
   cv <- apply(heat_matrix, 1, function(row) {
     row_mean <- mean(row)
     if (row_mean == 0) {
@@ -340,7 +363,6 @@ plot_phylo_heatmap <- function(
 #'   epsilon-squared.
 #' @noRd
 .kruskal_effect_size_order <- function(heat_matrix, group_var) {
-  message("Taxa sorted by effect size (Kruskal-Wallis).")
   eps2 <- apply(heat_matrix, 1, function(row) {
     h_stat <- kruskal.test(row ~ group_var)$statistic
     k <- length(unique(group_var))
@@ -356,7 +378,6 @@ plot_phylo_heatmap <- function(
 #'   Spearman correlation.
 #' @noRd
 .spearman_effect_size_order <- function(heat_matrix, numeric_var) {
-  message("Taxa sorted by effect size (Spearman correlation).")
   rho <- apply(heat_matrix, 1, function(row) {
     abs(cor.test(row, numeric_var, method = "spearman")$estimate)
   })
@@ -388,10 +409,16 @@ plot_phylo_heatmap <- function(
 #'   if `bottom_annotation_var` is `NULL` or absent from `sample_data`.
 #' @noRd
 .build_bottom_annotation <- function(sample_data, bottom_annotation_var) {
-  if (is.null(bottom_annotation_var) || !bottom_annotation_var %in% names(sample_data)) {
+  if (
+    is.null(bottom_annotation_var) ||
+      !bottom_annotation_var %in% names(sample_data)
+  ) {
     return(NULL)
   }
   HeatmapAnnotation(
-    Name = anno_text(sample_data[[bottom_annotation_var]], gp = gpar(fontsize = 9))
+    Name = anno_text(
+      sample_data[[bottom_annotation_var]],
+      gp = gpar(fontsize = 9)
+    )
   )
 }
