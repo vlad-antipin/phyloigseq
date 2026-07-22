@@ -173,35 +173,203 @@ test_that("get_beta_diversity's confounders augment the returned model string", 
   expect_equal(bd$model, "group + Condition(`batch`)")
 })
 
-test_that("get_beta_diversity with fit_filter warns and NA-fills for methods without projection", {
+test_that("get_beta_diversity with fit_filter projects dbRDA's constrained and residual axes correctly", {
   ps <- make_bd_ps(n_samples = 14)
-  expect_warning(
+  for (d in c("bray", "euclidean")) {
     bd <- get_beta_diversity(
       ps,
       method = "dbRDA",
       model = "group",
+      dist = d,
+      fit_filter_name = "batch",
+      fit_filter_values = c("x", "y")
+    )
+    expect_equal(nrow(bd$coords[[1]]), 14L, info = d)
+    expect_false(any(is.na(bd$coords[[1]])), info = d)
+    # Projected (fit-subset) rows must reproduce capscale's own site scores
+    # exactly, for both scaling 1 and 2 -- regression test for
+    # .dbrda_projected_scores(), vegan's predict(type = "wa") being
+    # unconditionally blocked for capscale objects.
+    own_1 <- vegan::scores(bd$fit, display = "sites", choices = seq_len(ncol(bd$coords[[1]])), scaling = 1)
+    own_2 <- vegan::scores(bd$fit, display = "sites", choices = seq_len(ncol(bd$coords[[2]])), scaling = 2)
+    fit_names <- bd$fit_sample_names
+    expect_equal(unname(bd$coords[[1]][fit_names, ]), unname(own_1), tolerance = 1e-6, ignore_attr = TRUE, info = d)
+    expect_equal(unname(bd$coords[[2]][fit_names, ]), unname(own_2), tolerance = 1e-6, ignore_attr = TRUE, info = d)
+    expect_false(isTRUE(all.equal(bd$coords[[1]], bd$coords[[2]])), info = d)
+  }
+})
+
+test_that("get_beta_diversity with fit_filter projects confounders-only RDA/dbRDA (no free predictor)", {
+  ps <- make_bd_ps(n_samples = 14)
+  for (m in c("RDA", "dbRDA")) {
+    bd <- get_beta_diversity(
+      ps,
+      method = m,
+      confounders = "group",
+      dist = "bray",
+      fit_filter_name = "batch",
+      fit_filter_values = c("x", "y")
+    )
+    expect_equal(nrow(bd$coords[[1]]), 14L, info = m)
+    expect_false(any(is.na(bd$coords[[1]])), info = m)
+    # Every axis here is "residual" (post-confounder) -- .pcca_fitted_all()'s
+    # hand-derived fit, in place of predict(type = "lc")/"working", which
+    # only support model = "CCA"/"CA" (i.e. a free predictor, not
+    # confounders-only). Regression check: fit-subset rows must still
+    # reproduce the fit's own site scores exactly.
+    own_1 <- vegan::scores(bd$fit, display = "sites", choices = seq_len(ncol(bd$coords[[1]])), scaling = 1)
+    fit_names <- bd$fit_sample_names
+    expect_equal(unname(bd$coords[[1]][fit_names, ]), unname(own_1), tolerance = 1e-6, ignore_attr = TRUE, info = m)
+  }
+})
+
+test_that("get_beta_diversity with fit_filter warns and NA-fills CCA when there's no free predictor to project with", {
+  ps <- make_bd_ps(n_samples = 14)
+  expect_warning(
+    bd <- get_beta_diversity(
+      ps,
+      method = "CCA",
+      confounders = "group",
       dist = "bray",
       fit_filter_name = "batch",
       fit_filter_values = c("x", "y")
     ),
-    "Projection of non-fit samples is not supported for dbRDA"
+    "Projection of non-fit samples is not supported for CCA"
   )
   expect_equal(nrow(bd$coords[[1]]), 14L)
   expect_true(all(is.na(bd$coords[[1]][!bd$sample_data$.is_fit_sample, ])))
 })
 
+test_that("get_beta_diversity with fit_filter warns and NA-fills a fit-subset sample with a missing model variable, instead of erroring", {
+  ps <- make_bd_ps(n_samples = 14)
+  sd <- as(sample_data(ps), "data.frame")
+  sd$group[2] <- NA # S2, in the fit subset (batch == "y")
+  sample_data(ps) <- sample_data(sd)
+
+  warnings_seen <- character(0)
+  bd <- withCallingHandlers(
+    get_beta_diversity(
+      ps,
+      method = "RDA",
+      model = "group",
+      fit_filter_name = "batch",
+      fit_filter_values = c("x", "y")
+    ),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_match(
+    warnings_seen,
+    "fit-subset sample\\(s\\) excluded from the model fit",
+    all = FALSE
+  )
+  expect_match(
+    warnings_seen,
+    "sample\\(s\\) excluded from projection",
+    all = FALSE
+  )
+  expect_equal(nrow(bd$coords[[1]]), 14L)
+  # S2 is excluded from the fit itself, but its "wa" (constrained-axis) score
+  # doesn't need the predictor value at all -- only its residual axis, which
+  # does, ends up NA (same partial-NA pattern as a held-out sample missing
+  # the same variable).
+  expect_false(is.na(bd$coords[[1]]["S2", "RDA1"]))
+  expect_true(all(is.na(bd$coords[[1]]["S2", -1])))
+  expect_false(any(is.na(bd$coords[[1]][setdiff(rownames(bd$coords[[1]]), "S2"), ])))
+})
+
+test_that("get_beta_diversity with fit_filter partially NA-fills a held-out sample with a missing model variable", {
+  ps <- make_bd_ps(n_samples = 14)
+  sd <- as(sample_data(ps), "data.frame")
+  sd$group[3] <- NA # S3, held out (batch == "z")
+  sample_data(ps) <- sample_data(sd)
+
+  expect_warning(
+    bd <- get_beta_diversity(
+      ps,
+      method = "RDA",
+      model = "group",
+      fit_filter_name = "batch",
+      fit_filter_values = c("x", "y")
+    ),
+    "sample\\(s\\) excluded from projection"
+  )
+  # "wa" (constrained-axis) scores don't need the predictor value at all, so
+  # S3's constrained axis is still real; only its residual axis (which does
+  # need it, to residualize against the fitted constrained part) is NA.
+  expect_false(is.na(bd$coords[[1]]["S3", "RDA1"]))
+  expect_true(all(is.na(bd$coords[[1]]["S3", -1])))
+  expect_false(any(is.na(bd$coords[[1]][setdiff(rownames(bd$coords[[1]]), "S3"), ])))
+})
+
+test_that("get_beta_diversity with fit_filter NA-fills a held-out sample missing a confounder, for confounders-only RDA/dbRDA", {
+  ps <- make_bd_ps(n_samples = 14)
+  sd <- as(sample_data(ps), "data.frame")
+  sd$group[3] <- NA # S3, held out; "group" is the sole confounder here
+  sample_data(ps) <- sample_data(sd)
+
+  for (m in c("RDA", "dbRDA")) {
+    expect_warning(
+      bd <- get_beta_diversity(
+        ps,
+        method = m,
+        confounders = "group",
+        dist = "bray",
+        fit_filter_name = "batch",
+        fit_filter_values = c("x", "y")
+      ),
+      "sample\\(s\\) excluded from projection",
+      info = m
+    )
+    expect_true(all(is.na(bd$coords[[1]]["S3", ])), info = m)
+    expect_false(any(is.na(bd$coords[[1]][setdiff(rownames(bd$coords[[1]]), "S3"), ])), info = m)
+  }
+})
+
 test_that("get_beta_diversity with fit_filter projects samples for methods that support it (CCA)", {
+  ps <- make_bd_ps(n_samples = 14)
+  # CCA's constrained axis is exactly projectable for every sample; its
+  # residual axes are chi-square weighted and have no equivalent closed-form
+  # projection (unlike RDA's, see .rda_residual_scores()), so those stay NA
+  # (with a warning) for out-of-fit samples.
+  expect_warning(
+    bd <- get_beta_diversity(
+      ps,
+      method = "CCA",
+      model = "group",
+      fit_filter_name = "batch",
+      fit_filter_values = c("x", "y")
+    ),
+    "Projection of non-fit samples is not supported for CCA"
+  )
+  expect_equal(nrow(bd$coords[[1]]), 14L)
+  expect_false(any(is.na(bd$coords[[1]][, "CCA1"])))
+  expect_true(all(is.na(bd$coords[[1]][!bd$sample_data$.is_fit_sample, -1])))
+  expect_true(".is_fit_sample" %in% colnames(bd$sample_data))
+})
+
+test_that("get_beta_diversity with fit_filter projects RDA's residual axes correctly too", {
   ps <- make_bd_ps(n_samples = 14)
   bd <- get_beta_diversity(
     ps,
-    method = "CCA",
+    method = "RDA",
     model = "group",
     fit_filter_name = "batch",
     fit_filter_values = c("x", "y")
   )
   expect_equal(nrow(bd$coords[[1]]), 14L)
   expect_false(any(is.na(bd$coords[[1]])))
-  expect_true(".is_fit_sample" %in% colnames(bd$sample_data))
+  # Projected (fit-subset) rows must reproduce the fit's own site scores
+  # exactly, for both scaling 1 and 2 -- regression test for a bug where the
+  # projection branch ignored the `scaling` argument entirely.
+  own_1 <- vegan::scores(bd$fit, display = "sites", choices = seq_len(ncol(bd$coords[[1]])), scaling = 1)
+  own_2 <- vegan::scores(bd$fit, display = "sites", choices = seq_len(ncol(bd$coords[[2]])), scaling = 2)
+  fit_names <- bd$fit_sample_names
+  expect_equal(unname(bd$coords[[1]][fit_names, ]), unname(own_1), tolerance = 1e-8, ignore_attr = TRUE)
+  expect_equal(unname(bd$coords[[2]][fit_names, ]), unname(own_2), tolerance = 1e-8, ignore_attr = TRUE)
+  expect_false(isTRUE(all.equal(bd$coords[[1]], bd$coords[[2]])))
 })
 
 test_that("get_beta_diversity agglomerates by taxrank before ordination", {
@@ -766,13 +934,13 @@ test_that("plot_beta_diversity annotates grid-mode facets with p_value_df text",
 
 test_that("plot_beta_diversity draws two point layers with different alpha when a fit_filter is active", {
   ps <- make_bd_ps(n_samples = 14)
-  fit <- get_beta_diversity(
+  fit <- suppressWarnings(get_beta_diversity(
     ps,
     method = "CCA",
     model = "group",
     fit_filter_name = "batch",
     fit_filter_values = c("x", "y")
-  )
+  ))
   plt <- suppressWarnings(plot_beta_diversity(fit, projected_alpha = 0.1, point_alpha = 0.9))
   point_layers <- Filter(function(l) inherits(l$geom, "GeomPoint"), plt$layers)
   expect_length(point_layers, 2L)

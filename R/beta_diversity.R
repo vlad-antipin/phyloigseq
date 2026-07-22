@@ -402,6 +402,333 @@
   )
 }
 
+#' Compute a `newdata`-based prediction only for complete-case rows,
+#' `NA`-filling (with a warning) any row missing a needed variable
+#'
+#' `predict(fit, newdata, type = "lc"/"working", ...)` hard-errors for the
+#' *whole* call (`na.fail.default(...)`, from `vegan`'s internal
+#' `ordiParseFormula()`) if even one row of `newdata` has an `NA` in a model
+#' variable, and `model.matrix()` (used by [.pcca_fitted_all()]) silently
+#' *drops* incomplete rows instead -- causing a row-count mismatch a few
+#' lines later when the result is combined with something that still has
+#' every row. Both defeat "project every sample that can be projected, leave
+#' the rest `NA`" (the same treatment already given to samples a *method*
+#' can't project, e.g. [.warn_and_na_fill()]). This restricts `f_complete`
+#' to the complete-case rows only, then reinserts `NA` rows for the rest, so
+#' ordinary matrix arithmetic downstream (subtracting/projecting) propagates
+#' `NA` to just those samples' final coordinates instead of the whole
+#' pipeline erroring or misaligning.
+#'
+#' @param newdata Data frame to check for completeness and pass to
+#'   `f_complete` (one row per sample).
+#' @param relevant_cols Character vector of `newdata` column names that
+#'   actually matter for completeness (the model/confounder variables --
+#'   `NA` in an unrelated column doesn't exclude a sample).
+#' @param f_complete Function taking the complete-case-only `newdata` subset
+#'   and returning a matrix with as many rows, in the same row order.
+#' @return Matrix with one row per `nrow(newdata)` (row names from
+#'   `rownames(newdata)`), `NA` for incomplete rows.
+#' @noRd
+.predictor_complete_cases <- function(newdata, relevant_cols, f_complete) {
+  usable <- stats::complete.cases(newdata[, relevant_cols, drop = FALSE])
+  if (all(usable)) {
+    return(f_complete(newdata))
+  }
+  warning(paste0(
+    sum(!usable),
+    " sample(s) excluded from projection: missing value(s) in a model or ",
+    "confounder variable."
+  ))
+  out_complete <- f_complete(newdata[usable, , drop = FALSE])
+  out <- matrix(
+    NA_real_,
+    nrow = nrow(newdata),
+    ncol = ncol(out_complete),
+    dimnames = list(rownames(newdata), colnames(out_complete))
+  )
+  out[usable, ] <- out_complete
+  out
+}
+
+#' Fitted values for held-out samples from a partial (`Condition()`) model's
+#' `pCCA` component, computed by hand
+#'
+#' Neither `predict()`'s `"lc"` nor `"working"` type accepts `model = "pCCA"`
+#' (only `"CCA"`/`"CA"` are valid) -- there is no `vegan`-native way to get a
+#' confounders-only model's fitted values for new predictor data (and
+#' `"lc"`/model `"CCA"` doesn't apply at all when there's no free predictor:
+#' `predict()` silently falls back to `model = "CA"` when `object$CCA` is
+#' `NULL`, and `"lc"` scores are explicitly unavailable for that model).
+#' This derives the fitted values directly instead: `fit$pCCA$QR` is the
+#' very QR decomposition `vegan` fit the confounders against internally
+#' (`vegan:::ordPartial()`), so its own regression coefficients
+#' (`qr.coef()`), applied to a freshly built confounder design matrix
+#' centered the same way `vegan` centered its own (`fit$pCCA$envcentre`),
+#' reproduce `qr.fitted(fit$pCCA$QR, fit$Ybar)` exactly for the training rows
+#' (verified numerically, including with a confounder level that `vegan`
+#' itself dropped as redundant -- the `[, names(fit$pCCA$envcentre)]`
+#' reindex below is what keeps that case aligned) and extend cleanly to any
+#' row count.
+#'
+#' @param fit An `rda`- or `capscale`-class object with a non-`NULL` `$pCCA`
+#'   (i.e. `confounders` was supplied to [get_beta_diversity()]).
+#' @param confounders Character vector of confounder column names, as
+#'   originally passed to [get_beta_diversity()].
+#' @param df_all `sample_data(physeq)` as a data frame, all samples.
+#' @return Numeric matrix, all samples x `ncol(fit$Ybar)`, in the same
+#'   standardized units as `fit$Ybar`.
+#' @noRd
+.pcca_fitted_all <- function(fit, confounders, df_all) {
+  z_formula <- as.formula(paste(
+    "~",
+    paste(paste0("`", confounders, "`"), collapse = " + ")
+  ))
+  z_all <- model.matrix(z_formula, data = df_all)[, -1, drop = FALSE]
+  z_all <- z_all[, names(fit$pCCA$envcentre), drop = FALSE]
+  z_all <- sweep(z_all, 2, fit$pCCA$envcentre, "-")
+  z_all %*% qr.coef(fit$pCCA$QR, fit$Ybar)
+}
+
+#' Project new samples onto the residual (unconstrained `PC`) axes of an RDA
+#' fit
+#'
+#' `vegan`'s own `predict(fit, newdata, type = "wa", model = "CA")` does not
+#' residualize `newdata` against the fitted constrained (`CCA`) component
+#' before projecting it onto the residual species scores -- verified to
+#' diverge from `scores(fit, ...)`'s residual-axis output by 20-70% (and
+#' sometimes in sign), even when `newdata` is exactly the fit-subset data the
+#' model was trained on. This reimplements the projection correctly: since
+#' RDA's residual axes are a plain (unweighted) PCA of the residuals, the
+#' constrained fit's prediction (`predict(..., type = "working", model =
+#' "CCA")`, in the same standardized units as `fit$Ybar`) can be subtracted
+#' from `otu_all` directly, and the remainder projected onto `fit$CA$v` --
+#' reproduces `scores(fit, display = "sites", scaling = scaling)`'s residual
+#' columns exactly (to float tolerance) for the fit subset, and extends that
+#' correctly to out-of-fit samples. CCA's residual axes are chi-square
+#' weighted rather than a plain PCA, so this does not carry over to `method =
+#' "cca"` -- see the caller.
+#'
+#' Also handles a confounders-only fit (no free predictor: `fit$CCA` is
+#' `NULL`, only `fit$pCCA`) -- there, every requested axis is "residual"
+#' (there's no constrained part to compute at all), and the quantity
+#' subtracted before projecting onto `fit$CA$v` is the confounders' own
+#' fitted values ([.pcca_fitted_all()]) instead of the free predictor's.
+#'
+#' @param fit An `rda`-class object from `vegan::rda()`.
+#' @param otu_all Numeric matrix, all samples (fit + out-of-fit) x taxa,
+#'   samples-are-rows.
+#' @param df_all `sample_data(physeq)` as a data frame, all samples.
+#' @param n_axes Number of residual axes needed.
+#' @param scaling `1` or `2` (vegan scaling convention).
+#' @param confounders Character vector of confounder column names; only used
+#'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`).
+#' @param predictor_vars Character vector of every model/confounder column
+#'   name `df_all` needs to be complete in -- passed through to
+#'   [.predictor_complete_cases()], which `NA`-fills (rather than errors on)
+#'   any sample missing one of them.
+#' @return Numeric matrix, all samples x `n_axes`, columns named `PC1`,
+#'   `PC2`, ...
+#' @noRd
+.rda_residual_scores <- function(
+  fit,
+  otu_all,
+  df_all,
+  n_axes,
+  scaling,
+  confounders = NULL,
+  predictor_vars
+) {
+  cent <- attr(fit$Ybar, "scaled:center")
+  scal <- attr(fit$Ybar, "scaled:scale")
+  otu_all <- otu_all[, names(cent), drop = FALSE]
+  nr <- nobs(fit) - 1
+
+  ybar_all <- sweep(otu_all, 2, cent, "-") / sqrt(nr)
+  if (!is.null(scal)) {
+    nz <- scal > 0
+    ybar_all[, nz] <- sweep(ybar_all[, nz, drop = FALSE], 2, scal[nz], "/")
+  }
+  yhat_all <- if (!is.null(fit$CCA) && fit$CCA$rank > 0) {
+    .predictor_complete_cases(df_all, predictor_vars, function(d) {
+      predict(fit, newdata = d, type = "working", model = "CCA")
+    })
+  } else {
+    .predictor_complete_cases(df_all, predictor_vars, function(d) {
+      .pcca_fitted_all(fit, confounders, d)
+    })
+  }
+  resid_all <- ybar_all - yhat_all
+
+  v_ca <- fit$CA$v[, 1:n_axes, drop = FALSE]
+  eig_ca <- fit$CA$eig[1:n_axes]
+  scores_out <- resid_all %*% v_ca %*% diag(1 / sqrt(eig_ca), nrow = n_axes)
+  colnames(scores_out) <- paste0("PC", seq_len(n_axes))
+
+  if (scaling) {
+    slam <- sqrt(eig_ca / fit$tot.chi)
+    const <- sqrt(sqrt((nobs(fit) - 1) * fit$tot.chi))
+    lam <- list(slam, 1, sqrt(slam))[[abs(scaling)]]
+    scores_out <- const * sweep(scores_out, 2, lam, "*")
+  }
+  scores_out
+}
+
+#' Project new samples onto a dbRDA (`capscale`) fit's constrained and
+#' residual axes
+#'
+#' `vegan`'s own `predict(fit, newdata, type = "wa")` is unconditionally
+#' blocked for `capscale` objects (`stop("'wa' scores not available in
+#' capscale with 'newdata'")`), and the alternative it does allow, `type =
+#' "lc"`, is not a usable substitute: it's purely the model's fitted value
+#' from the predictors, so every sample sharing the same predictor
+#' combination collapses to one identical point, discarding all of that
+#' sample's actual community signal (verified: with a single 2-level factor
+#' predictor, all samples projected to just 2 distinct points). This
+#' reimplements the projection from scratch by treating `capscale` as what
+#' it actually is internally (see `vegan:::ordConstrained()`'s `"capscale"`
+#' branch and `vegan:::initCAP()`): classical scaling (PCoA, via
+#' `vegan::wcmdscale()`) of the training distance matrix, mean-centered but
+#' *not* z-scored (`initCAP()`, unlike `rda()`'s `initPCA()`), followed by a
+#' plain unweighted RDA of that embedding against the predictors. Held-out
+#' samples are embedded into the exact same classical-scaling space via
+#' Gower's interpolation formula (the same one
+#' `.get_beta_diversity_from_distance()` already uses for standalone PCoA
+#' projection), replicating `capscale()`'s own pre-embedding "adjust"
+#' rescaling (`vegan::capscale`'s `if (max(X) >= 4) X <- X / sqrt(k)` step)
+#' so the interpolation lands in the same units. From there, projection onto
+#' the constrained and residual axes follows the same "wa" logic as
+#' `.rda_residual_scores()` -- except `capscale`'s own species/embedding-axis
+#' scores (`fit$CCA$v`/`fit$CA$v`) are only populated when a `comm =`
+#' argument was supplied to `capscale()` (this package never supplies one,
+#' since there's no single meaningful "community matrix" once the ordination
+#' is already distance-based), so `v` is reconstructed by hand from `u`,
+#' `eig`, and the model's own QR decomposition (`fit$CCA$QR`) instead --
+#' verified to exactly reproduce `vegan`'s own `v` when it IS available
+#' (i.e. cross-checked against a plain `rda()` fit). The whole pipeline
+#' reproduces `scores(fit, display = "sites", scaling = scaling)` exactly
+#' (to float tolerance) for the fit subset.
+#'
+#' @param fit A `capscale`-class object from `vegan::capscale()`.
+#' @param dist_matrix_fit Sample x sample distance matrix (plain matrix, not
+#'   `dist`) for the fit-subset samples only, using the exact distance `fit`
+#'   itself was built from.
+#' @param dist_matrix_all Same distance metric and (for `euclidean`)
+#'   standardization reference as `dist_matrix_fit`, but covering every
+#'   sample (fit + out-of-fit); only the `[, fit_sample_names]` cross-block
+#'   is actually used, i.e. distances from every sample to each fit-subset
+#'   sample.
+#' @param df_all `sample_data(physeq)` as a data frame, all samples.
+#' @param n_axes Number of axes requested; split automatically between
+#'   constrained and residual based on `fit`'s own rank.
+#' @param scaling `1` or `2` (vegan scaling convention).
+#' @param confounders Character vector of confounder column names; only used
+#'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`) --
+#'   see [.pcca_fitted_all()], the `capscale` analogue of which this
+#'   function's confounders-only branch uses in place of `predict(type =
+#'   "lc")`.
+#' @param predictor_vars Character vector of every model/confounder column
+#'   name `df_all` needs to be complete in -- passed through to
+#'   [.predictor_complete_cases()], which `NA`-fills (rather than errors on)
+#'   any sample missing one of them.
+#' @return Numeric matrix, all samples (`rownames(dist_matrix_all)`) x up to
+#'   `n_axes` columns, named like `scores(fit, display = "sites")` (`CAP1`,
+#'   `CAP2`, ..., then `MDS1`, `MDS2`, ...) -- or just `MDS1`, `MDS2`, ... for
+#'   a confounders-only fit, which has no constrained axis at all.
+#' @noRd
+.dbrda_projected_scores <- function(
+  fit,
+  dist_matrix_fit,
+  dist_matrix_all,
+  df_all,
+  n_axes,
+  scaling,
+  confounders = NULL,
+  predictor_vars
+) {
+  fit_names <- rownames(dist_matrix_fit)
+  k <- length(fit_names) - 1
+  adjust <- if (max(dist_matrix_fit) >= 4 + sqrt(.Machine$double.eps)) {
+    sqrt(k)
+  } else {
+    1
+  }
+  d_fit_adj <- as.dist(dist_matrix_fit / adjust)
+  d_all_adj <- dist_matrix_all / adjust
+
+  emb <- wcmdscale(d_fit_adj, eig = TRUE, x.ret = TRUE, add = FALSE)
+  n_dims <- ncol(emb$points)
+
+  # Gower's classical-scaling interpolation formula (see the PCoA branch of
+  # .get_beta_diversity_from_distance() for the same derivation, spelled out
+  # in full there).
+  delta <- colMeans(as.matrix(d_fit_adj)^2)
+  cross <- d_all_adj[, fit_names, drop = FALSE]
+  f <- -0.5 * sweep(cross^2, 2, delta, "-")
+  z_all <- sweep(f %*% emb$points, 2, emb$eig[1:n_dims], "/")
+  rownames(z_all) <- rownames(dist_matrix_all)
+
+  cent <- attr(fit$Ybar, "scaled:center")
+  ybar_all <- sweep(z_all, 2, cent, "-")
+
+  has_free_predictor <- !is.null(fit$CCA) && fit$CCA$rank > 0
+
+  if (has_free_predictor) {
+    take_cca <- fit$CCA$rank
+    n_cca_take <- min(n_axes, take_cca)
+    n_ca_take <- min(max(0, n_axes - take_cca), fit$CA$rank)
+
+    u_cca <- fit$CCA$u[, 1:take_cca, drop = FALSE]
+    eig_cca <- fit$CCA$eig[1:take_cca]
+    yhat_fit <- qr.fitted(fit$CCA$QR, fit$Ybar)
+    v_cca <- t(yhat_fit) %*% u_cca %*% diag(1 / sqrt(eig_cca), nrow = take_cca)
+
+    u_lc_all <- .predictor_complete_cases(df_all, predictor_vars, function(d) {
+      predict(fit, newdata = d, type = "lc", model = "CCA")[, 1:take_cca, drop = FALSE]
+    })
+    yhat_all <- u_lc_all %*% diag(sqrt(eig_cca), nrow = take_cca) %*% t(v_cca)
+
+    wa_cca <- sweep(ybar_all %*% v_cca, 2, sqrt(eig_cca), "/")
+    wa_cca <- wa_cca[, 1:n_cca_take, drop = FALSE]
+    colnames(wa_cca) <- paste0("CAP", seq_len(n_cca_take))
+    eig_used <- eig_cca[1:n_cca_take]
+  } else {
+    # Confounders-only fit: every requested axis is "residual" (there's no
+    # constrained part), and the quantity subtracted before projecting onto
+    # fit$CA$v is the confounders' own fitted values instead of the free
+    # predictor's -- see .pcca_fitted_all().
+    n_ca_take <- min(n_axes, fit$CA$rank)
+    yhat_fit <- qr.fitted(fit$pCCA$QR, fit$Ybar)
+    yhat_all <- .predictor_complete_cases(df_all, predictor_vars, function(d) {
+      .pcca_fitted_all(fit, confounders, d)
+    })
+    wa_cca <- NULL
+    eig_used <- numeric(0)
+  }
+
+  if (n_ca_take > 0) {
+    u_ca <- fit$CA$u[, 1:n_ca_take, drop = FALSE]
+    eig_ca <- fit$CA$eig[1:n_ca_take]
+    resid_fit <- fit$Ybar - yhat_fit
+    resid_all <- ybar_all - yhat_all
+    v_ca <- t(resid_fit) %*% u_ca %*% diag(1 / sqrt(eig_ca), nrow = n_ca_take)
+    wa_ca <- sweep(resid_all %*% v_ca, 2, sqrt(eig_ca), "/")
+    colnames(wa_ca) <- paste0("MDS", seq_len(n_ca_take))
+    result <- if (is.null(wa_cca)) wa_ca else cbind(wa_cca, wa_ca)
+    eig_used <- c(eig_used, eig_ca)
+  } else {
+    result <- wa_cca
+  }
+
+  if (scaling) {
+    tot.chi <- fit$tot.chi
+    const <- sqrt(sqrt((nobs(fit) - 1) * tot.chi))
+    slam <- sqrt(eig_used / tot.chi)
+    lam <- list(slam, 1, sqrt(slam))[[abs(scaling)]]
+    result <- const * sweep(result, 2, lam, "*")
+  }
+  result
+}
+
 #' Constrained/supervised ordination (CCA/RDA/dbRDA)
 #'
 #' Handles the `get_beta_diversity()` methods that fit the abundance matrix
@@ -423,6 +750,39 @@
   ndims,
   fit_sample_names
 ) {
+  # vegan::rda()/cca()/capscale()'s na.action = na.exclude is unreliable for
+  # this package's purposes: an NA in a fit-subset sample's model/confounder
+  # value can crash the fit itself (verified: even a bare vegan::rda(... ,
+  # na.action = na.exclude) call errors internally, in ordiNAexclude()'s own
+  # predict() call, trying to pad the excluded row back in). Pruning those
+  # samples out of physeq_fit before fitting sidesteps that entirely -- the
+  # model just never sees an NA. If fit_sample_names was NULL (no fit_filter
+  # requested), pruning here means physeq_fit is now smaller than physeq, so
+  # fit_sample_names is set to the (now-pruned) actual fit set purely to
+  # make get_constrained_coords() take its "project every physeq sample"
+  # branches below instead of assuming physeq_fit == physeq -- that's what
+  # NA-fills (with a warning) the pruned-out samples' coordinates instead of
+  # silently returning a shorter, misaligned coords matrix.
+  predictor_vars <- unique(c(
+    if (!is.null(model)) all.vars(stats::as.formula(paste("~", model))),
+    confounders
+  ))
+  if (length(predictor_vars) > 0) {
+    fit_sdata <- as(sample_data(physeq_fit), "data.frame")
+    fit_usable <- stats::complete.cases(fit_sdata[, predictor_vars, drop = FALSE])
+    if (!all(fit_usable)) {
+      warning(paste0(
+        sum(!fit_usable),
+        " fit-subset sample(s) excluded from the model fit: missing ",
+        "value(s) in a model or confounder variable."
+      ))
+      physeq_fit <- prune_samples(fit_usable, physeq_fit)
+      if (is.null(fit_sample_names)) {
+        fit_sample_names <- sample_names(physeq_fit)
+      }
+    }
+  }
+
   if (!is.null(confounders)) {
     model <- paste0(
       model,
@@ -467,6 +827,29 @@
     } else {
       sparse_distance(physeq_fit, method = dist)
     }
+    # For projecting out-of-fit samples later (.dbrda_projected_scores()):
+    # the same metric extended to every sample. Ordinary dissimilarities
+    # (bray, jaccard, unifrac, ...) are pairwise-only, so the fit-subset
+    # block of the full matrix is identical to dist_obj regardless; only
+    # euclidean needs care, since its z-scoring reference (taxon sd) must
+    # come from physeq_fit specifically, not physeq, to stay consistent with
+    # dist_obj -- .standardized_euclidean(physeq) would z-score against the
+    # wrong (full-dataset) statistics.
+    dbrda_dist_all <- if (!is.null(fit_sample_names)) {
+      if (dist == "euclidean") {
+        otu_fit_mat <- as(otu_table(reverseASV(physeq_fit)), "matrix")
+        otu_all_mat <- as(otu_table(reverseASV(physeq)), "matrix")
+        keep <- apply(otu_fit_mat, 2, var, na.rm = TRUE) > 0
+        taxon_sd <- apply(otu_fit_mat[, keep, drop = FALSE], 2, sd, na.rm = TRUE)
+        # Euclidean distance is translation-invariant, so centering (unlike
+        # scaling) can't change the result and is skipped -- see
+        # euclidean_sparse()'s same observation.
+        z_all <- sweep(otu_all_mat[, keep, drop = FALSE], 2, taxon_sd, "/")
+        as.matrix(vegdist(z_all, method = "euclidean"))
+      } else {
+        as.matrix(sparse_distance(physeq, method = dist))
+      }
+    }
     formula <- as.formula(paste("dist_obj", "~", model))
     fit <- vegan::capscale(formula, data = df_fit, na.action = na.exclude)
   } else {
@@ -476,7 +859,7 @@
   eigen_values <- vegan::eigenvals(fit)
   n_axes <- min(ndims, length(eigen_values))
 
-  # For RDA/CCA project all samples using WA scores; dbRDA has no standard projection.
+  # For RDA/CCA/dbRDA project all samples using WA scores.
   # capscale (dbRDA) inherits from "rda"/"cca" so check method name, not class.
   get_constrained_coords <- function(scaling) {
     # No free (unconditioned) predictor — e.g. confounders-only partial RDA/CCA
@@ -486,18 +869,100 @@
     if (!is.null(fit_sample_names) && method %in% c("rda", "cca") && has_free_predictor) {
       otu_all <- as(otu_table(reverseASV(physeq)), "matrix")
       # predict(type="wa") defaults to model="CCA" — constrained axes only.
-      # Explicitly fetch residual (CA) axes too and combine up to n_axes.
-      wa_cca <- predict(fit, newdata = otu_all, type = "wa", model = "CCA")
+      # Exact for every sample, fit or not: "wa" scores are, by definition,
+      # weighted averages of the raw community data against the model's
+      # species scores, so passing `scaling` through here (it was previously
+      # dropped, silently forcing scaling="none" regardless of what the
+      # caller asked for -- invisible for PCoA, whose site scores don't
+      # depend on scaling, but wrong for RDA/CCA, where they do) makes this
+      # match scores(fit, ...) exactly for the fit subset.
+      wa_cca <- predict(fit, newdata = otu_all, type = "wa", model = "CCA", scaling = scaling)
       n_cca <- ncol(wa_cca)
+      wa_cca <- wa_cca[, 1:min(n_axes, n_cca), drop = FALSE]
       n_ca_need <- max(0, n_axes - n_cca)
       if (n_ca_need > 0 && !is.null(fit$CA) && fit$CA$rank > 0) {
-        wa_ca <- predict(fit, newdata = otu_all, type = "wa", model = "CA")
-        wa_ca <- wa_ca[, 1:min(n_ca_need, ncol(wa_ca)), drop = FALSE]
+        n_ca_take <- min(n_ca_need, fit$CA$rank)
+        if (method == "rda") {
+          df_all <- as(sample_data(physeq), "data.frame")
+          wa_ca <- .rda_residual_scores(
+            fit,
+            otu_all,
+            df_all,
+            n_ca_take,
+            scaling,
+            predictor_vars = predictor_vars
+          )
+          return(cbind(wa_cca, wa_ca))
+        }
+        # CCA's residual axes are chi-square weighted (unlike RDA's plain
+        # PCA-of-residuals, see .rda_residual_scores()), so there's no
+        # equivalent closed-form projection here, and vegan's own
+        # predict(type="wa", model="CA") doesn't residualize newdata against
+        # the constrained fit first -- verified wrong even for fit-subset
+        # samples (diverges from the fit's own scores() by 20-70%). NA-fill +
+        # warn instead, matching the dbRDA no-projection path below, but only
+        # for these residual columns / the out-of-fit rows: the constrained
+        # columns above and the fit subset's own residual scores stay exact.
+        ca_scores <- scores(
+          fit,
+          display = "sites",
+          choices = n_cca + seq_len(n_ca_take),
+          scaling = scaling
+        )
+        wa_ca <- .warn_and_na_fill("CCA", sample_names(physeq), fit_sample_names, ca_scores)
         return(cbind(wa_cca, wa_ca))
       }
-      return(wa_cca[, 1:min(n_axes, n_cca), drop = FALSE])
+      return(wa_cca)
+    }
+    if (
+      !is.null(fit_sample_names) &&
+        method == "rda" &&
+        !has_free_predictor &&
+        !is.null(fit$pCCA) &&
+        fit$CA$rank > 0
+    ) {
+      # Confounders-only RDA (no free predictor: "Model" empty, only
+      # "Confounders"): every requested axis is a residual axis after
+      # partialling out the confounders -- same math as the residual-axis
+      # case above, just subtracting the confounders' own fit
+      # (.pcca_fitted_all()) instead of the free predictor's.
+      otu_all <- as(otu_table(reverseASV(physeq)), "matrix")
+      df_all <- as(sample_data(physeq), "data.frame")
+      n_ca_take <- min(n_axes, fit$CA$rank)
+      return(.rda_residual_scores(
+        fit,
+        otu_all,
+        df_all,
+        n_ca_take,
+        scaling,
+        confounders = confounders,
+        predictor_vars = predictor_vars
+      ))
+    }
+    if (
+      !is.null(fit_sample_names) &&
+        method == "dbrda" &&
+        (has_free_predictor || (!is.null(fit$pCCA) && fit$CA$rank > 0))
+    ) {
+      df_all <- as(sample_data(physeq), "data.frame")
+      dist_matrix_fit <- as.matrix(dist_obj)
+      return(.dbrda_projected_scores(
+        fit,
+        dist_matrix_fit,
+        dbrda_dist_all,
+        df_all,
+        n_axes,
+        scaling,
+        confounders = confounders,
+        predictor_vars = predictor_vars
+      ))
     }
     if (!is.null(fit_sample_names)) {
+      # Reached for: CCA (with or without a free predictor -- its residual
+      # axes are chi-square weighted, so there's no equivalent closed-form
+      # projection, see .rda_residual_scores()'s docs), or any constrained
+      # method/model combination with neither a free predictor nor
+      # confounders to project from.
       sc <- scores(fit, display = "sites", choices = 1:n_axes, scaling = scaling)
       method_label <- c(rda = "RDA", cca = "CCA", dbrda = "dbRDA")[[method]]
       return(.warn_and_na_fill(method_label, sample_names(physeq), fit_sample_names, sc))
