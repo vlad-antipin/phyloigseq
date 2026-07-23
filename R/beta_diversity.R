@@ -1349,12 +1349,12 @@ get_beta_diversity <- function(
       paste0(
         "restricted by ",
         strata_name,
-        " PERMANOVA p = ",
+        " | PERMANOVA p: ",
         format(signif(p_raw, digits = 2), scientific = TRUE)
       )
     } else {
       paste0(
-        "PERMANOVA p = ",
+        "PERMANOVA p: ",
         format(signif(p_raw, digits = 2), scientific = TRUE)
       )
     }
@@ -1367,7 +1367,7 @@ get_beta_diversity <- function(
     )
     p_raw <- test_result$vectors$pvals[1]
     p_text <- paste0(
-      "Correlation p = ",
+      "Correlation p: ",
       format(signif(p_raw, digits = 2), scientific = TRUE)
     )
     list(test_result = test_result, p_raw = p_raw, p_text = p_text, stat = "envfit")
@@ -2433,62 +2433,60 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
         ")"
       ),
 
-      subtitle = paste0(
-        "taxa agglom: ",
-        if (!is.null(beta_dispersion_fit$taxrank)) {
-          beta_dispersion_fit$taxrank
-        } else {
-          "none"
-        },
-        paste0(
-          "  transform: ",
-          beta_dispersion_fit$transform_abundances %||% "identity"
-        ),
-        if (!is.null(beta_dispersion_fit$fit_filter)) {
+      subtitle = {
+        arrow_cutoffs <- c(
+          if (biplot_loadings && !is.null(loadings)) {
+            paste0("taxa: ", arrow_cutoff_load)
+          },
+          if (biplot_covariates && !is.null(covariates)) {
+            paste0("predictors: ", arrow_cutoff_covar)
+          }
+        )
+        subtitle_parts <- c(
           paste0(
-            "  fit subset: ",
-            beta_dispersion_fit$fit_filter$name,
-            " in {",
-            paste(beta_dispersion_fit$fit_filter$values, collapse = ", "),
-            "}"
-          )
-        },
-        if (remove_na_from_plot) {
-          "  NA's removed  "
-        },
-        if (!is.null(beta_dispersion_fit$dist)) {
-          paste0(" dist=", beta_dispersion_fit$dist)
-        },
-        if (
-          is.null(beta_dispersion_fit$method) ||
-            !tolower(beta_dispersion_fit$method) %in% c("pcoa", "tsne", "umap")
-        ) {
-          paste0("  scaling: ", scaling)
-        } else {
-          NULL
-        },
-        if (biplot && (!is.null(loadings) || !is.null(covariates))) {
-          "  arrow cut-offs:"
-        } else {
-          NULL
-        },
-        if (biplot_loadings && !is.null(loadings)) {
-          paste0("  taxa=", arrow_cutoff_load)
-        } else {
-          NULL
-        },
-        if (biplot_covariates && !is.null(covariates)) {
-          paste0("  predictors=", arrow_cutoff_covar)
-        } else {
-          NULL
-        },
+            "taxa agglom: ",
+            if (!is.null(beta_dispersion_fit$taxrank)) {
+              beta_dispersion_fit$taxrank
+            } else {
+              "none"
+            }
+          ),
+          paste0(
+            "transform: ",
+            beta_dispersion_fit$transform_abundances %||% "identity"
+          ),
+          if (!is.null(beta_dispersion_fit$fit_filter)) {
+            paste0(
+              "fit subset: ",
+              beta_dispersion_fit$fit_filter$name,
+              " in {",
+              paste(beta_dispersion_fit$fit_filter$values, collapse = ", "),
+              "}"
+            )
+          },
+          if (remove_na_from_plot) {
+            "NA's removed"
+          },
+          if (!is.null(beta_dispersion_fit$dist)) {
+            paste0("dist: ", beta_dispersion_fit$dist)
+          },
+          if (
+            is.null(beta_dispersion_fit$method) ||
+              !tolower(beta_dispersion_fit$method) %in% c("pcoa", "tsne", "umap")
+          ) {
+            paste0("scaling: ", scaling)
+          },
+          if (biplot && length(arrow_cutoffs) > 0) {
+            paste0("arrow cut-offs: ", paste(arrow_cutoffs, collapse = ", "))
+          }
+        )
+        subtitle <- paste(subtitle_parts, collapse = " | ")
         # add stats to the title only if there's no facet or only one facet
         if (length(p_value) == 1) {
-          paste0("\n", p_value)
-        } else {
-          NULL
+          subtitle <- paste0(subtitle, "\n", p_value)
         }
-      )
+        subtitle
+      }
     ) +
     .plot_title_theme() +
     ggsci::scale_fill_npg()
@@ -3325,7 +3323,7 @@ animate_by_variable <- function(
       transition_length = 2,
       state_length = 3
     ) +
-    labs(subtitle = paste0(animation_variable_name, " = {closest_state}")) +
+    labs(subtitle = paste0(animation_variable_name, ": {closest_state}")) +
     ease_aes('linear')
   anim <-
     animate(
