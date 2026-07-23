@@ -2604,8 +2604,11 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
   # Scale the secondary axes so that arrows and sample scores are on a
   # comparable scale. NOTE: both components are scaled by the same factor,
   # so arrows point in the same direction as before, only their size changes.
+  # na.rm = TRUE: coords can have NA rows for samples excluded from
+  # projection (e.g. .predictor_complete_cases()/.warn_and_na_fill()) --
+  # without it, a single NA row poisons max() and NAs out every arrow.
   lim <- max(abs(arrow$Comp1), abs(arrow$Comp2))
-  scale_factor <- max(abs(coords)) / lim
+  scale_factor <- max(abs(coords), na.rm = TRUE) / lim
   arrow$Comp1 <- arrow$Comp1 * scale_factor
   arrow$Comp2 <- arrow$Comp2 * scale_factor
 

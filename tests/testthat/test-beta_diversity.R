@@ -1014,6 +1014,46 @@ test_that("plot_beta_diversity draws covariate arrows for a constrained fit", {
   expect_equal(nrow(segment_layers[[1]]$data), nrow(fit$covariates[[1]]))
 })
 
+test_that(".plot_beta_diversity_arrow_group ignores NA sample rows (unprojectable samples) when scaling arrows", {
+  scores <- matrix(
+    c(1, -1, 0.5, 0.2),
+    nrow = 2,
+    dimnames = list(c("T1", "T2"), c("RDA1", "RDA2"))
+  )
+  # A held-out sample that couldn't be projected NA-fills its own coords row
+  # (.warn_and_na_fill()/.predictor_complete_cases()) -- that shouldn't poison
+  # the arrow length scale factor for every other (fully projected) sample.
+  coords <- matrix(
+    c(1, 2, NA, 0.5, 1, NA),
+    nrow = 3,
+    dimnames = list(c("S1", "S2", "S3"), c("RDA1", "RDA2"))
+  )
+  grp <- PhyloIgSeq:::.plot_beta_diversity_arrow_group(scores, "load", c(1, 2), coords, cutoff = 0)
+  expect_false(is.na(grp$scale_factor))
+  expect_false(anyNA(grp$arrow))
+})
+
+test_that("plot_beta_diversity still draws arrows when fit_filter leaves NA-filled sample coordinates", {
+  ps <- make_bd_ps(n_samples = 14)
+  sd <- as(sample_data(ps), "data.frame")
+  sd$group[3] <- NA # S3, held out (batch == "z"): unprojectable, NA-fills its residual axis
+  sample_data(ps) <- sample_data(sd)
+  fit <- suppressWarnings(get_beta_diversity(
+    ps,
+    method = "RDA",
+    model = "group",
+    fit_filter_name = "batch",
+    fit_filter_values = c("x", "y")
+  ))
+  expect_true(anyNA(fit$coords[[1]]))
+
+  plt <- suppressWarnings(plot_beta_diversity(fit, biplot_loadings = TRUE))
+  segment_layers <- Filter(function(l) inherits(l$geom, "GeomSegment"), plt$layers)
+  expect_length(segment_layers, 1L)
+  expect_false(anyNA(segment_layers[[1]]$data$Comp1))
+  expect_false(anyNA(segment_layers[[1]]$data$Comp2))
+})
+
 test_that("plot_beta_diversity labels arrows with geom_text when arrow_labels = TRUE and repel = FALSE", {
   fit <- make_bd_fit()
   plt <- suppressWarnings(plot_beta_diversity(
