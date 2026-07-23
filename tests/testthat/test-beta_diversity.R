@@ -162,6 +162,17 @@ test_that("get_beta_diversity dispatches constrained methods (CCA/RDA/dbRDA)", {
   }
 })
 
+test_that("get_beta_diversity's dbRDA loadings are real per-taxon values, not vegan's all-NA species scores", {
+  # capscale() is never given comm =, so scores(fit, display = "species")
+  # would just be an all-NA "Dim1".."DimN" placeholder -- .get_beta_diversity_
+  # constrained() falls back to correlating raw abundances against the site
+  # scores instead (same approach the standalone PCoA branch already uses).
+  ps <- make_bd_ps()
+  bd <- get_beta_diversity(ps, method = "dbRDA", model = "group", dist = "bray")
+  expect_false(any(is.na(bd$loadings[[1]])))
+  expect_setequal(rownames(bd$loadings[[1]]), taxa_names(ps))
+})
+
 test_that("get_beta_diversity's confounders augment the returned model string", {
   ps <- make_bd_ps()
   bd <- get_beta_diversity(

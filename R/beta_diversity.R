@@ -978,10 +978,31 @@
     get_constrained_coords(1),
     suppressWarnings(get_constrained_coords(2))
   )
-  loadings <- list(
-    scores(fit, display = "species", choices = 1:n_axes, scaling = 1),
-    scores(fit, display = "species", choices = 1:n_axes, scaling = 2)
-  )
+  loadings <- if (method == "dbrda") {
+    # capscale() is never given comm= above (there's no single meaningful
+    # community matrix once the ordination is already distance-based), so
+    # vegan sets species scores to NA unconditionally (its own else-branch:
+    # `sol$CA$v[] <- NA; if (!is.null(sol$CCA)) sol$CCA$v[] <- NA`) --
+    # scores(fit, display = "species", ...) is just an all-NA placeholder,
+    # which .plot_beta_diversity_arrow_group()'s na.omit() then reduces to
+    # zero taxa arrows, always (verified unchanged from before this
+    # package's dbRDA fit_filter support was added). Falls back to the same
+    # per-taxon correlation-against-axes approach the standalone PCoA branch
+    # already uses (.get_beta_diversity_from_distance()) for the identical
+    # problem, using coords[[1]] so it covers every projected sample, not
+    # just the fit subset. use = "complete.obs" (unlike PCoA's plain cor(),
+    # which never needs it: PCoA always projects every sample) guards
+    # against a handful of NA rows in coords[[1]] -- e.g. from
+    # .predictor_complete_cases() -- poisoning every taxon's correlation.
+    otu_mat <- as(otu_table(reverseASV(physeq)), "matrix")
+    ld <- suppressWarnings(cor(otu_mat, coords[[1]], use = "complete.obs"))
+    list(ld, ld) # same caveat as PCoA: no separate formula for scaling 2
+  } else {
+    list(
+      scores(fit, display = "species", choices = 1:n_axes, scaling = 1),
+      scores(fit, display = "species", choices = 1:n_axes, scaling = 2)
+    )
+  }
   covariates <- list(
     scores(fit, display = "bp", choices = 1:n_axes, scaling = 1),
     scores(fit, display = "bp", choices = 1:n_axes, scaling = 2)
