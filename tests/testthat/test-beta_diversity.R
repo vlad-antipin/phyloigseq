@@ -383,6 +383,35 @@ test_that("get_beta_diversity with fit_filter projects RDA's residual axes corre
   expect_false(isTRUE(all.equal(bd$coords[[1]], bd$coords[[2]])))
 })
 
+test_that("get_beta_diversity with fit_filter projects RDA/dbRDA when the model predictor's own fit-subset levels don't cover every held-out sample's level", {
+  # Fitting on a subset of batch's own levels ("x"/"y", excluding "z") and
+  # using batch as the model predictor itself reproduces a real bug report:
+  # vegan's predict(..., type = "working"/"lc") hard-errors ("factor batch
+  # has new levels z") because the "z" samples were never seen while fitting
+  # -- unlike the earlier residual-axis test above, where the model variable
+  # ("group") happens to have both its levels present in every fit subset.
+  ps <- make_bd_ps(n_samples = 14)
+  bd <- get_beta_diversity(
+    ps,
+    method = "RDA",
+    model = "batch",
+    fit_filter_name = "batch",
+    fit_filter_values = c("x", "y")
+  )
+  expect_equal(nrow(bd$coords[[1]]), 14L)
+  expect_false(any(is.na(bd$coords[[1]])))
+
+  bd_db <- get_beta_diversity(
+    ps,
+    method = "dbRDA",
+    model = "batch",
+    fit_filter_name = "batch",
+    fit_filter_values = c("x", "y")
+  )
+  expect_equal(nrow(bd_db$coords[[1]]), 14L)
+  expect_false(any(is.na(bd_db$coords[[1]])))
+})
+
 test_that("get_beta_diversity agglomerates by taxrank before ordination", {
   ps <- make_bd_ps()
   bd <- get_beta_diversity(ps, method = "PCoA", taxrank = "Phylum")

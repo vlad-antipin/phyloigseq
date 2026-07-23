@@ -489,6 +489,50 @@
   z_all %*% qr.coef(fit$pCCA$QR, fit$Ybar)
 }
 
+#' Fitted values for held-out samples from an RDA/dbRDA fit's free-predictor
+#' (`CCA`) component, computed by hand
+#'
+#' `predict(fit, newdata, type = "working"/"lc", model = "CCA")` hard-errors
+#' (`"factor ... has new levels ..."`, from `model.frame()`'s own
+#' `xlev`-checking against `fit$terms`) whenever `newdata` has a factor level
+#' -- in *either* the free predictor or a `Condition()` confounder -- that
+#' wasn't present in the fit-subset data. This happens routinely with
+#' `fit_filter`: fitting on a data subset (e.g. two groups out of many) and
+#' projecting the rest is exactly "newdata has levels the fit never saw".
+#' `.pcca_fitted_all()` above never hits this because it builds
+#' `model.matrix()` fresh from `newdata` instead of routing through
+#' `predict()`'s stored `xlevels`; this does the same for the free-predictor
+#' component. `fit$CCA$QR` turns out to be the QR decomposition of the
+#' *combined* `[Condition(...) | model]` design (confirmed via its own
+#' column names), but applying only the coefficient rows belonging to the
+#' free predictor's own columns to the free predictor's own (freshly built,
+#' `newdata`-derived) design matrix -- never touching the confounder columns
+#' at all -- reproduces `predict(..., type = "working"/"lc", model = "CCA")`
+#' exactly (verified to float tolerance, including with `Condition()`
+#' confounders present in the fit). A `newdata` level never seen while
+#' fitting simply has no dummy column in `fit$CCA$envcentre` to align to, so
+#' it's silently dropped by the reindex below -- equivalent to treating that
+#' sample as the reference level for this predictor, the same convention
+#' `.pcca_fitted_all()` already established for unseen confounder levels.
+#'
+#' @param fit An `rda`- or `capscale`-class object with a non-`NULL` `$CCA`
+#'   (i.e. a free predictor, not just confounders, was fit).
+#' @param model String with the free predictor's own model formula RHS, as
+#'   originally passed to [get_beta_diversity()] -- *not* the
+#'   `Condition(...)`-augmented version used to build `fit`'s own formula.
+#' @param df_all `sample_data(physeq)` as a data frame, all samples.
+#' @return Numeric matrix, all samples x `ncol(fit$Ybar)`, in the same
+#'   standardized units as `fit$Ybar`.
+#' @noRd
+.cca_working_fitted <- function(fit, model, df_all) {
+  x_formula <- as.formula(paste("~", model))
+  x_all <- model.matrix(x_formula, data = df_all)[, -1, drop = FALSE]
+  x_all <- x_all[, names(fit$CCA$envcentre), drop = FALSE]
+  x_all <- sweep(x_all, 2, fit$CCA$envcentre, "-")
+  coefs <- qr.coef(fit$CCA$QR, fit$Ybar)
+  x_all %*% coefs[names(fit$CCA$envcentre), , drop = FALSE]
+}
+
 #' Project new samples onto the residual (unconstrained `PC`) axes of an RDA
 #' fit
 #'
@@ -499,9 +543,11 @@
 #' sometimes in sign), even when `newdata` is exactly the fit-subset data the
 #' model was trained on. This reimplements the projection correctly: since
 #' RDA's residual axes are a plain (unweighted) PCA of the residuals, the
-#' constrained fit's prediction (`predict(..., type = "working", model =
-#' "CCA")`, in the same standardized units as `fit$Ybar`) can be subtracted
-#' from `otu_all` directly, and the remainder projected onto `fit$CA$v` --
+#' constrained fit's prediction (`.cca_working_fitted()`, reproducing
+#' `predict(..., type = "working", model = "CCA")` but tolerant of `newdata`
+#' levels the fit never saw, in the same standardized units as `fit$Ybar`)
+#' can be subtracted from `otu_all` directly, and the remainder projected
+#' onto `fit$CA$v` --
 #' reproduces `scores(fit, display = "sites", scaling = scaling)`'s residual
 #' columns exactly (to float tolerance) for the fit subset, and extends that
 #' correctly to out-of-fit samples. CCA's residual axes are chi-square
@@ -520,6 +566,10 @@
 #' @param df_all `sample_data(physeq)` as a data frame, all samples.
 #' @param n_axes Number of residual axes needed.
 #' @param scaling `1` or `2` (vegan scaling convention).
+#' @param model String with the free predictor's own model formula RHS
+#'   (*not* the `Condition(...)`-augmented version used to build `fit`);
+#'   only used (and required) when `fit` has a free predictor (`fit$CCA` is
+#'   not `NULL`) -- passed through to `.cca_working_fitted()`.
 #' @param confounders Character vector of confounder column names; only used
 #'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`).
 #' @param predictor_vars Character vector of every model/confounder column
@@ -535,6 +585,7 @@
   df_all,
   n_axes,
   scaling,
+  model = NULL,
   confounders = NULL,
   predictor_vars
 ) {
@@ -550,7 +601,7 @@
   }
   yhat_all <- if (!is.null(fit$CCA) && fit$CCA$rank > 0) {
     .predictor_complete_cases(df_all, predictor_vars, function(d) {
-      predict(fit, newdata = d, type = "working", model = "CCA")
+      .cca_working_fitted(fit, model, d)
     })
   } else {
     .predictor_complete_cases(df_all, predictor_vars, function(d) {
@@ -621,6 +672,13 @@
 #' @param n_axes Number of axes requested; split automatically between
 #'   constrained and residual based on `fit`'s own rank.
 #' @param scaling `1` or `2` (vegan scaling convention).
+#' @param model String with the free predictor's own model formula RHS
+#'   (*not* the `Condition(...)`-augmented version used to build `fit`);
+#'   only used (and required) when `fit` has a free predictor (`fit$CCA` is
+#'   not `NULL`) -- passed through to `.cca_working_fitted()`, which this
+#'   function's `has_free_predictor` branch uses in place of `predict(type =
+#'   "lc")` (unusable as-is: it hard-errors on any `newdata` factor level
+#'   the fit-subset data never saw, which `fit_filter` runs into routinely).
 #' @param confounders Character vector of confounder column names; only used
 #'   (and required) when `fit` has no free predictor (`fit$CCA` is `NULL`) --
 #'   see `.pcca_fitted_all()`, the `capscale` analogue of which this
@@ -642,6 +700,7 @@
   df_all,
   n_axes,
   scaling,
+  model = NULL,
   confounders = NULL,
   predictor_vars
 ) {
@@ -683,7 +742,8 @@
     v_cca <- t(yhat_fit) %*% u_cca %*% diag(1 / sqrt(eig_cca), nrow = take_cca)
 
     u_lc_all <- .predictor_complete_cases(df_all, predictor_vars, function(d) {
-      predict(fit, newdata = d, type = "lc", model = "CCA")[, 1:take_cca, drop = FALSE]
+      yhat_d <- .cca_working_fitted(fit, model, d)
+      yhat_d %*% v_cca %*% diag(1 / sqrt(eig_cca), nrow = take_cca)
     })
     yhat_all <- u_lc_all %*% diag(sqrt(eig_cca), nrow = take_cca) %*% t(v_cca)
 
@@ -782,6 +842,11 @@
       }
     }
   }
+
+  # .cca_working_fitted() needs the free predictor's own formula RHS, without
+  # the Condition(...) term about to be appended below -- Condition() is
+  # vegan formula-parsing syntax, not something model.matrix() understands.
+  free_predictor_model <- model
 
   if (!is.null(confounders)) {
     model <- paste0(
@@ -890,6 +955,7 @@
             df_all,
             n_ca_take,
             scaling,
+            model = free_predictor_model,
             predictor_vars = predictor_vars
           )
           return(cbind(wa_cca, wa_ca))
@@ -953,6 +1019,7 @@
         df_all,
         n_axes,
         scaling,
+        model = free_predictor_model,
         confounders = confounders,
         predictor_vars = predictor_vars
       ))
