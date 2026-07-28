@@ -111,6 +111,8 @@ filter_reads <- function(
 #'   line on the sample-level histogram. `NA` (default) or `NULL` omits it.
 #' @param min_taxa_sum Numeric threshold to draw as a vertical reference line
 #'   on the taxon-level histogram. `NA` (default) or `NULL` omits it.
+#' @param log_scale Logical; if `TRUE`, plot the x axis (total reads) on a
+#'   log10 scale. Default `FALSE`.
 #'
 #' @return A `ggplot` object faceted by level (`"Sample"`/`"Taxon"`). `NULL`
 #'   if `physeq` is not a `phyloseq` object.
@@ -119,7 +121,12 @@ filter_reads <- function(
 #' @examples
 #' data(ps_16s_refinement)
 #' plot_reads(ps_16s_refinement, min_sample_sum = 100, min_taxa_sum = 5)
-plot_reads <- function(physeq, min_sample_sum = NA, min_taxa_sum = NA) {
+plot_reads <- function(
+  physeq,
+  min_sample_sum = NA,
+  min_taxa_sum = NA,
+  log_scale = FALSE
+) {
   if (is.null(min_sample_sum)) {
     min_sample_sum <- NA
   }
@@ -162,6 +169,9 @@ plot_reads <- function(physeq, min_sample_sum = NA, min_taxa_sum = NA) {
         linetype = "dashed",
         linewidth = 1
       )
+  }
+  if (isTRUE(log_scale)) {
+    plot <- plot + scale_x_log10()
   }
   plot <- plot +
     facet_wrap(. ~ Level, scales = "free") +

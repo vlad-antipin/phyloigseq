@@ -4,7 +4,7 @@
 \alias{plot_reads}
 \title{Plot Distributions of Total Read Counts by Sample and by Taxon}
 \usage{
-plot_reads(physeq, min_sample_sum = NA, min_taxa_sum = NA)
+plot_reads(physeq, min_sample_sum = NA, min_taxa_sum = NA, log_scale = FALSE)
 }
 \arguments{
 \item{physeq}{A \code{phyloseq} object.}
@@ -14,6 +14,9 @@ line on the sample-level histogram. \code{NA} (default) or \code{NULL} omits it.
 
 \item{min_taxa_sum}{Numeric threshold to draw as a vertical reference line
 on the taxon-level histogram. \code{NA} (default) or \code{NULL} omits it.}
+
+\item{log_scale}{Logical; if \code{TRUE}, plot the x axis (total reads) on a
+log10 scale. Default \code{FALSE}.}
 }
 \value{
 A \code{ggplot} object faceted by level (\code{"Sample"}/\code{"Taxon"}). \code{NULL}
