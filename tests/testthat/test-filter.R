@@ -88,6 +88,67 @@ test_that("filter_reads returns NULL for non-phyloseq input", {
   expect_null(filter_reads(matrix(1:4, 2)))
 })
 
+# t2's only reads live in s3; s3 gets dropped for low total reads while
+# min_taxa_sum = 0 lets t2 through the taxa-side check unfiltered. t2 ends up
+# a ghost taxon (zero reads in the surviving samples) unless drop_zero_taxa
+# cleans it up.
+make_ghost_taxon_ps <- function() {
+  mat <- matrix(
+    c(
+      100, 100, 5,
+      0, 0, 50
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("t1", "t2"), c("s1", "s2", "s3"))
+  )
+  sdata <- data.frame(dummy = c("a", "b", "c"), row.names = colnames(mat))
+  phyloseq::phyloseq(
+    phyloseq::otu_table(mat, taxa_are_rows = TRUE),
+    phyloseq::sample_data(sdata)
+  )
+}
+
+test_that("filter_reads drops ghost zero-sum taxa left by sample filtering by default", {
+  ps <- make_ghost_taxon_ps()
+  out <- filter_reads(ps, min_sample_sum = 60, min_taxa_sum = 0)
+  expect_equal(phyloseq::taxa_names(out), "t1")
+  expect_equal(phyloseq::sample_names(out), c("s1", "s2"))
+})
+
+test_that("filter_reads keeps ghost zero-sum taxa when drop_zero_taxa = FALSE", {
+  ps <- make_ghost_taxon_ps()
+  out <- filter_reads(
+    ps,
+    min_sample_sum = 60,
+    min_taxa_sum = 0,
+    drop_zero_taxa = FALSE
+  )
+  expect_equal(phyloseq::taxa_names(out), c("t1", "t2"))
+  expect_equal(phyloseq::sample_names(out), c("s1", "s2"))
+  expect_equal(unname(phyloseq::taxa_sums(out)["t2"]), 0)
+})
+
+test_that("filter_reads drops zero-sum taxa even when thresholds are NULL", {
+  ps <- make_ghost_taxon_ps()
+  # Simulate a taxon already at zero (e.g. from upstream metadata filtering)
+  # rather than one created by this call's own sample-sum threshold.
+  ps <- phyloseq::prune_samples(c("s1", "s2"), ps)
+  out <- filter_reads(ps, min_sample_sum = NULL, min_taxa_sum = 150)
+  expect_equal(phyloseq::taxa_names(out), "t1")
+})
+
+test_that("filter_reads warns and returns NULL if drop_zero_taxa empties all taxa", {
+  ps <- make_ghost_taxon_ps()
+  ps <- phyloseq::prune_taxa("t2", ps)
+  ps <- phyloseq::prune_samples(c("s1", "s2"), ps)
+  expect_warning(
+    result <- filter_reads(ps, min_sample_sum = NULL, min_taxa_sum = NULL),
+    "All taxa filtered out"
+  )
+  expect_null(result)
+})
+
 # ---- plot_reads ----
 
 test_that("plot_reads returns a faceted ggplot with no threshold lines by default", {

@@ -4,7 +4,13 @@
 \alias{filter_reads}
 \title{Filter Taxa and Samples by Minimum Read Sum}
 \usage{
-filter_reads(physeq, min_sample_sum = 100, min_taxa_sum = 2, taxa_first = TRUE)
+filter_reads(
+  physeq,
+  min_sample_sum = 100,
+  min_taxa_sum = 2,
+  taxa_first = TRUE,
+  drop_zero_taxa = TRUE
+)
 }
 \arguments{
 \item{physeq}{A \code{phyloseq} object.}
@@ -21,6 +27,14 @@ value are removed. \code{NULL} skips read-count filtering entirely, same as
 samples, so sample sums are computed on the taxon-filtered subset; if
 \code{FALSE}, samples are filtered first and taxon sums are computed on the
 sample-filtered subset.}
+
+\item{drop_zero_taxa}{Logical (default \code{TRUE}). Whichever side is filtered
+last can zero out taxa on the other side (e.g. a taxon confined to a
+sample that gets dropped for low read count). When \code{TRUE}, a final pass
+removes any taxon left with zero total reads, regardless of
+\code{min_taxa_sum} or \code{taxa_first}. Applied even when \code{min_sample_sum} or
+\code{min_taxa_sum} is \code{NULL}, since it addresses taxa left empty by upstream
+sample filtering, not the threshold-based filtering this function does.}
 }
 \value{
 The filtered \code{phyloseq} object. \code{NULL} if \code{physeq} is not a

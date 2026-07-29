@@ -16,6 +16,13 @@
 #'   samples, so sample sums are computed on the taxon-filtered subset; if
 #'   `FALSE`, samples are filtered first and taxon sums are computed on the
 #'   sample-filtered subset.
+#' @param drop_zero_taxa Logical (default `TRUE`). Whichever side is filtered
+#'   last can zero out taxa on the other side (e.g. a taxon confined to a
+#'   sample that gets dropped for low read count). When `TRUE`, a final pass
+#'   removes any taxon left with zero total reads, regardless of
+#'   `min_taxa_sum` or `taxa_first`. Applied even when `min_sample_sum` or
+#'   `min_taxa_sum` is `NULL`, since it addresses taxa left empty by upstream
+#'   sample filtering, not the threshold-based filtering this function does.
 #'
 #' @return The filtered `phyloseq` object. `NULL` if `physeq` is not a
 #'   `phyloseq` object, or if filtering would remove every taxon or every
@@ -36,7 +43,8 @@ filter_reads <- function(
   physeq,
   min_sample_sum = 100,
   min_taxa_sum = 2,
-  taxa_first = TRUE
+  taxa_first = TRUE,
+  drop_zero_taxa = TRUE
 ) {
   if (!is(physeq, "phyloseq")) {
     return(NULL)
@@ -48,6 +56,12 @@ filter_reads <- function(
   }
 
   if (is.null(min_sample_sum) || is.null(min_taxa_sum)) {
+    if (isTRUE(drop_zero_taxa)) {
+      physeq <- .drop_zero_taxa(physeq)
+      if (is.null(physeq)) {
+        return(NULL)
+      }
+    }
     if (sparse_input) {
       physeq <- as_sparse_phyloseq(physeq)
     }
@@ -69,6 +83,13 @@ filter_reads <- function(
   }
   if (is.null(physeq)) {
     return(NULL)
+  }
+
+  if (isTRUE(drop_zero_taxa)) {
+    physeq <- .drop_zero_taxa(physeq)
+    if (is.null(physeq)) {
+      return(NULL)
+    }
   }
 
   if (sparse_input) {
@@ -98,6 +119,23 @@ filter_reads <- function(
     return(NULL)
   }
   prune_samples(keep_samples, physeq)
+}
+
+# Drops taxa with exactly zero reads across all (currently present) samples,
+# e.g. ghost taxa left behind once the samples that carried them are removed.
+# Unlike .filter_taxa_by_sum(), this always targets strict zeros regardless
+# of min_taxa_sum, so taxa aren't left dangling just because the threshold
+# happens to be 0 or unset.
+.drop_zero_taxa <- function(physeq) {
+  keep_taxa <- taxa_sums(physeq) > 0
+  if (!any(keep_taxa)) {
+    warning("All taxa filtered out\n")
+    return(NULL)
+  }
+  if (all(keep_taxa)) {
+    return(physeq)
+  }
+  prune_taxa(keep_taxa, physeq)
 }
 
 #' Plot Distributions of Total Read Counts by Sample and by Taxon
