@@ -3212,6 +3212,12 @@ plot_beta_diversity <- function(
     label
   )
 
+  # Fix the panel (not the overall device) to a true 1:1 data aspect, so
+  # inter-sample distances aren't visually distorted -- this holds
+  # regardless of the plot's outer width/height (legend, facets, biplot
+  # arrows...), unlike forcing the whole figure to be square.
+  plt <- plt + coord_fixed(ratio = 1)
+
   if (biplot && (!is.null(loadings) || !is.null(covariates))) {
     arrow_data <- .plot_beta_diversity_arrow_data(
       loadings,
