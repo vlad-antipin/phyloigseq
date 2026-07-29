@@ -83,7 +83,11 @@ keep_levels <- function(vals, level_names) {
 #' levels in `level_names`'s order if supplied, otherwise sorted via
 #' [gtools::mixedsort()] (natural/alphanumeric order). `"(NA)"` in
 #' `level_names` is treated as a request to keep `NA`s (coerced to the literal
-#' string `"(NA)"` first).
+#' string `"(NA)"` first). `vals` is coerced to character before the
+#' `mixedsort()` fallback -- `gtools::mixedorder()` silently orders by a
+#' factor's underlying integer codes instead of its labels, so an already-
+#' factor `vals` would otherwise keep whatever (arbitrary) level order it
+#' walked in with rather than actually being naturally sorted.
 #'
 #' @param vals A vector (any type coercible to character).
 #' @param level_names `NULL` or a character vector giving the desired level
@@ -100,7 +104,8 @@ factorize_levels <- function(vals, level_names) {
     }
     factor(vals, levels = level_names)
   } else {
-    factor(vals, levels = gtools::mixedsort(unique(vals[!is.na(vals)])))
+    vals_chr <- as.character(vals)
+    factor(vals, levels = gtools::mixedsort(unique(vals_chr[!is.na(vals_chr)])))
   }
 }
 

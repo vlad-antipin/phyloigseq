@@ -482,7 +482,7 @@ plot_alpha_diversity <- function(
     .plot_title_theme()
   if (!is.null(group) && !is.numeric(full_sample_data[[group]])) {
     plt <- plt +
-      ggsci::scale_fill_npg()
+      ggsci::scale_color_npg()
   }
 
   if (is.null(x)) {

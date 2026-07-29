@@ -2383,6 +2383,11 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
 #' @param loadings,covariates From .plot_beta_diversity_select_scaling();
 #'   only their presence/absence is used here (arrow cutoff subtitle text).
 #' @param p_value From .plot_beta_diversity_pvalues().
+#' @param label `NULL` or the resolved label vector (see
+#'   .plot_beta_diversity_base_plot()'s `label` argument) -- only used here to
+#'   decide whether the discrete `scale_color_npg()` is safe to add (a
+#'   numeric `label` is mapped as a continuous color, which a discrete scale
+#'   would error on).
 #' @return `plt`, with labs/theme layers added.
 #' @noRd
 .plot_beta_diversity_labs <- function(
@@ -2400,9 +2405,10 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
   covariates,
   arrow_cutoff_load,
   arrow_cutoff_covar,
-  p_value
+  p_value,
+  label
 ) {
-  plt +
+  plt <- plt +
     labs(
       x = paste0(
         dim_names[comp[1]],
@@ -2490,6 +2496,13 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
     ) +
     .plot_title_theme() +
     ggsci::scale_fill_npg()
+
+  if (!is.numeric(label)) {
+    plt <- plt +
+      ggsci::scale_color_npg()
+  }
+
+  plt
 }
 
 #' Apply grid/wrap faceting (and grid p-value annotations) to a
@@ -3195,7 +3208,8 @@ plot_beta_diversity <- function(
     covariates,
     arrow_cutoff_load,
     arrow_cutoff_covar,
-    p_value
+    p_value,
+    label
   )
 
   if (biplot && (!is.null(loadings) || !is.null(covariates))) {
