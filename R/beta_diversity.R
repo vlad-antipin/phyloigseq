@@ -1846,7 +1846,7 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
 
   plt <-
     ggplot(plot_data, aes(x = dim, y = prop_var)) +
-    geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+    geom_bar(stat = "identity", fill = "#4C6A92", color = "black") +
     xlab("Dimension") +
     ylab("% of variability explained") +
     ggtitle("Scree plot") +

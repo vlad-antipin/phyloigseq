@@ -197,7 +197,7 @@ plot_reads <- function(
   # Facet plot by level (sample or taxon)
   plot <-
     ggplot(combined_df, aes(x = TotalReads)) +
-    geom_histogram(bins = 30, fill = "skyblue", color = "black")
+    geom_histogram(bins = 30, fill = "#4C6A92", color = "black")
   if (all(!is.na(combined_df$Threshold))) {
     plot <- plot +
       geom_vline(
