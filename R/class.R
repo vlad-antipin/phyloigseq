@@ -20,7 +20,7 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #' @slot score_names Character. Names of the \code{ig_coating} columns that are actual Ig scores
 #'   (as opposed to fraction/diagnostic metadata columns)
 #' @slot positive_fraction_name Character. Name of the positive Ig-coated fraction
-#' @slot first_negative_fraction_name Character. Name of the main negative fraction (e.g., 90%)
+#' @slot first_negative_fraction_name Character or NULL. Name of the main negative fraction (e.g., 90%)
 #' @slot second_negative_fraction_name Character or NULL. Name of the secondary negative fraction (e.g., 10%)
 #' @slot presorting_fraction_name Character or NULL. Name of the pre-sorting (whole community) fraction
 #' @slot ig_freq_name Character or NULL. Name of the column containing total Ig+ frequency per sample
@@ -37,7 +37,7 @@ setClass(
     ig_coating = "data.frame",
     score_names = "character",
     positive_fraction_name = "character",
-    first_negative_fraction_name = "character", # 9/10 of the whole negative fraction for IgSeq
+    first_negative_fraction_name = "characterOrNULL", # 9/10 of the whole negative fraction for IgSeq
     second_negative_fraction_name = "characterOrNULL", # 1/10 -//-
     presorting_fraction_name = "characterOrNULL", # before sorting
     ig_freq_name = "characterOrNULL",
@@ -170,10 +170,21 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param rarefy_by_sample Logical. Rarefy read counts across fractions within each sample.
 #' @param transform_by_sample Transformation method (e.g., "identity", "log").
 #' @param positive_fraction_name Name of the positive fraction.
-#' @param first_negative_fraction_name Name of the first negative fraction.
+#' @param first_negative_fraction_name Name of the first negative fraction, or `NULL`
+#'   to run without a negative fraction. In that case, `presorting_fraction_name` and
+#'   `ig_freq_name` must both be supplied instead, and only `"prob_index"` (of `scores`)
+#'   can be computed — every other score, and `slide_z`'s MA-plot geometry, is a
+#'   positive-vs-negative comparison and requires a negative fraction.
 #' @param second_negative_fraction_name Optional. Name of a second negative fraction.
 #' @param presorting_fraction_name Optional. Name of the presorting fraction.
-#' @param ig_freq_name Optional. Column name for Ig frequency, if precomputed.
+#' @param ig_freq_name Optional. Column name (in `physeq`'s `sample_data`) for the
+#'   Ig+ frequency phenotype, if precomputed.
+#' @param ig_freq_units Units `ig_freq_name`'s values are recorded in: `"frequency"`
+#'   (default, already a probability in `[0, 1]`) or `"percent"` (`[0, 100]`, divided by
+#'   100 before use). After conversion, a value outside `[0, 1]` for a given sample is
+#'   treated as `NA` for that sample (with a `warning()`) rather than fed into
+#'   `compute_ig_score()` — matching this function's general "skip what can't be
+#'   computed, don't abort the batch" behavior (see [get_slide_z()]).
 #' @param zero_treatment How to handle zeros ("no_zero", "pseudocount", etc.).
 #' @param window_size Integer. Window size for smoothing.
 #' @param empirical_null_distribution Logical. Whether to estimate null distribution.
@@ -198,9 +209,9 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #'   sample_ids = c("sample_1", "sample_2", "sample_3"),
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
-#'   second_negative_fraction_name = "Neg2",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
 #'   scores = c("slide_z", "palm", "kau")
 #' )
 #' pis
@@ -218,10 +229,11 @@ getPhyloIgSeq <- function(
   # fraction (so that fractions of the same sample have the same total sum of reads)
   transform_by_sample = "identity",
   positive_fraction_name = "pos",
-  first_negative_fraction_name = "neg",
+  first_negative_fraction_name = NULL,
   second_negative_fraction_name = NULL,
   presorting_fraction_name = NULL, # before sorting
   ig_freq_name = NULL,
+  ig_freq_units = c("frequency", "percent"),
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
@@ -231,7 +243,31 @@ getPhyloIgSeq <- function(
   taxon_id_source = c("sequential", "original")
 ) {
   taxon_id_source <- match.arg(taxon_id_source)
-  if (is.null(second_negative_fraction_name) & empirical_null_distribution) {
+  ig_freq_units <- match.arg(ig_freq_units)
+  if (
+    is.null(first_negative_fraction_name) &&
+      (is.null(presorting_fraction_name) || is.null(ig_freq_name))
+  ) {
+    stop(
+      "Either `first_negative_fraction_name` must be supplied, or both ",
+      "`presorting_fraction_name` and `ig_freq_name` must be supplied ",
+      "(required to compute `prob_index` without a negative fraction)."
+    )
+  }
+  if (is.null(first_negative_fraction_name) && "slide_z" %in% scores) {
+    warning(
+      "No negative fraction furnished, cannot compute `slide_z` (or the MA-plot ",
+      "geometry it depends on); dropping it from `scores`.\n"
+    )
+    scores <- setdiff(scores, "slide_z")
+  }
+  # Only relevant when slide_z is actually being computed -- otherwise
+  # empirical_null_distribution is never read.
+  if (
+    "slide_z" %in% scores &&
+      is.null(second_negative_fraction_name) &&
+      empirical_null_distribution
+  ) {
     warning(
       "No second negative fraction furnished, cannot model empirical null ( Ig-.1 vs Ig-.2) distribution...\n"
     )
@@ -355,6 +391,47 @@ getPhyloIgSeq <- function(
       names(sam_metadata_row) != fraction_id_name
     ]
 
+    # Resolve ig_freq_name to a [0, 1] probability, once per sample (same
+    # value regardless of which score below uses it): reject non-numeric
+    # values outright (before any arithmetic/comparison can hit them), then
+    # convert from percent if needed, then treat an out-of-range result as NA
+    # (with a warning) rather than feed a nonsensical value into
+    # compute_ig_score().
+    ig_freq_value <- if (!is.null(ig_freq_name)) {
+      v <- sam_metadata_row[[ig_freq_name]]
+      if (!is.na(v) && !is.numeric(v)) {
+        warning(
+          "ig_freq for sample ",
+          sample_id,
+          " (column `",
+          ig_freq_name,
+          "`) is not numeric (got class '",
+          class(v)[1],
+          "', value '",
+          v,
+          "'); treating as NA for this sample.\n"
+        )
+        v <- NA_real_
+      } else {
+        if (!is.na(v) && identical(ig_freq_units, "percent")) {
+          v <- v / 100
+        }
+        if (!is.na(v) && (v < 0 || v > 1)) {
+          warning(
+            "ig_freq for sample ",
+            sample_id,
+            " is ",
+            signif(v, 4),
+            " after unit conversion (`ig_freq_units = \"",
+            ig_freq_units,
+            "\"`), outside the expected [0, 1] probability range; treating as NA for this sample.\n"
+          )
+          v <- NA_real_
+        }
+      }
+      v
+    }
+
     # Handle zeros
     present_fraction_names <- all_fraction_names[
       all_fraction_names %in% colnames(grouped_data[[sample_id]])
@@ -428,13 +505,13 @@ getPhyloIgSeq <- function(
         compute_ig_score(
           method = score,
           pos = ig_coating[[positive_fraction_name]],
-          neg = ig_coating[[first_negative_fraction_name]],
+          neg = if (!is.null(first_negative_fraction_name)) {
+            ig_coating[[first_negative_fraction_name]]
+          },
           pre = if (!is.null(presorting_fraction_name)) {
             ig_coating[[presorting_fraction_name]]
           },
-          ig_freq = if (!is.null(ig_freq_name)) {
-            sam_metadata_row[[ig_freq_name]]
-          }
+          ig_freq = ig_freq_value
           # TODO: purity corrected scores:
           # pos_purity = pos_purity, # P(real Ig+ | Ig+ fraction)
           # neg_impurity = neg_impurity, # P(real Ig+ | Ig- fraction)
@@ -528,9 +605,9 @@ getPhyloIgSeq <- function(
 #'   sample_ids = c("sample_1", "sample_2", "sample_3"),
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
-#'   second_negative_fraction_name = "Neg2",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
 #'   scores = c("slide_z", "palm", "kau")
 #' )
 #' get_ig_score(pis, score_name = "palm", sample_ids = c("sample_1", "sample_2"))

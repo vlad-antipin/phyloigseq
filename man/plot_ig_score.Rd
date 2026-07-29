@@ -84,8 +84,8 @@ phyloigseq_obj <- getPhyloIgSeq(
   ps_igseq,
   sample_id_name = "sample_id",
   fraction_id_name = "sorting_fraction",
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
   scores = c("slide_z", "palm")
 )
 plot_ig_score(phyloigseq_obj, plot_type = "boxplot", score_name = "slide_z")

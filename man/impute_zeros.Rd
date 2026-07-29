@@ -42,11 +42,11 @@ grouped <- group_sorted_samples(
   sample_id_name = "sample_id",
   sample_ids = c("sample_1", "sample_2"),
   fraction_id_name = "sorting_fraction",
-  fraction_ids = c("Pos", "Neg1", "Neg2")
+  fraction_ids = c("pos", "neg1", "neg2")
 )
 result <- impute_zeros(
   data = grouped[["sample_1"]],
-  fraction_names = c("Pos", "Neg1", "Neg2"),
+  fraction_names = c("pos", "neg1", "neg2"),
   method = "pseudo_count"
 )
 head(result$data)

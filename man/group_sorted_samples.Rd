@@ -29,7 +29,7 @@ biological sample (individual) each sort fraction belongs to.}
 (default) to include all.}
 
 \item{fraction_id_name}{Name of the \code{sample_data} column identifying the
-sort fraction (e.g. \code{"Pos"}/\code{"Neg1"}/\code{"Neg2"}).}
+sort fraction (e.g. \code{"pos"}/\code{"neg1"}/\code{"neg2"}).}
 
 \item{fraction_ids}{Which values of \code{fraction_id_name} to include, or
 \code{NULL} (default) to include all.}
@@ -68,7 +68,7 @@ grouped <- group_sorted_samples(
   sample_id_name = "sample_id",
   sample_ids = c("sample_1", "sample_2"),
   fraction_id_name = "sorting_fraction",
-  fraction_ids = c("Pos", "Neg1", "Neg2")
+  fraction_ids = c("pos", "neg1", "neg2")
 )
 names(grouped)
 head(grouped[["sample_1"]])

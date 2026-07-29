@@ -35,7 +35,7 @@ out without having to know which of the remaining columns are metadata.
 
 \item{\code{positive_fraction_name}}{Character. Name of the positive Ig-coated fraction}
 
-\item{\code{first_negative_fraction_name}}{Character. Name of the main negative fraction (e.g., 90\%)}
+\item{\code{first_negative_fraction_name}}{Character or NULL. Name of the main negative fraction (e.g., 90\%)}
 
 \item{\code{second_negative_fraction_name}}{Character or NULL. Name of the secondary negative fraction (e.g., 10\%)}
 

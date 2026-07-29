@@ -89,13 +89,13 @@ grouped <- group_sorted_samples(
   sample_id_name = "sample_id",
   sample_ids = c("sample_1", "sample_2"),
   fraction_id_name = "sorting_fraction",
-  fraction_ids = c("Pos", "Neg1", "Neg2")
+  fraction_ids = c("pos", "neg1", "neg2")
 )
 result <- get_slide_z(
   sorted_sample_df = grouped[["sample_1"]],
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
-  second_negative_fraction_name = "Neg2",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
+  second_negative_fraction_name = "neg2",
   confidence_levels = c(0.95, 0.99)
 )
 head(result$slide_z)

@@ -301,9 +301,9 @@ compute_ig_score <- function(
 #'   sample_ids = c("sample_1", "sample_2", "sample_3"),
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
-#'   second_negative_fraction_name = "Neg2",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
 #'   scores = c("slide_z", "palm", "kau"),
 #'   confidence_levels = c(0.95, 0.99)
 #' )
@@ -896,8 +896,8 @@ plot_slide_z <- function(
 #'   ps_igseq,
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
 #'   scores = c("slide_z", "palm")
 #' )
 #' plot_ig_score(phyloigseq_obj, plot_type = "boxplot", score_name = "slide_z")
@@ -1098,13 +1098,13 @@ plot_ig_score <- function(
 #'   ps_igseq,
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
 #'   scores = c("slide_z", "palm")
 #' )
 #' agglom <- agglomPhyloIgSeq(
 #'   phyloigseq_obj,
-#'   abundance_fraction = "Pos",
+#'   abundance_fraction = "pos",
 #'   taxrank = "Genus",
 #'   agglom_method = "median",
 #'   abundance_quantile = 0.1,
@@ -1630,9 +1630,9 @@ to_wider_ig_score <- function(
 #'   physeq = ps_igseq,
 #'   sample_id_name = "sample_id",
 #'   fraction_id_name = "sorting_fraction",
-#'   positive_fraction_name = "Pos",
-#'   first_negative_fraction_name = "Neg1",
-#'   second_negative_fraction_name = "Neg2",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
 #'   scores = c("slide_z", "palm")
 #' )
 #' ps_svd <- PhyloIgSeq_to_phyloseq(

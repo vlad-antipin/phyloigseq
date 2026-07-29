@@ -33,9 +33,12 @@ library(phyloseq)
 ## Data
 
 The examples below use `ps_igseq`, a small, anonymized toy `phyloseq` object from a
-mouse IgA-Seq experiment: 4703 taxa, 30 samples (rows), each belonging to one of 8
-biological samples split across up to three sort fractions (`Pos`, `Neg1`, `Neg2`,
-recorded in the `sorting_fraction` column).
+mouse IgA-Seq experiment: 4703 taxa, 38 samples (rows), each belonging to one of 8
+biological samples split across up to four sort fractions (`pos`, `neg1`, `neg2`,
+`whole`, recorded in the `sorting_fraction` column). `whole` (pre-sort) and the
+`ig_pheno` sample-metadata column (Ig+ frequency phenotype) are synthetic additions
+that let this toy dataset also demonstrate the positive-fraction-only workflow (see
+below) — like `sex`/`age`, they carry no biological meaning.
 
 ```{r data}
 data(ps_igseq)
@@ -54,9 +57,9 @@ pis <- getPhyloIgSeq(
   physeq = ps_igseq,
   sample_id_name = "sample_id",
   fraction_id_name = "sorting_fraction",
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
-  second_negative_fraction_name = "Neg2",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
+  second_negative_fraction_name = "neg2",
   confidence_levels = c(0.95, 0.99),
   scores = c("slide_z", "palm", "kau")
 )
@@ -75,6 +78,32 @@ know which of the other columns are metadata:
 
 ```{r get-score}
 head(get_ig_score(pis, score_name = "slide_z", sample_ids = "sample_1"))
+```
+
+### Positive-fraction-only mode
+
+Everything above compares Ig+ against a negative fraction. If you only sequenced a
+positive fraction, `prob_index` (see below) can still be computed from just the positive
+fraction, a pre-sort fraction, and an Ig+ frequency phenotype — pass
+`first_negative_fraction_name = NULL` and supply `presorting_fraction_name`/
+`ig_freq_name` instead. Every other score (and `slide_z`'s MA-plot geometry) is
+fundamentally a positive-vs-negative comparison, so `getPhyloIgSeq()` drops `slide_z`
+from `scores` (with a `warning()`) if it's requested without a negative fraction, and
+errors if neither a negative fraction nor both `presorting_fraction_name`/`ig_freq_name`
+are supplied:
+
+```{r pos-only}
+pis_pos_only <- getPhyloIgSeq(
+  physeq = ps_igseq,
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "pos",
+  presorting_fraction_name = "whole",
+  ig_freq_name = "ig_pheno",
+  scores = "prob_index"
+)
+pis_pos_only
+head(get_ig_score(pis_pos_only, score_name = "prob_index", sample_ids = "sample_1"))
 ```
 
 ## Classical Ig scores
@@ -123,7 +152,7 @@ filtering by a fraction-abundance column:
 ```{r agglom}
 pis_genus <- agglomPhyloIgSeq(
   pis,
-  abundance_fraction = "Pos",
+  abundance_fraction = "pos",
   taxrank = "Genus",
   agglom_method = "median"
 )

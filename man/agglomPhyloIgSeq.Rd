@@ -72,13 +72,13 @@ phyloigseq_obj <- getPhyloIgSeq(
   ps_igseq,
   sample_id_name = "sample_id",
   fraction_id_name = "sorting_fraction",
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
   scores = c("slide_z", "palm")
 )
 agglom <- agglomPhyloIgSeq(
   phyloigseq_obj,
-  abundance_fraction = "Pos",
+  abundance_fraction = "pos",
   taxrank = "Genus",
   agglom_method = "median",
   abundance_quantile = 0.1,

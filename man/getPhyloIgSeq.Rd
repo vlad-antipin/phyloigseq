@@ -13,10 +13,11 @@ getPhyloIgSeq(
   rarefy_by_sample = TRUE,
   transform_by_sample = "identity",
   positive_fraction_name = "pos",
-  first_negative_fraction_name = "neg",
+  first_negative_fraction_name = NULL,
   second_negative_fraction_name = NULL,
   presorting_fraction_name = NULL,
   ig_freq_name = NULL,
+  ig_freq_units = c("frequency", "percent"),
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
@@ -42,13 +43,25 @@ getPhyloIgSeq(
 
 \item{positive_fraction_name}{Name of the positive fraction.}
 
-\item{first_negative_fraction_name}{Name of the first negative fraction.}
+\item{first_negative_fraction_name}{Name of the first negative fraction, or \code{NULL}
+to run without a negative fraction. In that case, \code{presorting_fraction_name} and
+\code{ig_freq_name} must both be supplied instead, and only \code{"prob_index"} (of \code{scores})
+can be computed — every other score, and \code{slide_z}'s MA-plot geometry, is a
+positive-vs-negative comparison and requires a negative fraction.}
 
 \item{second_negative_fraction_name}{Optional. Name of a second negative fraction.}
 
 \item{presorting_fraction_name}{Optional. Name of the presorting fraction.}
 
-\item{ig_freq_name}{Optional. Column name for Ig frequency, if precomputed.}
+\item{ig_freq_name}{Optional. Column name (in \code{physeq}'s \code{sample_data}) for the
+Ig+ frequency phenotype, if precomputed.}
+
+\item{ig_freq_units}{Units \code{ig_freq_name}'s values are recorded in: \code{"frequency"}
+(default, already a probability in \verb{[0, 1]}) or \code{"percent"} (\verb{[0, 100]}, divided by
+100 before use). After conversion, a value outside \verb{[0, 1]} for a given sample is
+treated as \code{NA} for that sample (with a \code{warning()}) rather than fed into
+\code{compute_ig_score()} — matching this function's general "skip what can't be
+computed, don't abort the batch" behavior (see \code{\link[=get_slide_z]{get_slide_z()}}).}
 
 \item{zero_treatment}{How to handle zeros ("no_zero", "pseudocount", etc.).}
 
@@ -83,9 +96,9 @@ pis <- getPhyloIgSeq(
   sample_ids = c("sample_1", "sample_2", "sample_3"),
   sample_id_name = "sample_id",
   fraction_id_name = "sorting_fraction",
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
-  second_negative_fraction_name = "Neg2",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
+  second_negative_fraction_name = "neg2",
   scores = c("slide_z", "palm", "kau")
 )
 pis

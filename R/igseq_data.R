@@ -27,7 +27,7 @@
 #' @param sample_ids Which values of `sample_id_name` to include, or `NULL`
 #'   (default) to include all.
 #' @param fraction_id_name Name of the `sample_data` column identifying the
-#'   sort fraction (e.g. `"Pos"`/`"Neg1"`/`"Neg2"`).
+#'   sort fraction (e.g. `"pos"`/`"neg1"`/`"neg2"`).
 #' @param fraction_ids Which values of `fraction_id_name` to include, or
 #'   `NULL` (default) to include all.
 #' @param rarefy_by_sample If `TRUE` (default), rarefy fraction abundances
@@ -49,7 +49,7 @@
 #'   sample_id_name = "sample_id",
 #'   sample_ids = c("sample_1", "sample_2"),
 #'   fraction_id_name = "sorting_fraction",
-#'   fraction_ids = c("Pos", "Neg1", "Neg2")
+#'   fraction_ids = c("pos", "neg1", "neg2")
 #' )
 #' names(grouped)
 #' head(grouped[["sample_1"]])
@@ -250,11 +250,11 @@ group_sorted_samples <- function(
 #'   sample_id_name = "sample_id",
 #'   sample_ids = c("sample_1", "sample_2"),
 #'   fraction_id_name = "sorting_fraction",
-#'   fraction_ids = c("Pos", "Neg1", "Neg2")
+#'   fraction_ids = c("pos", "neg1", "neg2")
 #' )
 #' result <- impute_zeros(
 #'   data = grouped[["sample_1"]],
-#'   fraction_names = c("Pos", "Neg1", "Neg2"),
+#'   fraction_names = c("pos", "neg1", "neg2"),
 #'   method = "pseudo_count"
 #' )
 #' head(result$data)

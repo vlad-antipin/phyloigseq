@@ -85,9 +85,9 @@ pis <- getPhyloIgSeq(
   physeq = ps_igseq,
   sample_id_name = "sample_id",
   fraction_id_name = "sorting_fraction",
-  positive_fraction_name = "Pos",
-  first_negative_fraction_name = "Neg1",
-  second_negative_fraction_name = "Neg2",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
+  second_negative_fraction_name = "neg2",
   scores = c("slide_z", "palm")
 )
 ps_svd <- PhyloIgSeq_to_phyloseq(
