@@ -1996,7 +1996,8 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
 #'
 #' @param sample_data,coords Current (possibly already filtered by an
 #'   earlier call) `sample_data`/`coords`.
-#' @param var_name `NULL` or a `sample_data` column name.
+#' @param var_name `NULL`, `""` (unselected, as Shiny's selectors report
+#'   "none"), or a `sample_data` column name.
 #' @param var_levels `NULL` or the subset/order of levels to keep, per
 #'   `keep_levels()`/`factorize_levels()`.
 #' @param auto_factor Logical; coerce `sample_data[[var_name]]` to a factor
@@ -2010,7 +2011,18 @@ scree_plot <- function(eigen_values, max_nb_comp = 10) {
   var_levels,
   auto_factor = FALSE
 ) {
-  if (is.null(var_name) || is.numeric(sample_data[[var_name]])) {
+  # `!var_name %in% colnames(sample_data)` also catches `var_name = ""`
+  # (an unselected Shiny selector): without it, a stale non-NULL
+  # `var_levels` left over from a previous (real) selection would fall
+  # through to `keep_levels(sample_data[[""]], var_levels)` below, i.e.
+  # `keep_levels(NULL, var_levels)` -- `as.character(NULL) %in% var_levels`
+  # is `logical(0)`, and indexing `sample_data[logical(0), ]` silently
+  # drops every row instead of erroring, leaving the plot empty.
+  if (
+    is.null(var_name) ||
+      !var_name %in% colnames(sample_data) ||
+      is.numeric(sample_data[[var_name]])
+  ) {
     return(list(sample_data = sample_data, coords = coords))
   }
 

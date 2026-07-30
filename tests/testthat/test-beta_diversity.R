@@ -810,6 +810,23 @@ test_that("plot_beta_diversity filters samples by label_levels and reorders fact
   expect_equal(nrow(plt$layers[[1]]$data), nrow(fit$sample_data))
 })
 
+test_that("plot_beta_diversity ignores a stale label_levels when label_name is unselected (\"\")", {
+  # Regression test: the Shiny app reports an unselected selectizeInput as
+  # "" (not NULL). If the user had picked levels for a previous label
+  # selection and then cleared the label, label_levels can be a stale
+  # non-NULL vector while label_name is "". That used to zero out every
+  # sample (keep_levels(NULL, stale_levels) %in% -> logical(0), and
+  # sample_data[logical(0), ] silently drops all rows) instead of being a
+  # no-op like label_name = NULL.
+  fit <- make_bd_fit()
+  plt <- suppressWarnings(plot_beta_diversity(
+    fit,
+    label_name = "",
+    label_levels = c("F2", "F1")
+  ))
+  expect_equal(nrow(plt$layers[[1]]$data), nrow(fit$sample_data))
+})
+
 test_that("plot_beta_diversity filters samples by shape_levels", {
   fit <- make_bd_fit()
   plt <- suppressWarnings(plot_beta_diversity(
