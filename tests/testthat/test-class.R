@@ -305,7 +305,14 @@ test_that("getPhyloIgSeq rarefies the shared negative fraction once across all p
 test_that("show() and plot_slide_z() handle a multi-positive-fraction object without erroring", {
   physeq <- make_full_physeq()
 
-  pis <- getPhyloIgSeq(
+  # suppressWarnings(): this fixture has no second negative fraction or
+  # precomputed MA/ellipse coordinates, so getPhyloIgSeq()/plot_slide_z() take
+  # their documented fallback paths (observed pos-neg distribution as null, no
+  # ellipses) with an informational warning each; plot_slide_z()'s pre-existing
+  # geom_jitter()/geom_point() `text` aesthetic (for the app's plotly tooltip)
+  # and discrete `size` scale also warn on every call. All expected/harmless
+  # here -- muffled so they don't drown out this test's own signal.
+  pis <- suppressWarnings(getPhyloIgSeq(
     physeq = physeq,
     sample_id_name = "sample_id",
     fraction_id_name = "sorting_fraction",
@@ -313,11 +320,11 @@ test_that("show() and plot_slide_z() handle a multi-positive-fraction object wit
     first_negative_fraction_name = "neg1",
     scores = "slide_z",
     rarefy_by_sample = FALSE
-  )
+  ))
 
   expect_output(print(pis), "pos, neg2")
   expect_s3_class(
-    plot_slide_z(pis, sample_ids = unique(pis@ig_coating$sample_id)[1]),
+    suppressWarnings(plot_slide_z(pis, sample_ids = unique(pis@ig_coating$sample_id)[1])),
     "ggplot"
   )
 })
