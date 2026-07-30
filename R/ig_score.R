@@ -434,7 +434,7 @@ plot_slide_z <- function(
   }
 
   fraction1 <- if (!is.null(phyloigseq_obj@positive_fraction_name)) {
-    phyloigseq_obj@positive_fraction_name
+    paste(phyloigseq_obj@positive_fraction_name, collapse = ", ")
   } else {
     "fraction_{1}"
   }

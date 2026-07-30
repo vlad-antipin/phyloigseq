@@ -19,7 +19,11 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #'   (see Details)
 #' @slot score_names Character. Names of the \code{ig_coating} columns that are actual Ig scores
 #'   (as opposed to fraction/diagnostic metadata columns)
-#' @slot positive_fraction_name Character. Name of the positive Ig-coated fraction
+#' @slot positive_fraction_name Character. Name(s) of the positive Ig-coated fraction(s) used
+#'   to build this object. A single value in the common case; when [getPhyloIgSeq()] was given
+#'   more than one, this holds the full set folded into the sample dimension (see
+#'   [getPhyloIgSeq()]'s `positive_fraction_name` documentation) -- informational only, not an
+#'   indexable per-row value (use the `sample_data` column of the same name for that).
 #' @slot first_negative_fraction_name Character or NULL. Name of the main negative fraction (e.g., 90%)
 #' @slot second_negative_fraction_name Character or NULL. Name of the secondary negative fraction (e.g., 10%)
 #' @slot presorting_fraction_name Character or NULL. Name of the pre-sorting (whole community) fraction
@@ -62,7 +66,7 @@ setMethod("show", "PhyloIgSeq", function(object) {
   }
 
   fraction_names <- c(
-    positive = object@positive_fraction_name,
+    positive = paste(object@positive_fraction_name, collapse = ", "),
     neg1 = object@first_negative_fraction_name,
     neg2 = object@second_negative_fraction_name,
     presort = object@presorting_fraction_name
@@ -169,7 +173,29 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param fraction_id_name Name of the column indicating fraction (e.g., pos, neg).
 #' @param rarefy_by_sample Logical. Rarefy read counts across fractions within each sample.
 #' @param transform_by_sample Transformation method (e.g., "identity", "log").
-#' @param positive_fraction_name Name of the positive fraction.
+#' @param positive_fraction_name Name of the positive fraction. Usually a single value, but can
+#'   be a character vector of several positive fraction values sharing the same negative/pre-sort
+#'   fraction(s) below (e.g. multiple phage-display sort rounds/output pools sequenced against one
+#'   shared negative/whole-community pool for the same samples). When more than one is given:
+#'   \itemize{
+#'     \item each (sample, positive fraction) combination becomes its own row, keyed by a synthetic
+#'       `sample_id` of the form `"<original sample_id>_<positive fraction>"`;
+#'     \item the negative/pre-sort fraction(s) are rarefied \emph{once}, jointly across every
+#'       positive fraction of a sample, so they're compared against each positive fraction at the
+#'       same common depth (rather than independently re-rarefied per positive fraction, which
+#'       would add spurious noise between otherwise-comparable positive fractions);
+#'     \item `sample_data` gains two columns, `original_sample_id` and `positive_fraction_name`,
+#'       recording which original sample and positive fraction each row came from;
+#'     \item the raw positive-fraction abundance column (normally named after the fraction's own
+#'       value, e.g. `"pos"`) is instead named `positive_fraction_abundance` and is always
+#'       populated, holding each row's own positive fraction's abundance.
+#'   }
+#'   With a single positive fraction (the default/common case), output is unchanged from previous
+#'   versions: no suffix, no extra columns, original fraction-named abundance column.
+#'
+#'   Rows from the same original sample across different positive fractions are \strong{not}
+#'   independent replicates -- they share the same underlying biology and the same negative/pre-sort
+#'   fraction.
 #' @param first_negative_fraction_name Name of the first negative fraction, or `NULL`
 #'   to run without a negative fraction. In that case, `presorting_fraction_name` and
 #'   `ig_freq_name` must both be supplied instead, and only `"prob_index"` (of `scores`)
@@ -197,7 +223,9 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #'   directly as `taxon_id`, matching the identifiers shown by [group_sorted_samples()] when
 #'   called directly (e.g. for a single-sample preview).
 #'
-#' @return A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per
+#' @return A \code{\link{PhyloIgSeq-class}} object -- always a single object, whether one or
+#'   several \code{positive_fraction_name} values were given (see that parameter's documentation
+#'   for the schema differences in the latter case). Its \code{ig_coating} slot holds one row per
 #'   taxon/sample with the requested \code{scores} as columns (also recorded in \code{score_names})
 #'   plus supporting fraction/diagnostic columns; see \code{\link{get_ig_score}} to retrieve a
 #'   single score without dealing with the rest of \code{ig_coating}.
@@ -349,26 +377,29 @@ getPhyloIgSeq <- function(
 
   total_reads <- data.frame()
 
+  # When more than one positive fraction is given, each (sample x positive
+  # fraction) combination becomes its own synthetic "sample" below, so that
+  # every existing sample_id-keyed consumer (agglomeration, wide pivots,
+  # phyloseq conversion, plots) gets correct per-fraction resolution for
+  # free. A single positive fraction keeps today's sample_id untouched.
+  multi_fraction <- length(positive_fraction_name) > 1
+
   for (sample_id in sample_ids) {
+    # Fraction-agnostic, computed once per sample and reused for every
+    # positive fraction below.
+
     # Keep track of total presorting read counts for each sample (used to compute relative abundances later)
-    if (!is.null(presorting_fraction_name)) {
-      total_reads <- rbind(
-        total_reads,
-        data.frame(
-          sample_id = sample_id,
-          total_reads = if (
-            all(is.na(grouped_data[[sample_id]][[presorting_fraction_name]]))
-          ) {
-            NA
-          } else {
-            sum(
-              grouped_data[[sample_id]][[presorting_fraction_name]],
-              na.rm = TRUE
-            )
-          }
+    sample_total_reads_value <- if (!is.null(presorting_fraction_name)) {
+      if (all(is.na(grouped_data[[sample_id]][[presorting_fraction_name]]))) {
+        NA
+      } else {
+        sum(
+          grouped_data[[sample_id]][[presorting_fraction_name]],
+          na.rm = TRUE
         )
-      )
+      }
     }
+
     # Retrieve sample  metadata
     sam_metadata_df <-
       metadata[
@@ -432,116 +463,158 @@ getPhyloIgSeq <- function(
       v
     }
 
-    # Handle zeros
-    present_fraction_names <- all_fraction_names[
-      all_fraction_names %in% colnames(grouped_data[[sample_id]])
-    ]
+    # Fraction-specific: looped once per positive fraction, reusing the
+    # sample-level grouping/rarefaction already computed above in
+    # `grouped_data[[sample_id]]` (shared across all positive fractions of
+    # this sample).
+    for (pos in positive_fraction_name) {
+      synthetic_id <- if (multi_fraction) {
+        paste0(sample_id, "_", pos)
+      } else {
+        sample_id
+      }
 
-    zero_imputation_result <-
-      impute_zeros(
-        data = grouped_data[[sample_id]],
-        # Don't impute zeros in other fractions!
-        fraction_names = intersect(
-          present_fraction_names,
-          c(
-            positive_fraction_name,
-            first_negative_fraction_name,
-            second_negative_fraction_name
-          )
-        ),
-        method = zero_treatment
-      )
-
-    ig_coating <- zero_imputation_result$data %>%
-      select(all_of(unique(c("taxon_id", "sample_id", present_fraction_names))))
-
-    ig_coating$zeros_imputed <- ig_coating$taxon_id %in%
-      zero_imputation_result$imputed_taxa
-
-    if (nrow(ig_coating) == 0) {
-      warning(paste0(
-        sample_id,
-        " excluded: no taxa left after zero treatment\n"
-      ))
-      next
-    }
-
-    # Compute scores
-    if ("slide_z" %in% scores) {
-      slide_z_result <-
-        get_slide_z(
-          sorted_sample_df = ig_coating,
-          positive_fraction_name = positive_fraction_name,
-          first_negative_fraction_name = first_negative_fraction_name,
-          second_negative_fraction_name = second_negative_fraction_name,
-          window_size = window_size,
-          empirical_null_distribution = empirical_null_distribution,
-          confidence_levels = confidence_levels,
-          imputed_taxa = zero_imputation_result$imputed_taxa
-        )
-
-      ig_coating$slide_z <- slide_z_result$slide_z
-      ig_coating$ellipse_level <- slide_z_result$ellipse_level
-      if (prod(dim(slide_z_result$ma_coords)) != 0) {
-        ig_coating <- cbind(
-          ig_coating,
-          slide_z_result$ma_coords[, c(
-            "obs_change",
-            "obs_abundance",
-            if (empirical_null_distribution) {
-              c("null_change", "null_abundance")
-            }
-          )]
+      if (!is.null(presorting_fraction_name)) {
+        total_reads <- rbind(
+          total_reads,
+          data.frame(sample_id = synthetic_id, total_reads = sample_total_reads_value)
         )
       }
-      ellipse_coords <- slide_z_result$ellipse_coords
-    } else {
-      ellipse_coords <- data.frame()
-    }
 
-    # Other Ig scores:
-    for (score in scores[scores != "slide_z"]) {
-      ig_coating[[score]] <-
-        compute_ig_score(
-          method = score,
-          pos = ig_coating[[positive_fraction_name]],
-          neg = if (!is.null(first_negative_fraction_name)) {
-            ig_coating[[first_negative_fraction_name]]
-          },
-          pre = if (!is.null(presorting_fraction_name)) {
-            ig_coating[[presorting_fraction_name]]
-          },
-          ig_freq = ig_freq_value
-          # TODO: purity corrected scores:
-          # pos_purity = pos_purity, # P(real Ig+ | Ig+ fraction)
-          # neg_impurity = neg_impurity, # P(real Ig+ | Ig- fraction)
-          # pos_fraction = pos_fraction, # P(Ig+ fraction)
-          # neg_fraction = neg_fraction
+      # Handle zeros
+      this_fraction_names <- c(
+        pos,
+        first_negative_fraction_name,
+        second_negative_fraction_name,
+        presorting_fraction_name
+      )
+      present_fraction_names <- this_fraction_names[
+        this_fraction_names %in% colnames(grouped_data[[sample_id]])
+      ]
+
+      zero_imputation_result <-
+        impute_zeros(
+          data = grouped_data[[sample_id]],
+          # Don't impute zeros in other fractions!
+          fraction_names = intersect(
+            present_fraction_names,
+            c(pos, first_negative_fraction_name, second_negative_fraction_name)
+          ),
+          method = zero_treatment
+        )
+
+      ig_coating <- zero_imputation_result$data %>%
+        select(all_of(unique(c("taxon_id", "sample_id", present_fraction_names))))
+      ig_coating$sample_id <- synthetic_id
+
+      ig_coating$zeros_imputed <- ig_coating$taxon_id %in%
+        zero_imputation_result$imputed_taxa
+
+      if (nrow(ig_coating) == 0) {
+        warning(paste0(
+          synthetic_id,
+          " excluded: no taxa left after zero treatment\n"
+        ))
+        next
+      }
+
+      # Compute scores
+      if ("slide_z" %in% scores) {
+        slide_z_result <-
+          get_slide_z(
+            sorted_sample_df = ig_coating,
+            positive_fraction_name = pos,
+            first_negative_fraction_name = first_negative_fraction_name,
+            second_negative_fraction_name = second_negative_fraction_name,
+            window_size = window_size,
+            empirical_null_distribution = empirical_null_distribution,
+            confidence_levels = confidence_levels,
+            imputed_taxa = zero_imputation_result$imputed_taxa
+          )
+
+        ig_coating$slide_z <- slide_z_result$slide_z
+        ig_coating$ellipse_level <- slide_z_result$ellipse_level
+        if (prod(dim(slide_z_result$ma_coords)) != 0) {
+          ig_coating <- cbind(
+            ig_coating,
+            slide_z_result$ma_coords[, c(
+              "obs_change",
+              "obs_abundance",
+              if (empirical_null_distribution) {
+                c("null_change", "null_abundance")
+              }
+            )]
+          )
+        }
+        ellipse_coords <- slide_z_result$ellipse_coords
+      } else {
+        ellipse_coords <- data.frame()
+      }
+
+      # Other Ig scores:
+      for (score in scores[scores != "slide_z"]) {
+        ig_coating[[score]] <-
+          compute_ig_score(
+            method = score,
+            pos = ig_coating[[pos]],
+            neg = if (!is.null(first_negative_fraction_name)) {
+              ig_coating[[first_negative_fraction_name]]
+            },
+            pre = if (!is.null(presorting_fraction_name)) {
+              ig_coating[[presorting_fraction_name]]
+            },
+            ig_freq = ig_freq_value
+            # TODO: purity corrected scores:
+            # pos_purity = pos_purity, # P(real Ig+ | Ig+ fraction)
+            # neg_impurity = neg_impurity, # P(real Ig+ | Ig- fraction)
+            # pos_fraction = pos_fraction, # P(Ig+ fraction)
+            # neg_fraction = neg_fraction
+          )
+      }
+
+      # Ig scores are the columns users look for first; keep them right after the
+      # taxon_id/sample_id identifiers, ahead of fraction/diagnostic columns.
+      score_names_present <- intersect(scores, names(ig_coating))
+      ig_coating <- ig_coating %>%
+        relocate(all_of(score_names_present), .after = "sample_id")
+
+      sam_metadata_row_this <- sam_metadata_row
+      sam_metadata_row_this$sample_id <- synthetic_id
+
+      if (multi_fraction) {
+        sam_metadata_row_this$original_sample_id <- sample_id
+        sam_metadata_row_this$positive_fraction_name <- pos
+
+        # The raw positive-fraction abundance column is named after `pos`
+        # itself, so after combining all positive fractions' rows it would
+        # only be populated for the rows that came from that one fraction
+        # (NA elsewhere) -- silently breaking anything that filters/weights
+        # by a single named abundance column (e.g. agglomPhyloIgSeq()'s
+        # `abundance_fraction`). Coalesce it into one universally-populated
+        # column instead: every row's own positive fraction's abundance,
+        # regardless of which fraction that was.
+        if (pos %in% names(ig_coating)) {
+          names(ig_coating)[names(ig_coating) == pos] <- "positive_fraction_abundance"
+        }
+      }
+
+      imputed_taxa <- list()
+      imputed_taxa[[synthetic_id]] <- zero_imputation_result$imputed_taxa
+
+      phyloigseq_list[[synthetic_id]] <-
+        new(
+          Class = "PhyloIgSeq",
+          ig_coating = ig_coating,
+          score_names = score_names_present,
+          positive_fraction_name = pos,
+          first_negative_fraction_name = first_negative_fraction_name,
+          second_negative_fraction_name = second_negative_fraction_name,
+          ellipse_coords = ellipse_coords,
+          sample_data = sam_metadata_row_this,
+          tax_table = NULL,
+          imputed_taxa = imputed_taxa
         )
     }
-
-    # Ig scores are the columns users look for first; keep them right after the
-    # taxon_id/sample_id identifiers, ahead of fraction/diagnostic columns.
-    score_names_present <- intersect(scores, names(ig_coating))
-    ig_coating <- ig_coating %>%
-      relocate(all_of(score_names_present), .after = "sample_id")
-
-    imputed_taxa <- list()
-    imputed_taxa[[sample_id]] <- zero_imputation_result$imputed_taxa
-
-    phyloigseq_list[[sample_id]] <-
-      new(
-        Class = "PhyloIgSeq",
-        ig_coating = ig_coating,
-        score_names = score_names_present,
-        positive_fraction_name = positive_fraction_name,
-        first_negative_fraction_name = first_negative_fraction_name,
-        second_negative_fraction_name = second_negative_fraction_name,
-        ellipse_coords = ellipse_coords,
-        sample_data = sam_metadata_row,
-        tax_table = NULL,
-        imputed_taxa = imputed_taxa
-      )
   }
 
   phyloigseq_obj <- collapsePhyloIgSeq(phyloigseq_list)

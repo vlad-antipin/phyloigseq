@@ -197,3 +197,127 @@ test_that("getPhyloIgSeq treats a non-numeric ig_freq column as NA with a warnin
 
   expect_true(all(is.na(pis@ig_coating$prob_index)))
 })
+
+# ---- getPhyloIgSeq: multiple positive fractions ----
+
+# Full pos/neg1/neg2/whole fixture (unlike make_pos_only_physeq(), keeps
+# neg1 too), still skipping sample_6/sample_7's intentionally duplicated
+# fraction rows.
+make_full_physeq <- function() {
+  data("ps_igseq", package = "PhyloIgSeq", envir = environment())
+  physeq <- ps_igseq
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  keep <- !sd$sample_id %in% c("sample_6", "sample_7")
+  phyloseq::prune_samples(rownames(sd)[keep], physeq)
+}
+
+test_that("getPhyloIgSeq with a single positive fraction is unchanged (no suffix, no new columns)", {
+  physeq <- make_full_physeq()
+
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = "pos",
+    first_negative_fraction_name = "neg1",
+    scores = "palm"
+  )
+
+  expect_false("original_sample_id" %in% names(pis@sample_data))
+  expect_false("positive_fraction_name" %in% names(pis@sample_data))
+  expect_true("pos" %in% names(pis@ig_coating))
+  expect_false("positive_fraction_abundance" %in% names(pis@ig_coating))
+  expect_true(all(grepl("^sample_[0-9]+$", unique(pis@ig_coating$sample_id))))
+})
+
+test_that("getPhyloIgSeq with multiple positive fractions folds them into the sample dimension", {
+  physeq <- make_full_physeq()
+
+  # "neg2" stands in for a second positive fraction here purely to exercise
+  # the multi-fraction mechanics on this toy dataset (see the vignette for
+  # the same choice, with rationale).
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = c("pos", "neg2"),
+    first_negative_fraction_name = "neg1",
+    scores = "palm",
+    rarefy_by_sample = FALSE
+  )
+
+  expect_s4_class(pis, "PhyloIgSeq")
+
+  # One synthetic sample per (original sample, positive fraction) pair
+  expect_true(all(grepl("_(pos|neg2)$", unique(pis@ig_coating$sample_id))))
+  expect_setequal(unique(pis@sample_data$positive_fraction_name), c("pos", "neg2"))
+  expect_setequal(
+    unique(pis@sample_data$original_sample_id),
+    paste0("sample_", c(1:5, 8))
+  )
+
+  # Coalesced abundance column always populated, regardless of which
+  # positive fraction the row came from
+  expect_true("positive_fraction_abundance" %in% names(pis@ig_coating))
+  expect_false("pos" %in% names(pis@ig_coating))
+  expect_false("neg2" %in% names(pis@ig_coating))
+  expect_false(any(is.na(pis@ig_coating$positive_fraction_abundance)))
+
+  # Shared negative fraction stays fully populated across every row (not
+  # sparse like the coalesced positive column would have been without the fix)
+  expect_true("neg1" %in% names(pis@ig_coating))
+  expect_false(any(is.na(pis@ig_coating$neg1)))
+})
+
+test_that("getPhyloIgSeq rarefies the shared negative fraction once across all positive fractions of a sample", {
+  physeq <- make_full_physeq()
+
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = c("pos", "neg2"),
+    first_negative_fraction_name = "neg1",
+    scores = "palm",
+    rarefy_by_sample = TRUE
+  )
+
+  ig <- pis@ig_coating
+  ig$original_sample_id <- sub("_(pos|neg2)$", "", ig$sample_id)
+  ig$fraction <- sub("^.*_", "", ig$sample_id)
+
+  # impute_zeros() runs separately per positive fraction and can legitimately
+  # drop a different set of taxa each time (by design -- a zero in one
+  # comparison shouldn't drop a taxon from the other), so compare shared
+  # neg1 *values* for taxa common to both fractions of a sample, rather than
+  # each fraction's neg1 total (which would differ whenever the surviving
+  # taxon sets differ, even with a correctly shared rarefaction).
+  for (orig_id in unique(ig$original_sample_id)) {
+    sub_ig <- ig[ig$original_sample_id == orig_id, ]
+    pos_df <- sub_ig[sub_ig$fraction == "pos", c("taxon_id", "neg1")]
+    neg2_df <- sub_ig[sub_ig$fraction == "neg2", c("taxon_id", "neg1")]
+    merged <- merge(pos_df, neg2_df, by = "taxon_id", suffixes = c("_pos", "_neg2"))
+    expect_gt(nrow(merged), 0)
+    expect_equal(merged$neg1_pos, merged$neg1_neg2)
+  }
+})
+
+test_that("show() and plot_slide_z() handle a multi-positive-fraction object without erroring", {
+  physeq <- make_full_physeq()
+
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = c("pos", "neg2"),
+    first_negative_fraction_name = "neg1",
+    scores = "slide_z",
+    rarefy_by_sample = FALSE
+  )
+
+  expect_output(print(pis), "pos, neg2")
+  expect_s3_class(
+    plot_slide_z(pis, sample_ids = unique(pis@ig_coating$sample_id)[1]),
+    "ggplot"
+  )
+})

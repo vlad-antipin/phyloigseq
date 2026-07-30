@@ -41,7 +41,29 @@ getPhyloIgSeq(
 
 \item{transform_by_sample}{Transformation method (e.g., "identity", "log").}
 
-\item{positive_fraction_name}{Name of the positive fraction.}
+\item{positive_fraction_name}{Name of the positive fraction. Usually a single value, but can
+be a character vector of several positive fraction values sharing the same negative/pre-sort
+fraction(s) below (e.g. multiple phage-display sort rounds/output pools sequenced against one
+shared negative/whole-community pool for the same samples). When more than one is given:
+\itemize{
+\item each (sample, positive fraction) combination becomes its own row, keyed by a synthetic
+\code{sample_id} of the form \code{"<original sample_id>_<positive fraction>"};
+\item the negative/pre-sort fraction(s) are rarefied \emph{once}, jointly across every
+positive fraction of a sample, so they're compared against each positive fraction at the
+same common depth (rather than independently re-rarefied per positive fraction, which
+would add spurious noise between otherwise-comparable positive fractions);
+\item \code{sample_data} gains two columns, \code{original_sample_id} and \code{positive_fraction_name},
+recording which original sample and positive fraction each row came from;
+\item the raw positive-fraction abundance column (normally named after the fraction's own
+value, e.g. \code{"pos"}) is instead named \code{positive_fraction_abundance} and is always
+populated, holding each row's own positive fraction's abundance.
+}
+With a single positive fraction (the default/common case), output is unchanged from previous
+versions: no suffix, no extra columns, original fraction-named abundance column.
+
+Rows from the same original sample across different positive fractions are \strong{not}
+independent replicates -- they share the same underlying biology and the same negative/pre-sort
+fraction.}
 
 \item{first_negative_fraction_name}{Name of the first negative fraction, or \code{NULL}
 to run without a negative fraction. In that case, \code{presorting_fraction_name} and
@@ -81,7 +103,9 @@ directly as \code{taxon_id}, matching the identifiers shown by \code{\link[=grou
 called directly (e.g. for a single-sample preview).}
 }
 \value{
-A \code{\link{PhyloIgSeq-class}} object. Its \code{ig_coating} slot holds one row per
+A \code{\link{PhyloIgSeq-class}} object -- always a single object, whether one or
+several \code{positive_fraction_name} values were given (see that parameter's documentation
+for the schema differences in the latter case). Its \code{ig_coating} slot holds one row per
 taxon/sample with the requested \code{scores} as columns (also recorded in \code{score_names})
 plus supporting fraction/diagnostic columns; see \code{\link{get_ig_score}} to retrieve a
 single score without dealing with the rest of \code{ig_coating}.

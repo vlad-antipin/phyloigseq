@@ -106,6 +106,48 @@ pis_pos_only
 head(get_ig_score(pis_pos_only, score_name = "prob_index", sample_ids = "sample_1"))
 ```
 
+### Multiple positive fractions
+
+If several positive fractions were sorted from the same samples against one shared
+negative/pre-sort fraction — e.g. multiple phage-display sort rounds or output pools —
+`positive_fraction_name` can be a character vector instead of a single value. Each
+(sample, positive fraction) combination becomes its own row. Crucially, the negative
+fraction is rarefied *once*, jointly across every positive fraction of a sample, rather
+than independently for each one — so different positive fractions of the same sample are
+compared against their shared negative fraction at one common depth.
+
+`ps_phage_display` is a toy dataset built for exactly this scenario: 8 panning campaigns,
+each with one shared `"input"` (naive/unselected) library and three sequential positive
+output rounds (`"round1"`/`"round2"`/`"round3"`), progressively enriched for a handful of
+campaign-specific clones:
+
+```{r multi-pos}
+data(ps_phage_display)
+pis_multi <- getPhyloIgSeq(
+  physeq = ps_phage_display,
+  sample_id_name = "sample_id",
+  fraction_id_name = "phage_fraction",
+  positive_fraction_name = c("round1", "round2", "round3"),
+  first_negative_fraction_name = "input",
+  scores = c("slide_z", "palm", "kau")
+)
+pis_multi
+head(pis_multi@sample_data)
+```
+
+Rows are keyed by a synthetic `sample_id` (`"<sample_id>_<positive fraction>"`), and
+`sample_data` gains `original_sample_id`/`positive_fraction_name` columns recording where
+each row came from — usable directly as a facet/color variable in downstream diversity
+analyses (`vignette("diversity-analysis", package = "PhyloIgSeq")`). The raw
+positive-fraction abundance column is named `positive_fraction_abundance` (rather than
+after any one fraction's own value) so it stays populated for every row regardless of
+which positive fraction it came from.
+
+Rows from the same original sample across different positive fractions are **not**
+independent replicates: they share the same underlying biology and the same negative
+fraction. With a single `positive_fraction_name` (the default, and everything else in
+this vignette), output is unchanged: no suffix, no extra columns.
+
 ## Classical Ig scores
 
 `compute_ig_score()` is the lower-level function behind `palm`/`kau`/`prob_index`/

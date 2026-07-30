@@ -33,7 +33,11 @@ out without having to know which of the remaining columns are metadata.
 \item{\code{score_names}}{Character. Names of the \code{ig_coating} columns that are actual Ig scores
 (as opposed to fraction/diagnostic metadata columns)}
 
-\item{\code{positive_fraction_name}}{Character. Name of the positive Ig-coated fraction}
+\item{\code{positive_fraction_name}}{Character. Name(s) of the positive Ig-coated fraction(s) used
+to build this object. A single value in the common case; when \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} was given
+more than one, this holds the full set folded into the sample dimension (see
+\code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}'s \code{positive_fraction_name} documentation) -- informational only, not an
+indexable per-row value (use the \code{sample_data} column of the same name for that).}
 
 \item{\code{first_negative_fraction_name}}{Character or NULL. Name of the main negative fraction (e.g., 90\%)}
 
