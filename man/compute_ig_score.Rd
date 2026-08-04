@@ -10,11 +10,9 @@ compute_ig_score(
   pos,
   neg = NULL,
   pre = NULL,
-  ig_freq = NULL,
-  pos_purity = NULL,
-  neg_impurity = NULL,
-  pos_fraction = NULL,
-  neg_fraction = NULL
+  presort_ig_freq = NULL,
+  pos_ig_freq = NULL,
+  neg_ig_freq = NULL
 )
 }
 \arguments{
@@ -31,19 +29,16 @@ methods.}
 \item{pre}{Numeric vector of pre-sort counts or relative abundances, same length as
 \code{pos}. Required by \code{"prob_index"} and the \verb{purity_corrected_*} methods.}
 
-\item{ig_freq}{Single probability in \verb{[0, 1]}, the total frequency of real Ig+
-bacteria (P(Ig+)). Required by \code{"prob_index"}/\code{"prob_ratio"}.}
+\item{presort_ig_freq}{Single probability in \verb{[0, 1]}, the Ig+ frequency measured in the
+pre-sort fraction, i.e. the total frequency of real Ig+ bacteria (P(Ig+)). Required by
+\code{"prob_index"}/\code{"prob_ratio"} and the \verb{purity_corrected_*} methods.}
 
-\item{pos_purity}{Single probability in \verb{[0, 1]}, P(real Ig+ | Ig+ fraction). Required
-by the \verb{purity_corrected_*} methods.}
-
-\item{neg_impurity}{Single probability in \verb{[0, 1]}, P(real Ig+ | Ig- fraction).
-Required by the \verb{purity_corrected_*} methods.}
-
-\item{pos_fraction}{Single probability in \verb{[0, 1]}, P(Ig+ fraction). Required by the
+\item{pos_ig_freq}{Single probability in \verb{[0, 1]}, the Ig+ frequency measured in the Ig+
+fraction ("positive fraction purity"), P(real Ig+ | Ig+ fraction). Required by the
 \verb{purity_corrected_*} methods.}
 
-\item{neg_fraction}{Single probability in \verb{[0, 1]}, P(Ig- fraction). Required by the
+\item{neg_ig_freq}{Single probability in \verb{[0, 1]}, the Ig+ frequency measured in the Ig-
+fraction ("negative fraction impurity"), P(real Ig+ | Ig- fraction). Required by the
 \verb{purity_corrected_*} methods.}
 }
 \value{
@@ -59,10 +54,18 @@ directly from the pos/neg(/pre) abundance vectors. See \code{IG_SCORES} for the 
 method names used elsewhere in the package's pipeline.
 }
 \details{
-\code{"purity_corrected_prob_index"}/\code{"purity_corrected_prob_ratio"} are experimental:
-their derivation (see the inline comments in the source) is not yet fully verified and
-they are not part of \code{IG_SCORES}/the main \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} pipeline. They remain
-available here for direct use while under development.
+\code{"purity_corrected_prob_index"}/\code{"purity_corrected_prob_ratio"} are experimental: their
+derivation (see the inline comments in the source) is not yet fully verified. They correct
+for imperfect sorting using the Ig+ frequencies measured \emph{within} the sorted fractions
+(\code{pos_ig_freq}/\code{neg_ig_freq}) on top of the pre-sort one, and so require all three
+frequencies plus \code{pos}, \code{neg} and \code{pre}.
+
+Those two methods need one quantity beyond the three measured frequencies to describe how
+cells were partitioned between the fractions. Which quantity to use is \strong{not yet settled};
+the source documents both candidate parameterizations and currently derives the sort
+recovery \verb{w = P(Ig+ fraction | real Ig+)} from the three frequencies, so that no
+unmeasurable input is required. See the inline comments for the equivalence between the two
+parameterizations, and for the caveats of the derivation.
 }
 \examples{
 pos <- c(50, 30, 20, 5)
@@ -71,7 +74,12 @@ pre <- c(20, 20, 20, 40)
 
 compute_ig_score(method = "palm", pos = pos, neg = neg)
 compute_ig_score(method = "kau", pos = pos, neg = neg)
-compute_ig_score(method = "prob_index", pos = pos, pre = pre, ig_freq = 0.3)
-compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, ig_freq = 0.3)
+compute_ig_score(method = "prob_index", pos = pos, pre = pre, presort_ig_freq = 0.3)
+compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, presort_ig_freq = 0.3)
+compute_ig_score(
+  method = "purity_corrected_prob_index",
+  pos = pos, neg = neg, pre = pre,
+  presort_ig_freq = 0.3, pos_ig_freq = 0.5, neg_ig_freq = 0.1
+)
 
 }

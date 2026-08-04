@@ -27,7 +27,11 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #' @slot first_negative_fraction_name Character or NULL. Name of the main negative fraction (e.g., 90%)
 #' @slot second_negative_fraction_name Character or NULL. Name of the secondary negative fraction (e.g., 10%)
 #' @slot presorting_fraction_name Character or NULL. Name of the pre-sorting (whole community) fraction
-#' @slot ig_freq_name Character or NULL. Name of the column containing total Ig+ frequency per sample
+#' @slot ig_freq_name Character or NULL. Name of the `sample_data` column the Ig+ frequencies were
+#'   read from. The resolved per-fraction values themselves live in the `sample_data` slot, as the
+#'   `presort_ig_freq`/`pos_ig_freq`/`neg1_ig_freq`/`neg2_ig_freq` columns.
+#' @slot ig_freq_layout Character or NULL. Which layout `ig_freq_name` was read with, `"wide"`
+#'   (one Ig+ frequency per sample) or `"long"` (one per sort fraction) -- see [getPhyloIgSeq()].
 #' @slot ellipse_coords A data.frame or NULL. Stores coordinates for sliding Z-score ellipses
 #' @slot sample_data A data.frame or NULL. Optional metadata for each sample
 #' @slot tax_table A data.frame or NULL. Taxonomic information
@@ -45,6 +49,7 @@ setClass(
     second_negative_fraction_name = "characterOrNULL", # 1/10 -//-
     presorting_fraction_name = "characterOrNULL", # before sorting
     ig_freq_name = "characterOrNULL",
+    ig_freq_layout = "characterOrNULL",
     ellipse_coords = "data.frameOrNULL",
     sample_data = "data.frameOrNULL",
     tax_table = "data.frameOrNULL",
@@ -204,13 +209,29 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param second_negative_fraction_name Optional. Name of a second negative fraction.
 #' @param presorting_fraction_name Optional. Name of the presorting fraction.
 #' @param ig_freq_name Optional. Column name (in `physeq`'s `sample_data`) for the
-#'   Ig+ frequency phenotype, if precomputed.
+#'   Ig+ frequency phenotype, if precomputed. How it is read depends on `ig_freq_layout`.
 #' @param ig_freq_units Units `ig_freq_name`'s values are recorded in: `"frequency"`
 #'   (default, already a probability in `[0, 1]`) or `"percent"` (`[0, 100]`, divided by
 #'   100 before use). After conversion, a value outside `[0, 1]` for a given sample is
 #'   treated as `NA` for that sample (with a `warning()`) rather than fed into
 #'   `compute_ig_score()` — matching this function's general "skip what can't be
 #'   computed, don't abort the batch" behavior (see [get_slide_z()]).
+#' @param ig_freq_layout What one `ig_freq_name` value means:
+#'   \describe{
+#'     \item{`"wide"` (default)}{One Ig+ frequency per biological *sample*, i.e. the same value
+#'       repeated on each of its fraction rows — the historical layout. Only the overall
+#'       P(Ig+) is recoverable, which is all `"prob_index"`/`"prob_ratio"` need. A column that
+#'       is *not* constant across a sample's fractions can't be used and produces a `warning()`
+#'       pointing at `"long"`.}
+#'     \item{`"long"`}{The frequency is *fraction-specific*: each fraction's row records the Ig+
+#'       frequency measured in that fraction. This yields the pre-sort P(Ig+) plus the
+#'       "positive fraction purity" and "negative fraction impurity" that the
+#'       `"purity_corrected_*"` scores require.}
+#'   }
+#'   Either way the resolved values are stored per sample in the returned object's `sample_data`
+#'   slot, as `presort_ig_freq`, `pos_ig_freq`, `neg1_ig_freq` and `neg2_ig_freq` (the last three
+#'   are `NA` under `"wide"`). With several `positive_fraction_name`s, `pos_ig_freq` follows each
+#'   row's own positive fraction.
 #' @param zero_treatment How to handle zeros ("no_zero", "pseudocount", etc.).
 #' @param window_size Integer. Window size for smoothing.
 #' @param empirical_null_distribution Logical. Whether to estimate null distribution.
@@ -262,6 +283,7 @@ getPhyloIgSeq <- function(
   presorting_fraction_name = NULL, # before sorting
   ig_freq_name = NULL,
   ig_freq_units = c("frequency", "percent"),
+  ig_freq_layout = c("wide", "long"),
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
@@ -272,6 +294,7 @@ getPhyloIgSeq <- function(
 ) {
   taxon_id_source <- match.arg(taxon_id_source)
   ig_freq_units <- match.arg(ig_freq_units)
+  ig_freq_layout <- match.arg(ig_freq_layout)
   if (
     is.null(first_negative_fraction_name) &&
       (is.null(presorting_fraction_name) || is.null(ig_freq_name))
@@ -288,6 +311,36 @@ getPhyloIgSeq <- function(
       "geometry it depends on); dropping it from `scores`.\n"
     )
     scores <- setdiff(scores, "slide_z")
+  }
+  # The purity-corrected scores weight the two sorted fractions against the
+  # pre-sort one using the Ig+ frequency measured *inside* each fraction, so
+  # they need all three fractions and a "long" ig_freq column. Drop them rather
+  # than emit all-NA columns -- they are part of the default `scores` since
+  # they joined IG_SCORES, so most calls would otherwise pick them up silently.
+  purity_corrected_scores <- c(
+    "purity_corrected_prob_index",
+    "purity_corrected_prob_ratio"
+  )
+  if (any(purity_corrected_scores %in% scores)) {
+    missing_inputs <- c(
+      if (is.null(first_negative_fraction_name)) "a negative fraction",
+      if (is.null(presorting_fraction_name)) "a presorting fraction",
+      if (is.null(ig_freq_name)) {
+        "`ig_freq_name`"
+      } else if (!identical(ig_freq_layout, "long")) {
+        "`ig_freq_layout = \"long\"` (the per-fraction Ig+ frequencies)"
+      }
+    )
+    if (length(missing_inputs) > 0) {
+      warning(
+        "Cannot compute ",
+        paste0("`", intersect(purity_corrected_scores, scores), "`", collapse = " / "),
+        " without ",
+        paste(missing_inputs, collapse = " and "),
+        "; dropping from `scores`.\n"
+      )
+      scores <- setdiff(scores, purity_corrected_scores)
+    }
   }
   # Only relevant when slide_z is actually being computed -- otherwise
   # empirical_null_distribution is never read.
@@ -370,6 +423,24 @@ getPhyloIgSeq <- function(
     )
 
   names(metadata)[names(metadata) == sample_id_name] <- "sample_id"
+  # Same collision guard for the per-fraction Ig+ frequency columns this
+  # function adds to `sample_data` below -- a user column of the same name would
+  # otherwise be silently overwritten.
+  IG_FREQ_COLUMNS <- c(
+    "presort_ig_freq",
+    "pos_ig_freq",
+    "neg1_ig_freq",
+    "neg2_ig_freq"
+  )
+  clashing <- names(metadata) %in% IG_FREQ_COLUMNS
+  # `ig_freq_name` itself may be one of the clashing columns, in which case the
+  # lookup below has to follow the rename -- while the slot keeps recording the
+  # name the user actually passed.
+  ig_freq_column <- ig_freq_name
+  if (!is.null(ig_freq_column) && ig_freq_column %in% names(metadata)[clashing]) {
+    ig_freq_column <- paste0("original___", ig_freq_column)
+  }
+  names(metadata)[clashing] <- paste0("original___", names(metadata)[clashing])
   # put sample_id on the first place
   metadata <- metadata[, c("sample_id", setdiff(names(metadata), "sample_id"))]
 
@@ -422,47 +493,6 @@ getPhyloIgSeq <- function(
       names(sam_metadata_row) != fraction_id_name
     ]
 
-    # Resolve ig_freq_name to a [0, 1] probability, once per sample (same
-    # value regardless of which score below uses it): reject non-numeric
-    # values outright (before any arithmetic/comparison can hit them), then
-    # convert from percent if needed, then treat an out-of-range result as NA
-    # (with a warning) rather than feed a nonsensical value into
-    # compute_ig_score().
-    ig_freq_value <- if (!is.null(ig_freq_name)) {
-      v <- sam_metadata_row[[ig_freq_name]]
-      if (!is.na(v) && !is.numeric(v)) {
-        warning(
-          "ig_freq for sample ",
-          sample_id,
-          " (column `",
-          ig_freq_name,
-          "`) is not numeric (got class '",
-          class(v)[1],
-          "', value '",
-          v,
-          "'); treating as NA for this sample.\n"
-        )
-        v <- NA_real_
-      } else {
-        if (!is.na(v) && identical(ig_freq_units, "percent")) {
-          v <- v / 100
-        }
-        if (!is.na(v) && (v < 0 || v > 1)) {
-          warning(
-            "ig_freq for sample ",
-            sample_id,
-            " is ",
-            signif(v, 4),
-            " after unit conversion (`ig_freq_units = \"",
-            ig_freq_units,
-            "\"`), outside the expected [0, 1] probability range; treating as NA for this sample.\n"
-          )
-          v <- NA_real_
-        }
-      }
-      v
-    }
-
     # Fraction-specific: looped once per positive fraction, reusing the
     # sample-level grouping/rarefaction already computed above in
     # `grouped_data[[sample_id]]` (shared across all positive fractions of
@@ -480,6 +510,23 @@ getPhyloIgSeq <- function(
           data.frame(sample_id = synthetic_id, total_reads = sample_total_reads_value)
         )
       }
+
+      # Resolve the Ig+ frequency of each fraction to a [0, 1] probability.
+      # Inside the positive-fraction loop because `pos_ig_freq` is a property of
+      # the positive fraction being scored, so it has to follow `pos` -- the
+      # other three are the same for every iteration.
+      ig_freqs <- .resolve_ig_freqs(
+        sam_metadata_df = sam_metadata_df,
+        fraction_id_name = fraction_id_name,
+        ig_freq_name = ig_freq_column,
+        ig_freq_units = ig_freq_units,
+        ig_freq_layout = ig_freq_layout,
+        positive_fraction_name = pos,
+        first_negative_fraction_name = first_negative_fraction_name,
+        second_negative_fraction_name = second_negative_fraction_name,
+        presorting_fraction_name = presorting_fraction_name,
+        sample_id = sample_id
+      )
 
       # Handle zeros
       this_fraction_names <- c(
@@ -552,23 +599,37 @@ getPhyloIgSeq <- function(
       }
 
       # Other Ig scores:
+      # Both purity-corrected scores derive the same sort recovery from the same
+      # three Ig+ frequencies, so an inconsistent set warns identically once per
+      # score. That reads like the sample was processed twice; report each
+      # distinct complaint once per (sample x positive fraction) instead.
+      warned_here <- character(0)
       for (score in scores[scores != "slide_z"]) {
         ig_coating[[score]] <-
-          compute_ig_score(
-            method = score,
-            pos = ig_coating[[pos]],
-            neg = if (!is.null(first_negative_fraction_name)) {
-              ig_coating[[first_negative_fraction_name]]
-            },
-            pre = if (!is.null(presorting_fraction_name)) {
-              ig_coating[[presorting_fraction_name]]
-            },
-            ig_freq = ig_freq_value
-            # TODO: purity corrected scores:
-            # pos_purity = pos_purity, # P(real Ig+ | Ig+ fraction)
-            # neg_impurity = neg_impurity, # P(real Ig+ | Ig- fraction)
-            # pos_fraction = pos_fraction, # P(Ig+ fraction)
-            # neg_fraction = neg_fraction
+          withCallingHandlers(
+            compute_ig_score(
+              method = score,
+              pos = ig_coating[[pos]],
+              neg = if (!is.null(first_negative_fraction_name)) {
+                ig_coating[[first_negative_fraction_name]]
+              },
+              pre = if (!is.null(presorting_fraction_name)) {
+                ig_coating[[presorting_fraction_name]]
+              },
+              presort_ig_freq = ig_freqs$presort_ig_freq,
+              # NA outside `ig_freq_layout = "long"`; only the purity-corrected
+              # scores read them, and those are dropped from `scores` above when
+              # the long layout isn't in use.
+              pos_ig_freq = ig_freqs$pos_ig_freq,
+              neg_ig_freq = ig_freqs$neg1_ig_freq
+            ),
+            warning = function(w) {
+              message_text <- conditionMessage(w)
+              if (message_text %in% warned_here) {
+                invokeRestart("muffleWarning")
+              }
+              warned_here <<- c(warned_here, message_text)
+            }
           )
       }
 
@@ -580,6 +641,12 @@ getPhyloIgSeq <- function(
 
       sam_metadata_row_this <- sam_metadata_row
       sam_metadata_row_this$sample_id <- synthetic_id
+
+      # Record the resolved (unit-converted, range-checked) Ig+ frequencies per
+      # sample, so they can be inspected, exported, and used to colour/facet
+      # downstream plots. These are the *measured* phenotypes only -- nothing
+      # derived from them is stored.
+      sam_metadata_row_this[names(ig_freqs)] <- ig_freqs
 
       if (multi_fraction) {
         sam_metadata_row_this$original_sample_id <- sample_id
@@ -633,6 +700,7 @@ getPhyloIgSeq <- function(
   phyloigseq_obj@second_negative_fraction_name <- second_negative_fraction_name
   phyloigseq_obj@presorting_fraction_name <- presorting_fraction_name
   phyloigseq_obj@ig_freq_name <- ig_freq_name
+  phyloigseq_obj@ig_freq_layout <- if (!is.null(ig_freq_name)) ig_freq_layout
 
   taxon_ids_to_keep <- unique(phyloigseq_obj@ig_coating$taxon_id)
   tax_table <- as.matrix(phyloseq::tax_table(physeq)@.Data)[

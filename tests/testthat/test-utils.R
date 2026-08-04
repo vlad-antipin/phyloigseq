@@ -42,7 +42,15 @@ test_that("IG_SCORES is the expected character vector", {
   expect_type(IG_SCORES, "character")
   expect_setequal(
     IG_SCORES,
-    c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
+    c(
+      "slide_z",
+      "palm",
+      "kau",
+      "prob_index",
+      "prob_ratio",
+      "purity_corrected_prob_index",
+      "purity_corrected_prob_ratio"
+    )
   )
 })
 

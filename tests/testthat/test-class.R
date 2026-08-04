@@ -328,3 +328,239 @@ test_that("show() and plot_slide_z() handle a multi-positive-fraction object wit
     "ggplot"
   )
 })
+
+# ---- getPhyloIgSeq: ig_freq_layout ----
+
+# ps_igseq's own `ig_pheno` is constant across a sample's fractions (the "wide"
+# layout). Real IgSeq metadata often records the Ig+ frequency measured *in each
+# fraction* instead, so build that layout here rather than reshaping the shipped
+# dataset, which the wide-layout tests above depend on.
+make_long_ig_freq_physeq <- function(
+  presort = 0.40,
+  pos = 0.80,
+  neg = 0.10,
+  samples = NULL
+) {
+  data("ps_igseq", package = "PhyloIgSeq", envir = environment())
+  physeq <- ps_igseq
+
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  # sample_6/sample_7 carry duplicated fraction rows on purpose (see
+  # make_pos_only_physeq()); a duplicated fraction has no single Ig+ frequency.
+  keep <- !sd$sample_id %in% c("sample_6", "sample_7")
+  if (!is.null(samples)) {
+    keep <- keep & sd$sample_id %in% samples
+  }
+  physeq <- phyloseq::prune_samples(rownames(sd)[keep], physeq)
+
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  sd$ig_pheno_fraction <- c(
+    whole = presort,
+    pos = pos,
+    neg1 = neg,
+    # neg1 and neg2 are two aliquots of the same negative fraction, so they
+    # carry the same measurement
+    neg2 = neg
+  )[sd$sorting_fraction]
+  phyloseq::sample_data(physeq) <- phyloseq::sample_data(sd)
+  physeq
+}
+
+run_long <- function(physeq, ...) {
+  getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = "pos",
+    first_negative_fraction_name = "neg1",
+    second_negative_fraction_name = "neg2",
+    presorting_fraction_name = "whole",
+    ig_freq_name = "ig_pheno_fraction",
+    ig_freq_layout = "long",
+    empirical_null_distribution = FALSE,
+    ...
+  )
+}
+
+test_that("ig_freq_layout = 'long' reads each fraction's own Ig+ frequency into sample_data", {
+  pis <- run_long(make_long_ig_freq_physeq(), scores = "prob_index")
+
+  expect_equal(pis@ig_freq_layout, "long")
+  expect_equal(pis@ig_freq_name, "ig_pheno_fraction")
+
+  sd <- pis@sample_data
+  expect_true(all(
+    c("presort_ig_freq", "pos_ig_freq", "neg1_ig_freq", "neg2_ig_freq") %in%
+      names(sd)
+  ))
+  expect_true(all(sd$presort_ig_freq == 0.40))
+  expect_true(all(sd$pos_ig_freq == 0.80))
+  expect_true(all(sd$neg1_ig_freq == 0.10))
+  # neg1 and neg2 are aliquots of the same fraction
+  expect_equal(sd$neg1_ig_freq, sd$neg2_ig_freq)
+
+  # prob_index must use the *pre-sort* value, not any of the in-fraction ones
+  expect_false(all(is.na(pis@ig_coating$prob_index)))
+})
+
+test_that("ig_freq_layout = 'wide' still collapses to a single per-sample frequency", {
+  data("ps_igseq", package = "PhyloIgSeq", envir = environment())
+  physeq <- ps_igseq
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  physeq <- phyloseq::prune_samples(
+    rownames(sd)[!sd$sample_id %in% c("sample_6", "sample_7")],
+    physeq
+  )
+
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = "pos",
+    first_negative_fraction_name = "neg1",
+    presorting_fraction_name = "whole",
+    ig_freq_name = "ig_pheno",
+    scores = "prob_index",
+    empirical_null_distribution = FALSE
+  )
+
+  expect_equal(pis@ig_freq_layout, "wide")
+  sd_out <- pis@sample_data
+  # the sample's single ig_pheno lands in presort_ig_freq; nothing is known
+  # about how pure either sorted fraction turned out to be
+  expect_false(any(is.na(sd_out$presort_ig_freq)))
+  expect_true(all(is.na(sd_out$pos_ig_freq)))
+  expect_true(all(is.na(sd_out$neg1_ig_freq)))
+})
+
+test_that("ig_freq_layout = 'wide' warns when the column varies across fractions", {
+  physeq <- make_long_ig_freq_physeq(samples = "sample_1")
+
+  expect_warning(
+    pis <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      presorting_fraction_name = "whole",
+      ig_freq_name = "ig_pheno_fraction",
+      ig_freq_layout = "wide",
+      scores = "prob_index",
+      empirical_null_distribution = FALSE
+    ),
+    'ig_freq_layout = "long"'
+  )
+  expect_true(all(is.na(pis@sample_data$presort_ig_freq)))
+})
+
+test_that("ig_freq_units = 'percent' converts every fraction's frequency", {
+  physeq <- make_long_ig_freq_physeq(presort = 40, pos = 80, neg = 10)
+
+  pis <- run_long(physeq, ig_freq_units = "percent", scores = "prob_index")
+
+  sd <- pis@sample_data
+  expect_true(all(sd$presort_ig_freq == 0.40))
+  expect_true(all(sd$pos_ig_freq == 0.80))
+  expect_true(all(sd$neg1_ig_freq == 0.10))
+})
+
+test_that("getPhyloIgSeq computes the purity-corrected scores under the long layout", {
+  pis <- run_long(
+    make_long_ig_freq_physeq(),
+    scores = c("prob_index", "purity_corrected_prob_index")
+  )
+
+  expect_true("purity_corrected_prob_index" %in% names(pis@ig_coating))
+  expect_false(all(is.na(pis@ig_coating$purity_corrected_prob_index)))
+  # w < 1 here (presort 0.40 < purity 0.80), so the corrected score shrinks
+  # towards the Ig- fraction and must differ from plain prob_index
+  expect_false(isTRUE(all.equal(
+    pis@ig_coating$purity_corrected_prob_index,
+    pis@ig_coating$prob_index
+  )))
+})
+
+test_that("getPhyloIgSeq drops the purity-corrected scores when their inputs are missing", {
+  data("ps_igseq", package = "PhyloIgSeq", envir = environment())
+  physeq <- ps_igseq
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  physeq <- phyloseq::prune_samples(
+    rownames(sd)[!sd$sample_id %in% c("sample_6", "sample_7")],
+    physeq
+  )
+
+  # wide layout carries no in-fraction frequencies
+  expect_warning(
+    pis <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      presorting_fraction_name = "whole",
+      ig_freq_name = "ig_pheno",
+      scores = c("prob_index", "purity_corrected_prob_index"),
+      empirical_null_distribution = FALSE
+    ),
+    "dropping from `scores`"
+  )
+  expect_equal(pis@score_names, "prob_index")
+  expect_false("purity_corrected_prob_index" %in% names(pis@ig_coating))
+})
+
+test_that("pos_ig_freq follows each row's own positive fraction with several of them", {
+  physeq <- make_long_ig_freq_physeq()
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  # give neg2 a distinguishable frequency, then score it as a second positive
+  # fraction so the two synthetic samples must disagree on pos_ig_freq alone
+  sd$ig_pheno_fraction[sd$sorting_fraction == "neg2"] <- 0.25
+  phyloseq::sample_data(physeq) <- phyloseq::sample_data(sd)
+
+  pis <- getPhyloIgSeq(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    positive_fraction_name = c("pos", "neg2"),
+    first_negative_fraction_name = "neg1",
+    presorting_fraction_name = "whole",
+    ig_freq_name = "ig_pheno_fraction",
+    ig_freq_layout = "long",
+    scores = "prob_index",
+    empirical_null_distribution = FALSE
+  )
+
+  sd_out <- pis@sample_data
+  expect_equal(
+    unique(sd_out$pos_ig_freq[sd_out$positive_fraction_name == "pos"]),
+    0.80
+  )
+  expect_equal(
+    unique(sd_out$pos_ig_freq[sd_out$positive_fraction_name == "neg2"]),
+    0.25
+  )
+  # the fraction-invariant ones stay the same across both
+  expect_equal(unique(sd_out$presort_ig_freq), 0.40)
+  expect_equal(unique(sd_out$neg1_ig_freq), 0.10)
+})
+
+test_that("getPhyloIgSeq treats a non-existent ig_freq_name column as NA with a warning", {
+  physeq <- make_long_ig_freq_physeq(samples = "sample_1")
+
+  expect_warning(
+    pis <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      presorting_fraction_name = "whole",
+      ig_freq_name = "no_such_column",
+      ig_freq_layout = "long",
+      scores = "prob_index",
+      empirical_null_distribution = FALSE
+    ),
+    "is not a column of sample_data"
+  )
+  expect_true(all(is.na(pis@ig_coating$prob_index)))
+})

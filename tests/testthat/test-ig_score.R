@@ -28,69 +28,170 @@ test_that("compute_ig_score computes 'kau' per its closed-form formula", {
 test_that("compute_ig_score computes 'prob_index' from pos and pre abundances", {
   pos <- c(50, 30, 20, 5)
   pre <- c(20, 20, 20, 40)
-  ig_freq <- 0.3
+  presort_ig_freq <- 0.3
 
-  result <- compute_ig_score(method = "prob_index", pos = pos, pre = pre, ig_freq = ig_freq)
+  result <- compute_ig_score(
+    method = "prob_index",
+    pos = pos,
+    pre = pre,
+    presort_ig_freq = presort_ig_freq
+  )
 
   pos_abund <- pos / sum(pos)
   pre_abund <- pre / sum(pre)
-  expect_equal(result, pos_abund * ig_freq / pre_abund)
+  expect_equal(result, pos_abund * presort_ig_freq / pre_abund)
 })
 
-test_that("compute_ig_score computes 'prob_ratio' from pos, neg, and ig_freq", {
+test_that("compute_ig_score computes 'prob_ratio' from pos, neg, and presort_ig_freq", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
-  ig_freq <- 0.3
+  presort_ig_freq <- 0.3
 
-  result <- compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, ig_freq = ig_freq)
+  result <- compute_ig_score(
+    method = "prob_ratio",
+    pos = pos,
+    neg = neg,
+    presort_ig_freq = presort_ig_freq
+  )
 
   pos_abund <- pos / sum(pos)
   neg_abund <- neg / sum(neg)
-  expected <- log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq)))
+  expected <- log2(
+    pos_abund * presort_ig_freq / (neg_abund * (1 - presort_ig_freq))
+  )
   expect_equal(result, expected)
 })
 
-test_that("compute_ig_score computes 'purity_corrected_prob_index' from all purity/fraction inputs", {
+# The sort recovery `w` the purity-corrected scores weight by is derived inside
+# compute_ig_score() from the three measured Ig+ frequencies (see the comment
+# block there), so these tests re-derive it the same way rather than passing it.
+recovery_of <- function(presort, pos, neg) {
+  pos * (presort - neg) / (presort * (pos - neg))
+}
+
+test_that("compute_ig_score computes 'purity_corrected_prob_index' from the three Ig+ frequencies", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
   pre <- c(20, 20, 20, 40)
+  presort_ig_freq <- 0.3
+  pos_ig_freq <- 0.9
+  neg_ig_freq <- 0.1
 
   result <- compute_ig_score(
     method = "purity_corrected_prob_index",
     pos = pos,
     neg = neg,
     pre = pre,
-    pos_purity = 0.9,
-    neg_impurity = 0.1,
-    pos_fraction = 0.4,
-    neg_fraction = 0.6
+    presort_ig_freq = presort_ig_freq,
+    pos_ig_freq = pos_ig_freq,
+    neg_ig_freq = neg_ig_freq
   )
 
+  w <- recovery_of(presort_ig_freq, pos_ig_freq, neg_ig_freq)
   pos_abund <- pos / sum(pos)
   neg_abund <- neg / sum(neg)
   pre_abund <- pre / sum(pre)
-  expected <- (pos_abund * 0.9 * 0.4 + neg_abund * 0.1 * 0.6) / pre_abund
+  expected <- presort_ig_freq *
+    (pos_abund * w + neg_abund * (1 - w)) /
+    pre_abund
   expect_equal(result, expected)
 })
 
-test_that("compute_ig_score computes 'purity_corrected_prob_ratio' from all purity/fraction inputs", {
+test_that("compute_ig_score computes 'purity_corrected_prob_ratio' from the three Ig+ frequencies", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
+  presort_ig_freq <- 0.3
+  pos_ig_freq <- 0.9
+  neg_ig_freq <- 0.1
 
   result <- compute_ig_score(
     method = "purity_corrected_prob_ratio",
     pos = pos,
     neg = neg,
-    pos_purity = 0.9,
-    neg_impurity = 0.1,
-    pos_fraction = 0.4,
-    neg_fraction = 0.6
+    presort_ig_freq = presort_ig_freq,
+    pos_ig_freq = pos_ig_freq,
+    neg_ig_freq = neg_ig_freq
   )
 
+  w <- recovery_of(presort_ig_freq, pos_ig_freq, neg_ig_freq)
   pos_abund <- pos / sum(pos)
   neg_abund <- neg / sum(neg)
-  prob <- pos_abund * 0.9 * 0.4 + neg_abund * 0.1 * 0.6
+  prob <- presort_ig_freq * (pos_abund * w + neg_abund * (1 - w))
   expect_equal(result, log2(prob / (1 - prob)))
+})
+
+test_that("'purity_corrected_prob_index' reduces to 'prob_index' when the sort recovery is 1", {
+  pos <- c(50, 30, 20, 5)
+  neg <- c(5, 10, 40, 45)
+  pre <- c(20, 20, 20, 40)
+  # w == 1 exactly when the pre-sort frequency equals the Ig+ fraction's purity
+  presort_ig_freq <- 0.4
+
+  expect_equal(
+    compute_ig_score(
+      method = "purity_corrected_prob_index",
+      pos = pos,
+      neg = neg,
+      pre = pre,
+      presort_ig_freq = presort_ig_freq,
+      pos_ig_freq = presort_ig_freq,
+      neg_ig_freq = 0.1
+    ),
+    compute_ig_score(
+      method = "prob_index",
+      pos = pos,
+      pre = pre,
+      presort_ig_freq = presort_ig_freq
+    )
+  )
+})
+
+test_that("compute_ig_score clamps an out-of-range sort recovery with a warning", {
+  pos <- c(50, 30, 20, 5)
+  neg <- c(5, 10, 40, 45)
+  pre <- c(20, 20, 20, 40)
+  # presort above the Ig+ fraction's own purity => w > 1, which is impossible
+  # under the model; clamping to 1 makes it fall back to prob_index.
+  expect_warning(
+    result <- compute_ig_score(
+      method = "purity_corrected_prob_index",
+      pos = pos,
+      neg = neg,
+      pre = pre,
+      presort_ig_freq = 0.6,
+      pos_ig_freq = 0.5,
+      neg_ig_freq = 0.1
+    ),
+    "outside \\[0, 1\\]"
+  )
+  expect_equal(
+    result,
+    compute_ig_score(
+      method = "prob_index",
+      pos = pos,
+      pre = pre,
+      presort_ig_freq = 0.6
+    )
+  )
+})
+
+test_that("compute_ig_score returns NA for purity-corrected scores when a frequency is missing", {
+  pos <- c(50, 30, 20, 5)
+  neg <- c(5, 10, 40, 45)
+  pre <- c(20, 20, 20, 40)
+
+  # No separation between the fractions leaves the recovery undefined, as does
+  # an absent in-fraction frequency.
+  expect_true(all(is.na(compute_ig_score(
+    method = "purity_corrected_prob_index",
+    pos = pos, neg = neg, pre = pre,
+    presort_ig_freq = 0.3, pos_ig_freq = 0.3, neg_ig_freq = 0.3
+  ))))
+  expect_true(all(is.na(compute_ig_score(
+    method = "purity_corrected_prob_index",
+    pos = pos, neg = neg, pre = pre,
+    presort_ig_freq = 0.3, pos_ig_freq = NULL, neg_ig_freq = 0.1
+  ))))
 })
 
 test_that("compute_ig_score converts NaN/Inf results to NA", {

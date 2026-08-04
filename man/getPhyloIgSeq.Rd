@@ -18,6 +18,7 @@ getPhyloIgSeq(
   presorting_fraction_name = NULL,
   ig_freq_name = NULL,
   ig_freq_units = c("frequency", "percent"),
+  ig_freq_layout = c("wide", "long"),
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
@@ -76,7 +77,7 @@ positive-vs-negative comparison and requires a negative fraction.}
 \item{presorting_fraction_name}{Optional. Name of the presorting fraction.}
 
 \item{ig_freq_name}{Optional. Column name (in \code{physeq}'s \code{sample_data}) for the
-Ig+ frequency phenotype, if precomputed.}
+Ig+ frequency phenotype, if precomputed. How it is read depends on \code{ig_freq_layout}.}
 
 \item{ig_freq_units}{Units \code{ig_freq_name}'s values are recorded in: \code{"frequency"}
 (default, already a probability in \verb{[0, 1]}) or \code{"percent"} (\verb{[0, 100]}, divided by
@@ -84,6 +85,23 @@ Ig+ frequency phenotype, if precomputed.}
 treated as \code{NA} for that sample (with a \code{warning()}) rather than fed into
 \code{compute_ig_score()} — matching this function's general "skip what can't be
 computed, don't abort the batch" behavior (see \code{\link[=get_slide_z]{get_slide_z()}}).}
+
+\item{ig_freq_layout}{What one \code{ig_freq_name} value means:
+\describe{
+\item{\code{"wide"} (default)}{One Ig+ frequency per biological \emph{sample}, i.e. the same value
+repeated on each of its fraction rows — the historical layout. Only the overall
+P(Ig+) is recoverable, which is all \code{"prob_index"}/\code{"prob_ratio"} need. A column that
+is \emph{not} constant across a sample's fractions can't be used and produces a \code{warning()}
+pointing at \code{"long"}.}
+\item{\code{"long"}}{The frequency is \emph{fraction-specific}: each fraction's row records the Ig+
+frequency measured in that fraction. This yields the pre-sort P(Ig+) plus the
+"positive fraction purity" and "negative fraction impurity" that the
+\code{"purity_corrected_*"} scores require.}
+}
+Either way the resolved values are stored per sample in the returned object's \code{sample_data}
+slot, as \code{presort_ig_freq}, \code{pos_ig_freq}, \code{neg1_ig_freq} and \code{neg2_ig_freq} (the last three
+are \code{NA} under \code{"wide"}). With several \code{positive_fraction_name}s, \code{pos_ig_freq} follows each
+row's own positive fraction.}
 
 \item{zero_treatment}{How to handle zeros ("no_zero", "pseudocount", etc.).}
 

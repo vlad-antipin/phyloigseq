@@ -245,9 +245,19 @@ smart_facet_ncol <- function(n) {
 #' IG_SCORES
 #'
 #' @export
-IG_SCORES <- c("slide_z", "palm", "kau", "prob_index", "prob_ratio")
-# scores to come:
-# "purity_corrected_prob_index", "purity_corrected_prob_ratio")
+IG_SCORES <- c(
+  "slide_z",
+  "palm",
+  "kau",
+  "prob_index",
+  "prob_ratio",
+  # Experimental, see compute_ig_score()'s Details: these need the Ig+
+  # frequencies measured *inside* the sorted fractions, i.e. an
+  # `ig_freq_layout = "long"` run of getPhyloIgSeq(), and are dropped from
+  # `scores` with a warning when those aren't available.
+  "purity_corrected_prob_index",
+  "purity_corrected_prob_ratio"
+)
 
 # Prevent R CMD check NOTEs about undefined global variables: IG_SCORES (a
 # top-level exported binding referenced unqualified elsewhere in this

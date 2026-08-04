@@ -282,3 +282,156 @@ test_that("impute_zeros returns NULL imputed_taxa when data has no taxon_id colu
   )
   expect_null(result$imputed_taxa)
 })
+
+# ---- .resolve_ig_freq_value ----
+
+test_that(".resolve_ig_freq_value passes through a valid frequency and converts percent", {
+  expect_equal(
+    .resolve_ig_freq_value(0.42, "frequency", sample_id = "s1"),
+    0.42
+  )
+  expect_equal(
+    .resolve_ig_freq_value(42, "percent", sample_id = "s1"),
+    0.42
+  )
+  # the boundaries themselves are legal probabilities
+  expect_equal(.resolve_ig_freq_value(0, "frequency", sample_id = "s1"), 0)
+  expect_equal(.resolve_ig_freq_value(1, "frequency", sample_id = "s1"), 1)
+})
+
+test_that(".resolve_ig_freq_value returns NA for a missing value without warning", {
+  expect_silent(result <- .resolve_ig_freq_value(NA, "frequency", sample_id = "s1"))
+  expect_true(is.na(result))
+  # length 0: the column doesn't exist, or the sample has no row for the fraction
+  expect_silent(result <- .resolve_ig_freq_value(numeric(0), "frequency", sample_id = "s1"))
+  expect_true(is.na(result))
+})
+
+test_that(".resolve_ig_freq_value rejects non-numeric and out-of-range values with a warning", {
+  expect_warning(
+    result <- .resolve_ig_freq_value("M", "percent", sample_id = "s1"),
+    "not numeric"
+  )
+  expect_true(is.na(result))
+
+  expect_warning(
+    result <- .resolve_ig_freq_value(1.5, "frequency", sample_id = "s1"),
+    "outside the expected \\[0, 1\\]"
+  )
+  expect_true(is.na(result))
+
+  # 150% is out of range only after the conversion
+  expect_warning(
+    result <- .resolve_ig_freq_value(150, "percent", sample_id = "s1"),
+    "outside the expected \\[0, 1\\]"
+  )
+  expect_true(is.na(result))
+})
+
+test_that(".resolve_ig_freq_value warns when a value resolves to more than one row", {
+  expect_warning(
+    result <- .resolve_ig_freq_value(c(0.2, 0.3), "frequency", sample_id = "s1"),
+    "resolves to 2 values"
+  )
+  expect_true(is.na(result))
+})
+
+# ---- .resolve_ig_freqs ----
+
+make_ig_freq_metadata <- function(values = c(whole = 0.4, pos = 0.8, neg1 = 0.1, neg2 = 0.1)) {
+  data.frame(
+    sample_id = "s1",
+    sorting_fraction = names(values),
+    ig_pheno = unname(values),
+    stringsAsFactors = FALSE
+  )
+}
+
+resolve <- function(metadata, layout, positive = "pos", ...) {
+  .resolve_ig_freqs(
+    sam_metadata_df = metadata,
+    fraction_id_name = "sorting_fraction",
+    ig_freq_name = "ig_pheno",
+    ig_freq_units = "frequency",
+    ig_freq_layout = layout,
+    positive_fraction_name = positive,
+    first_negative_fraction_name = "neg1",
+    second_negative_fraction_name = "neg2",
+    presorting_fraction_name = "whole",
+    sample_id = "s1",
+    ...
+  )
+}
+
+test_that(".resolve_ig_freqs reads one value per fraction under the long layout", {
+  result <- resolve(make_ig_freq_metadata(), "long")
+
+  expect_equal(result$presort_ig_freq, 0.4)
+  expect_equal(result$pos_ig_freq, 0.8)
+  expect_equal(result$neg1_ig_freq, 0.1)
+  expect_equal(result$neg2_ig_freq, 0.1)
+})
+
+test_that(".resolve_ig_freqs follows the positive fraction it is asked for", {
+  metadata <- make_ig_freq_metadata(
+    c(whole = 0.4, pos = 0.8, neg1 = 0.1, neg2 = 0.25)
+  )
+  expect_equal(resolve(metadata, "long", positive = "pos")$pos_ig_freq, 0.8)
+  expect_equal(resolve(metadata, "long", positive = "neg2")$pos_ig_freq, 0.25)
+})
+
+test_that(".resolve_ig_freqs leaves a fraction NA when it has no row", {
+  metadata <- make_ig_freq_metadata(c(whole = 0.4, pos = 0.8, neg1 = 0.1))
+  result <- resolve(metadata, "long")
+
+  expect_equal(result$presort_ig_freq, 0.4)
+  expect_true(is.na(result$neg2_ig_freq))
+})
+
+test_that(".resolve_ig_freqs collapses to presort only under the wide layout", {
+  metadata <- make_ig_freq_metadata(
+    c(whole = 0.3, pos = 0.3, neg1 = 0.3, neg2 = 0.3)
+  )
+  result <- resolve(metadata, "wide")
+
+  expect_equal(result$presort_ig_freq, 0.3)
+  # a single overall P(Ig+) says nothing about either sorted fraction's purity
+  expect_true(is.na(result$pos_ig_freq))
+  expect_true(is.na(result$neg1_ig_freq))
+  expect_true(is.na(result$neg2_ig_freq))
+})
+
+test_that(".resolve_ig_freqs warns and gives up when a wide column varies by fraction", {
+  expect_warning(
+    result <- resolve(make_ig_freq_metadata(), "wide"),
+    'ig_freq_layout = "long"'
+  )
+  expect_true(all(is.na(unlist(result))))
+})
+
+test_that(".resolve_ig_freqs returns all NA for a NULL or unknown ig_freq_name", {
+  metadata <- make_ig_freq_metadata()
+
+  result <- .resolve_ig_freqs(
+    sam_metadata_df = metadata,
+    fraction_id_name = "sorting_fraction",
+    ig_freq_name = NULL,
+    ig_freq_units = "frequency",
+    ig_freq_layout = "long",
+    positive_fraction_name = "pos"
+  )
+  expect_true(all(is.na(unlist(result))))
+
+  expect_warning(
+    result <- .resolve_ig_freqs(
+      sam_metadata_df = metadata,
+      fraction_id_name = "sorting_fraction",
+      ig_freq_name = "no_such_column",
+      ig_freq_units = "frequency",
+      ig_freq_layout = "long",
+      positive_fraction_name = "pos"
+    ),
+    "is not a column of sample_data"
+  )
+  expect_true(all(is.na(unlist(result))))
+})

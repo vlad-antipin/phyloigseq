@@ -349,3 +349,207 @@ impute_zeros <- function(
 
   return(list(data = data, imputed_taxa = imputed_taxa))
 }
+
+
+#' Validate a Single Ig+ Frequency Value
+#'
+#' Internal. Turns one raw `sample_data` cell into a probability in `[0, 1]`, or `NA_real_`
+#' (with a `warning()`) when it can't be one: absent/duplicated, non-numeric, or out of range
+#' after unit conversion. Rejecting non-numerics before any arithmetic or comparison keeps a
+#' character/factor column from silently reaching `compute_ig_score()`. Treating a bad value as
+#' missing for that sample only -- rather than aborting -- matches `getPhyloIgSeq()`'s general
+#' "skip what can't be computed, don't abort the batch" behaviour.
+#'
+#' @param value The raw cell, of any type.
+#' @param units `"frequency"` (already a probability) or `"percent"` (divided by 100).
+#' @param sample_id,fraction_label,column_name Used to identify the offender in warnings;
+#'   `fraction_label` is the fraction the value was read from (`NULL` in the `"wide"` layout,
+#'   where the value isn't tied to one).
+#'
+#' @return A single numeric in `[0, 1]`, or `NA_real_`.
+#'
+#' @noRd
+.resolve_ig_freq_value <- function(
+  value,
+  units,
+  sample_id,
+  fraction_label = NULL,
+  column_name = "ig_freq"
+) {
+  where <- paste0(
+    "sample ",
+    sample_id,
+    if (!is.null(fraction_label)) paste0(", fraction ", fraction_label),
+    " (column `",
+    column_name,
+    "`)"
+  )
+
+  # length 0: the column doesn't exist, or the sample has no row for this
+  # fraction. length > 1: duplicated fraction rows. Either way there is no
+  # single value to use -- and guarding here keeps `if (is.na(value))` below
+  # from erroring on the `logical(0)` a missing column would produce.
+  if (length(value) != 1) {
+    if (length(value) > 1) {
+      warning(
+        "ig_freq for ",
+        where,
+        " resolves to ",
+        length(value),
+        " values instead of one; treating as NA.\n"
+      )
+    }
+    return(NA_real_)
+  }
+
+  if (is.na(value)) {
+    return(NA_real_)
+  }
+
+  if (!is.numeric(value)) {
+    warning(
+      "ig_freq for ",
+      where,
+      " is not numeric (got class '",
+      class(value)[1],
+      "', value '",
+      value,
+      "'); treating as NA.\n"
+    )
+    return(NA_real_)
+  }
+
+  if (identical(units, "percent")) {
+    value <- value / 100
+  }
+
+  if (value < 0 || value > 1) {
+    warning(
+      "ig_freq for ",
+      where,
+      " is ",
+      signif(value, 4),
+      " after unit conversion (`ig_freq_units = \"",
+      units,
+      "\"`), outside the expected [0, 1] probability range; treating as NA.\n"
+    )
+    return(NA_real_)
+  }
+
+  as.numeric(value)
+}
+
+
+#' Resolve the Per-Fraction Ig+ Frequencies of One Sample
+#'
+#' Internal. Reads `getPhyloIgSeq()`'s `ig_freq_name` column out of one sample's `sample_data`
+#' rows and returns the Ig+ frequency of each sort fraction, all validated through
+#' `.resolve_ig_freq_value()`.
+#'
+#' The two layouts differ in what the column is taken to mean:
+#' \describe{
+#'   \item{`"wide"`}{One Ig+ frequency per biological sample, repeated on (or recorded on only
+#'     one of) its fraction rows -- the historical layout. Only the pre-sort frequency P(Ig+) is
+#'     recoverable; the in-fraction frequencies are `NA`, since a single overall P(Ig+) says
+#'     nothing about how pure either sorted fraction turned out to be.}
+#'   \item{`"long"`}{The frequency is fraction-specific: each fraction's row records the Ig+
+#'     frequency measured *in that fraction*. This yields all four values -- the pre-sort P(Ig+)
+#'     plus the "positive fraction purity" and "negative fraction impurity" needed by the
+#'     `purity_corrected_*` scores.}
+#' }
+#'
+#' @param sam_metadata_df One sample's `sample_data` rows (one per fraction), still carrying the
+#'   `fraction_id_name` column.
+#' @param fraction_id_name Name of the fraction column in `sam_metadata_df`.
+#' @param ig_freq_name Name of the Ig+ frequency column, or `NULL` (all four come back `NA`).
+#' @param ig_freq_units,ig_freq_layout See [getPhyloIgSeq()].
+#' @param positive_fraction_name The *single* positive fraction currently being scored, so that
+#'   `pos_ig_freq` follows the positive fraction of the synthetic sample it belongs to.
+#' @param first_negative_fraction_name,second_negative_fraction_name,presorting_fraction_name
+#'   The remaining fraction names, any of which may be `NULL`.
+#' @param sample_id Used to identify the sample in warnings.
+#'
+#' @return A one-row data frame with numeric columns `presort_ig_freq`, `pos_ig_freq`,
+#'   `neg1_ig_freq` and `neg2_ig_freq`.
+#'
+#' @noRd
+.resolve_ig_freqs <- function(
+  sam_metadata_df,
+  fraction_id_name,
+  ig_freq_name,
+  ig_freq_units,
+  ig_freq_layout,
+  positive_fraction_name,
+  first_negative_fraction_name = NULL,
+  second_negative_fraction_name = NULL,
+  presorting_fraction_name = NULL,
+  sample_id = NA_character_
+) {
+  empty <- data.frame(
+    presort_ig_freq = NA_real_,
+    pos_ig_freq = NA_real_,
+    neg1_ig_freq = NA_real_,
+    neg2_ig_freq = NA_real_
+  )
+
+  if (is.null(ig_freq_name) || !ig_freq_name %in% names(sam_metadata_df)) {
+    if (!is.null(ig_freq_name)) {
+      warning(
+        "`ig_freq_name` = '",
+        ig_freq_name,
+        "' is not a column of sample_data; treating Ig+ frequencies as NA.\n"
+      )
+    }
+    return(empty)
+  }
+
+  raw <- sam_metadata_df[[ig_freq_name]]
+
+  if (identical(ig_freq_layout, "wide")) {
+    # Historical behaviour: the value is a property of the sample, so it must be
+    # the same on every fraction row (the same "identical across fractions, else
+    # NA" rule the rest of the metadata is collapsed by).
+    unique_values <- unique(raw)
+    if (length(unique_values) > 1) {
+      warning(
+        "ig_freq column `",
+        ig_freq_name,
+        "` varies across the fractions of sample ",
+        sample_id,
+        " but `ig_freq_layout = \"wide\"` expects one value per sample, so it ",
+        "cannot be used for this sample. If the column records the Ig+ ",
+        "frequency measured separately in each fraction, use ",
+        "`ig_freq_layout = \"long\"`.\n"
+      )
+      return(empty)
+    }
+    empty$presort_ig_freq <- .resolve_ig_freq_value(
+      value = unique_values,
+      units = ig_freq_units,
+      sample_id = sample_id,
+      column_name = ig_freq_name
+    )
+    return(empty)
+  }
+
+  # "long": one measurement per fraction, picked out by the fraction's own name.
+  for_fraction <- function(fraction) {
+    if (is.null(fraction)) {
+      return(NA_real_)
+    }
+    .resolve_ig_freq_value(
+      value = raw[sam_metadata_df[[fraction_id_name]] == fraction],
+      units = ig_freq_units,
+      sample_id = sample_id,
+      fraction_label = fraction,
+      column_name = ig_freq_name
+    )
+  }
+
+  data.frame(
+    presort_ig_freq = for_fraction(presorting_fraction_name),
+    pos_ig_freq = for_fraction(positive_fraction_name),
+    neg1_ig_freq = for_fraction(first_negative_fraction_name),
+    neg2_ig_freq = for_fraction(second_negative_fraction_name)
+  )
+}

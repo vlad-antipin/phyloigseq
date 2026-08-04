@@ -6,10 +6,18 @@
 #' directly from the pos/neg(/pre) abundance vectors. See `IG_SCORES` for the set of
 #' method names used elsewhere in the package's pipeline.
 #'
-#' `"purity_corrected_prob_index"`/`"purity_corrected_prob_ratio"` are experimental:
-#' their derivation (see the inline comments in the source) is not yet fully verified and
-#' they are not part of `IG_SCORES`/the main [getPhyloIgSeq()] pipeline. They remain
-#' available here for direct use while under development.
+#' `"purity_corrected_prob_index"`/`"purity_corrected_prob_ratio"` are experimental: their
+#' derivation (see the inline comments in the source) is not yet fully verified. They correct
+#' for imperfect sorting using the Ig+ frequencies measured *within* the sorted fractions
+#' (`pos_ig_freq`/`neg_ig_freq`) on top of the pre-sort one, and so require all three
+#' frequencies plus `pos`, `neg` and `pre`.
+#'
+#' Those two methods need one quantity beyond the three measured frequencies to describe how
+#' cells were partitioned between the fractions. Which quantity to use is **not yet settled**;
+#' the source documents both candidate parameterizations and currently derives the sort
+#' recovery `w = P(Ig+ fraction | real Ig+)` from the three frequencies, so that no
+#' unmeasurable input is required. See the inline comments for the equivalence between the two
+#' parameterizations, and for the caveats of the derivation.
 #'
 #' @param method One of `"palm"`, `"kau"`, `"prob_index"`, `"prob_ratio"`,
 #'   `"purity_corrected_prob_index"`, `"purity_corrected_prob_ratio"`. See Details.
@@ -20,15 +28,14 @@
 #'   methods.
 #' @param pre Numeric vector of pre-sort counts or relative abundances, same length as
 #'   `pos`. Required by `"prob_index"` and the `purity_corrected_*` methods.
-#' @param ig_freq Single probability in `[0, 1]`, the total frequency of real Ig+
-#'   bacteria (P(Ig+)). Required by `"prob_index"`/`"prob_ratio"`.
-#' @param pos_purity Single probability in `[0, 1]`, P(real Ig+ | Ig+ fraction). Required
-#'   by the `purity_corrected_*` methods.
-#' @param neg_impurity Single probability in `[0, 1]`, P(real Ig+ | Ig- fraction).
-#'   Required by the `purity_corrected_*` methods.
-#' @param pos_fraction Single probability in `[0, 1]`, P(Ig+ fraction). Required by the
+#' @param presort_ig_freq Single probability in `[0, 1]`, the Ig+ frequency measured in the
+#'   pre-sort fraction, i.e. the total frequency of real Ig+ bacteria (P(Ig+)). Required by
+#'   `"prob_index"`/`"prob_ratio"` and the `purity_corrected_*` methods.
+#' @param pos_ig_freq Single probability in `[0, 1]`, the Ig+ frequency measured in the Ig+
+#'   fraction ("positive fraction purity"), P(real Ig+ | Ig+ fraction). Required by the
 #'   `purity_corrected_*` methods.
-#' @param neg_fraction Single probability in `[0, 1]`, P(Ig- fraction). Required by the
+#' @param neg_ig_freq Single probability in `[0, 1]`, the Ig+ frequency measured in the Ig-
+#'   fraction ("negative fraction impurity"), P(real Ig+ | Ig- fraction). Required by the
 #'   `purity_corrected_*` methods.
 #'
 #' @return A numeric vector of the same length as `pos`, one score per taxon. `NaN`/
@@ -42,8 +49,13 @@
 #'
 #' compute_ig_score(method = "palm", pos = pos, neg = neg)
 #' compute_ig_score(method = "kau", pos = pos, neg = neg)
-#' compute_ig_score(method = "prob_index", pos = pos, pre = pre, ig_freq = 0.3)
-#' compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, ig_freq = 0.3)
+#' compute_ig_score(method = "prob_index", pos = pos, pre = pre, presort_ig_freq = 0.3)
+#' compute_ig_score(method = "prob_ratio", pos = pos, neg = neg, presort_ig_freq = 0.3)
+#' compute_ig_score(
+#'   method = "purity_corrected_prob_index",
+#'   pos = pos, neg = neg, pre = pre,
+#'   presort_ig_freq = 0.3, pos_ig_freq = 0.5, neg_ig_freq = 0.1
+#' )
 #'
 #' @export
 compute_ig_score <- function(
@@ -60,12 +72,11 @@ compute_ig_score <- function(
   pos, # Ig+ fraction counts or rel. abundance
   neg = NULL, # Ig- fraction -//-
   pre = NULL, # before sorting -//-
-  # Probabilities in [0,1]:
-  ig_freq = NULL, # total frequency of Ig+ bacteria
-  pos_purity = NULL, # P(real Ig+ | Ig+ fraction)
-  neg_impurity = NULL, # P(real Ig+ | Ig- fraction)
-  pos_fraction = NULL, # P(Ig+ fraction)
-  neg_fraction = NULL # P(Ig- fraction)
+  # Ig+ frequencies (phenotyping, e.g. flow cytometry), probabilities in [0,1],
+  # each measured in one specific fraction:
+  presort_ig_freq = NULL, # P(real Ig+) - measured before sorting
+  pos_ig_freq = NULL, # P(real Ig+ | Ig+ fraction) - "positive fraction purity"
+  neg_ig_freq = NULL # P(real Ig+ | Ig- fraction) - "negative fraction impurity"
 ) {
   method <- match.arg(method)
 
@@ -90,30 +101,121 @@ compute_ig_score <- function(
     pre_abund <- NA
   }
 
-  if (!is.numeric(ig_freq)) {
-    ig_freq <- NA
+  if (!is.numeric(presort_ig_freq)) {
+    presort_ig_freq <- NA
+  }
+  if (!is.numeric(pos_ig_freq)) {
+    pos_ig_freq <- NA
+  }
+  if (!is.numeric(neg_ig_freq)) {
+    neg_ig_freq <- NA
   }
 
-  # TODO: Sequences tend to be sequenced at equal molar ratios, so even without rarefaction the counts are not comparable !
-  # so user should provide P(Ig+ fraction) themselves based on phenotyping!
-  # if( sum(pos) == sum(neg) ){
-  #   warning("It looks like fraction counts have been rarefied to the same abundance, it would not allow to correctly eastimate P(Ig+ fraction)\n")
-  # }
-  # if(is.null(pos_fraction)){pos_fraction = pos / (pos + neg)} # P(Ig+ fraction) # or pos / pre?
-  # if(is.null(neg_fraction)){neg_fraction = neg / (pos + neg)} # P(Ig- fraction)
-  if (is.null(pos_fraction)) {
-    pos_fraction <- NA
+  # --------------------------------------------------------------------------
+  # The sorting parameter needed by the `purity_corrected_*` methods below.
+  #
+  # Those methods weight each fraction's contribution by how the cells were
+  # actually partitioned between the fractions, which the three measured Ig+
+  # frequencies alone don't tell us. Two equivalent parameterizations; WHICH ONE
+  # TO KEEP IS NOT SETTLED YET -- (B) is used for now only because it needs no
+  # input we can't measure. Notation:
+  #
+  #   P = presort_ig_freq = P(real Ig+)
+  #   p = pos_ig_freq     = P(real Ig+ | Ig+ fraction)   "purity"
+  #   q = neg_ig_freq     = P(real Ig+ | Ig- fraction)   "impurity"
+  #   f+ = P(Ig+ fraction), f- = P(Ig- fraction)         gate/fraction sizes
+  #   w  = P(Ig+ fraction | real Ig+)                    sort recovery
+  #
+  # (A) ORIGINAL IDEA -- weight by the fraction sizes f+ / f-:
+  #
+  #       P(real Ig+ | taxon) =
+  #         ( pos_abund * p * f+  +  neg_abund * q * f- ) / pre_abund
+  #
+  #     Not used, because f+ / f- are not obtainable here:
+  #     TODO: sequences tend to be sequenced at equal molar ratios, so read
+  #     counts do NOT carry the biomass of a fraction and cannot estimate f+ /
+  #     f- -- and on top of that getPhyloIgSeq() rarefies pos/neg to a common
+  #     depth by default, which erases the difference entirely. They would have
+  #     to be measured (flow event counts with tracked volumes, or spike-in qPCR
+  #     of total 16S per fraction) and supplied by the user. Kept here so the
+  #     option is not lost:
+  #     # if (is.null(pos_fraction)) { pos_fraction <- pos / (pos + neg) } # or pos / pre?
+  #     # if (is.null(neg_fraction)) { neg_fraction <- neg / (pos + neg) }
+  #     # if (sum(pos) == sum(neg)) {
+  #     #   warning("It looks like fraction counts have been rarefied to the same abundance, it would not allow to correctly estimate P(Ig+ fraction)\n")
+  #     # }
+  #
+  # (B) USED HERE -- weight by the sort recovery w, which IS derivable from the
+  #     three measured frequencies. Since P(real Ig+ | Ig+ fraction) * P(Ig+
+  #     fraction) = P(real Ig+) * P(Ig+ fraction | real Ig+), the two
+  #     parameterizations are related by
+  #
+  #       p * f+ = P * w        and        q * f- = P * (1 - w)
+  #
+  #     so (A) becomes
+  #
+  #       P(real Ig+ | taxon) =
+  #         P * ( pos_abund * w  +  neg_abund * (1 - w) ) / pre_abund
+  #
+  #     i.e. only ONE unknown instead of two. Assuming the two fractions
+  #     partition all cells (f+ + f- = 1), the law of total probability
+  #     P = p*f+ + q*f- pins it down:
+  #
+  #       f+ = (P - q) / (p - q)   =>   w = p * (P - q) / (P * (p - q))
+  #
+  #     Note w = 1 reduces (B) exactly to `prob_index`, so the corrected score is
+  #     a shrinkage of `prob_index` towards the Ig- fraction.
+  # --------------------------------------------------------------------------
+  # Only the purity-corrected methods read `w`; deriving it unconditionally
+  # would warn below about frequencies that the requested score never uses.
+  sort_recovery <- NA
+  if (grepl("^purity_corrected_", method)) {
+    sort_recovery <- pos_ig_freq *
+      (presort_ig_freq - neg_ig_freq) /
+      (presort_ig_freq * (pos_ig_freq - neg_ig_freq))
+    # NA/NaN/Inf: a frequency is missing, or p == q (no separation between the
+    # fractions) / P == 0 leave w undefined
+    if (!is.finite(sort_recovery)) {
+      sort_recovery <- NA
+    }
   }
-  if (is.null(neg_fraction)) {
-    neg_fraction <- NA
+  # TODO: w > 1 whenever P > p, i.e. the pre-sort aliquot reads as MORE Ig+ than
+  # the Ig+ fraction itself -- impossible under the model above. Seen in 10 of 50
+  # samples of the SMILE cohort (median w 0.97, range 0.70-1.22). Most likely
+  # cause: loss of Ig+ bacteria during the wash between the Ig- and Ig+
+  # elutions, so the two fractions don't in fact partition all cells and the
+  # f+ + f- = 1 assumption behind the derivation breaks. To be investigated
+  # separately; clamping is provisional -- it makes the score degrade to
+  # `prob_index` for those samples rather than return nonsense.
+  if (!is.na(sort_recovery) && (sort_recovery < 0 || sort_recovery > 1)) {
+    warning(
+      "Derived sort recovery is ",
+      signif(sort_recovery, 4),
+      ", outside [0, 1] -- the Ig+ frequencies of the pre-sort/Ig+/Ig- fractions (",
+      signif(presort_ig_freq, 4),
+      "/",
+      signif(pos_ig_freq, 4),
+      "/",
+      signif(neg_ig_freq, 4),
+      ") are mutually inconsistent; clamping.\n"
+    )
+    # TODO: this fires once per (sample x score), which gets noisy on a big
+    # cohort. Collecting the count in getPhyloIgSeq() and emitting a single
+    # summary line would be quieter, but needs a pass over all samples'
+    # frequencies before scoring starts.
+    sort_recovery <- min(max(sort_recovery, 0), 1)
   }
-
-  if (is.null(pos_purity)) {
-    pos_purity <- NA
-  }
-  if (is.null(neg_impurity)) {
-    neg_impurity <- NA
-  }
+  # TODO: another option worth trying once the strategy is settled -- pool w
+  # across the cohort instead of deriving it per sample. Recovery is arguably a
+  # property of the protocol (same beads, column, operator), not of the sample,
+  # so the per-sample spread may be mostly noise in the pre-sort measurement (the
+  # least reliable of the three); the median of the in-range per-sample values is
+  # ~0.95 across all of SMILE, and the inconsistent samples stop being special
+  # cases. Not done here: it needs the same up-front pass over all samples, and
+  # it couples samples together, so subsetting `physeq` would silently change
+  # every other sample's score. A plain user-supplied override (a scalar in
+  # [0, 1], or a sample_data column, bypassing the derivation) would be the
+  # natural home for a directly measured f+ or a fixed protocol constant.
 
   score <- switch(
     method,
@@ -122,8 +224,10 @@ compute_ig_score <- function(
       # minus to negate the fact that log10(pos_abund*neg_abund) is negative
       -log2(pos_abund / neg_abund) / log10(pos_abund * neg_abund)
     },
-    prob_index = pos_abund * ig_freq / pre_abund, # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
-    prob_ratio = log2(pos_abund * ig_freq / (neg_abund * (1 - ig_freq))),
+    prob_index = pos_abund * presort_ig_freq / pre_abund, # P(Ig+ | taxon) = P(taxon | Ig+) * P(Ig+) / P(taxon)
+    prob_ratio = log2(
+      pos_abund * presort_ig_freq / (neg_abund * (1 - presort_ig_freq))
+    ),
     purity_corrected_prob_index = {
       # TODO: verify the proof!!!
       # Here, we discriminate `real Ig+` and `Ig+ fraction` events, assuming that
@@ -147,18 +251,30 @@ compute_ig_score <- function(
       #   (   P(taxon | Ig+ fraction) * P(real Ig+ | Ig+ fraction) * P(Ig+ fraction)
       #     + P(taxon | Ig- fraction) * P(real Ig+ | Ig- fraction) * P(Ig- fraction)
       #    ) / P(taxon)
-      (pos_abund *
-        pos_purity *
-        pos_fraction +
-        neg_abund * neg_impurity * neg_fraction) /
+      #
+      # written with the sort recovery `w` -- see parameterization (B) above:
+      #   p * f+ = P * w  and  q * f- = P * (1 - w)
+      # (A) would instead be:
+      # (pos_abund * pos_ig_freq * pos_fraction +
+      #   neg_abund * neg_ig_freq * neg_fraction) / pre_abund
+      presort_ig_freq *
+        (pos_abund * sort_recovery + neg_abund * (1 - sort_recovery)) /
         pre_abund
     },
     purity_corrected_prob_ratio = {
       # TODO: verify!
-      prob <- pos_abund *
-        pos_purity *
-        pos_fraction +
-        neg_abund * neg_impurity * neg_fraction
+      # TODO: unlike its index counterpart just above, this does NOT divide by
+      # pre_abund, so it takes the logit of the JOINT P(taxon & real Ig+) rather
+      # than of the conditional P(real Ig+ | taxon). That looks inconsistent:
+      # plain `prob_ratio` IS the exact logit of `prob_index` (substituting
+      # pre_abund = pos_abund*P + neg_abund*(1-P) into
+      # prob_index / (1 - prob_index) reproduces
+      # log2(pos_abund*P / (neg_abund*(1-P))) identically), so the corrected pair
+      # should hold the same relationship, i.e. `prob <- <the index above>`.
+      # Left as-is pending verification of the derivation, so as not to change
+      # the formula and its (unverified) proof at the same time.
+      prob <- presort_ig_freq *
+        (pos_abund * sort_recovery + neg_abund * (1 - sort_recovery))
       log2(prob / (1 - prob))
     }
   )
@@ -476,9 +592,9 @@ plot_slide_z <- function(
 #'
 #' Internal. Returns the significance thresholds (`left_lim`/`right_lim`), color-scale midpoint,
 #' and legal value range (`left_boundary`/`right_boundary`) used by `plot_ig_score()` to color
-#' points/boxes and draw reference lines, one set per `score_name`. Errors for any `score_name`
-#' not in `IG_SCORES` (i.e. not one of `"slide_z"`/`"kau"`/`"prob_ratio"`/`"palm"`/`"prob_index"`)
-#' rather than leaving these unbound.
+#' points/boxes and draw reference lines, one set per `score_name`. The `purity_corrected_*`
+#' scores share the boundaries of their uncorrected counterparts. Errors for any `score_name`
+#' not in `IG_SCORES` rather than leaving these unbound.
 #'
 #' @noRd
 .ig_score_boundary <- function(score_name, z_alpha2) {
@@ -492,6 +608,7 @@ plot_slide_z <- function(
       right_boundary = Inf
     ),
     kau = ,
+    purity_corrected_prob_ratio = ,
     prob_ratio = list(
       left_lim = 0,
       right_lim = 0,
@@ -506,6 +623,7 @@ plot_slide_z <- function(
       left_boundary = 0,
       right_boundary = Inf
     ),
+    purity_corrected_prob_index = ,
     prob_index = list(
       left_lim = 0.5,
       right_lim = 0.5,
@@ -516,7 +634,9 @@ plot_slide_z <- function(
     stop(
       "`plot_ig_score()` has no known plotting boundary for score_name = '",
       score_name,
-      "'. Supported names: 'slide_z', 'kau', 'prob_ratio', 'palm', 'prob_index'."
+      "'. Supported names: ",
+      paste0("'", IG_SCORES, "'", collapse = ", "),
+      "."
     )
   )
 }

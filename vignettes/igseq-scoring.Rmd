@@ -106,6 +106,61 @@ pis_pos_only
 head(get_ig_score(pis_pos_only, score_name = "prob_index", sample_ids = "sample_1"))
 ```
 
+### Per-fraction Ig+ frequencies
+
+`ig_pheno` above is one value per biological sample: an overall P(Ig+), repeated on each
+of that sample's fraction rows. That's the default, `ig_freq_layout = "wide"`, and it is
+all `prob_index`/`prob_ratio` need.
+
+Flow-cytometry phenotyping is often done on each sorted fraction separately, though —
+giving not just the pre-sort P(Ig+) but also how pure the Ig+ fraction actually came out
+and how much Ig+ material was left behind in the Ig− one. Recording that means one
+`sample_data` column whose value *differs between the fractions of a sample*, which
+`ig_freq_layout = "long"` reads accordingly:
+
+```{r long-layout}
+ps_long <- ps_igseq
+sd <- as(sample_data(ps_long), "data.frame")
+# Ig+ frequency measured in each fraction rather than once per sample. neg1/neg2
+# are two aliquots of the same negative fraction, so they share a measurement.
+sd$ig_pheno_fraction <- c(
+  whole = 0.40, pos = 0.80, neg1 = 0.10, neg2 = 0.10
+)[sd$sorting_fraction]
+sample_data(ps_long) <- sample_data(sd)
+
+pis_long <- getPhyloIgSeq(
+  physeq = ps_long,
+  sample_ids = c("sample_1", "sample_2", "sample_3"),
+  sample_id_name = "sample_id",
+  fraction_id_name = "sorting_fraction",
+  positive_fraction_name = "pos",
+  first_negative_fraction_name = "neg1",
+  second_negative_fraction_name = "neg2",
+  presorting_fraction_name = "whole",
+  ig_freq_name = "ig_pheno_fraction",
+  ig_freq_layout = "long",
+  scores = c("prob_index", "purity_corrected_prob_index")
+)
+pis_long@sample_data[, c(
+  "sample_id", "presort_ig_freq", "pos_ig_freq", "neg1_ig_freq", "neg2_ig_freq"
+)]
+```
+
+Whichever layout is used, the resolved (unit-converted, range-checked) values are stored
+per sample in `sample_data`, so they can be inspected, exported, and used to color or
+facet downstream plots. Under `"wide"` only `presort_ig_freq` is populated — a single
+overall P(Ig+) says nothing about how pure either sorted fraction turned out to be.
+
+The two `purity_corrected_*` scores need those in-fraction measurements, so they are only
+computable under `"long"` (with both a negative and a pre-sort fraction); requesting them
+otherwise drops them from `scores` with a `warning()`. They remain **experimental** — see
+`?compute_ig_score` and the comments in its source, which spell out the sorting parameter
+they depend on and the caveats of deriving it.
+
+Picking `"wide"` for a column that is in fact per-fraction is the one trap here: the value
+can't be collapsed to a single per-sample number, so it goes unused. `getPhyloIgSeq()`
+warns per sample and points at `"long"` rather than silently returning `NA` scores.
+
 ### Multiple positive fractions
 
 If several positive fractions were sorted from the same samples against one shared

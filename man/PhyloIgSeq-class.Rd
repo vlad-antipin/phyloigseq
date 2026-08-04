@@ -45,7 +45,12 @@ indexable per-row value (use the \code{sample_data} column of the same name for 
 
 \item{\code{presorting_fraction_name}}{Character or NULL. Name of the pre-sorting (whole community) fraction}
 
-\item{\code{ig_freq_name}}{Character or NULL. Name of the column containing total Ig+ frequency per sample}
+\item{\code{ig_freq_name}}{Character or NULL. Name of the \code{sample_data} column the Ig+ frequencies were
+read from. The resolved per-fraction values themselves live in the \code{sample_data} slot, as the
+\code{presort_ig_freq}/\code{pos_ig_freq}/\code{neg1_ig_freq}/\code{neg2_ig_freq} columns.}
+
+\item{\code{ig_freq_layout}}{Character or NULL. Which layout \code{ig_freq_name} was read with, \code{"wide"}
+(one Ig+ frequency per sample) or \code{"long"} (one per sort fraction) -- see \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}.}
 
 \item{\code{ellipse_coords}}{A data.frame or NULL. Stores coordinates for sliding Z-score ellipses}
 
