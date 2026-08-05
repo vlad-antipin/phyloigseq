@@ -62,14 +62,18 @@ test_that("compute_ig_score computes 'prob_ratio' from pos, neg, and presort_ig_
   expect_equal(result, expected)
 })
 
-# The sort recovery `w` the purity-corrected scores weight by is derived inside
-# compute_ig_score() from the three measured Ig+ frequencies (see the comment
-# block there), so these tests re-derive it the same way rather than passing it.
-recovery_of <- function(presort, pos, neg) {
-  pos * (presort - neg) / (presort * (pos - neg))
+# The purity-corrected scores un-mix the two fractions into the really-Ig+ and
+# really-Ig- populations using each fraction's own Ig+ frequency (see
+# parameterization (C) in compute_ig_score()'s source). These tests re-solve that
+# 2x2 system here rather than reusing the package's internal helper.
+unmix_of <- function(pos_abund, neg_abund, p, q) {
+  list(
+    ig_pos = pmax(((1 - q) * pos_abund - (1 - p) * neg_abund) / (p - q), 0),
+    ig_neg = pmax((p * neg_abund - q * pos_abund) / (p - q), 0)
+  )
 }
 
-test_that("compute_ig_score computes 'purity_corrected_prob_index' from the three Ig+ frequencies", {
+test_that("compute_ig_score computes 'purity_corrected_prob_index' by un-mixing the fractions", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
   pre <- c(20, 20, 20, 40)
@@ -87,92 +91,124 @@ test_that("compute_ig_score computes 'purity_corrected_prob_index' from the thre
     neg_ig_freq = neg_ig_freq
   )
 
-  w <- recovery_of(presort_ig_freq, pos_ig_freq, neg_ig_freq)
-  pos_abund <- pos / sum(pos)
-  neg_abund <- neg / sum(neg)
-  pre_abund <- pre / sum(pre)
+  pools <- unmix_of(pos / sum(pos), neg / sum(neg), pos_ig_freq, neg_ig_freq)
   expected <- presort_ig_freq *
-    (pos_abund * w + neg_abund * (1 - w)) /
-    pre_abund
+    pools$ig_pos /
+    (presort_ig_freq * pools$ig_pos + (1 - presort_ig_freq) * pools$ig_neg)
   expect_equal(result, expected)
 })
 
-test_that("compute_ig_score computes 'purity_corrected_prob_ratio' from the three Ig+ frequencies", {
+test_that("the purity-corrected scores ignore `pre` and stay in range", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
-  presort_ig_freq <- 0.3
-  pos_ig_freq <- 0.9
-  neg_ig_freq <- 0.1
-
-  result <- compute_ig_score(
-    method = "purity_corrected_prob_ratio",
+  args <- list(
+    method = "purity_corrected_prob_index",
     pos = pos,
     neg = neg,
-    presort_ig_freq = presort_ig_freq,
-    pos_ig_freq = pos_ig_freq,
-    neg_ig_freq = neg_ig_freq
+    presort_ig_freq = 0.3,
+    pos_ig_freq = 0.9,
+    neg_ig_freq = 0.1
   )
 
-  w <- recovery_of(presort_ig_freq, pos_ig_freq, neg_ig_freq)
-  pos_abund <- pos / sum(pos)
-  neg_abund <- neg / sum(neg)
-  prob <- presort_ig_freq * (pos_abund * w + neg_abund * (1 - w))
-  expect_equal(result, log2(prob / (1 - prob)))
+  # The pre-sort library is not always the same material as the sorted fractions
+  # (it may skip the clean-up they go through), so the corrected scores must not
+  # depend on it at all.
+  with_pre <- do.call(compute_ig_score, c(args, list(pre = c(20, 20, 20, 40))))
+  other_pre <- do.call(compute_ig_score, c(args, list(pre = c(1, 99, 1, 99))))
+  expect_equal(with_pre, other_pre)
+  expect_equal(with_pre, do.call(compute_ig_score, args))
+  expect_true(all(with_pre >= 0 & with_pre <= 1, na.rm = TRUE))
 })
 
-test_that("'purity_corrected_prob_index' reduces to 'prob_index' when the sort recovery is 1", {
+test_that("the purity-corrected ratio is exactly the logit of the purity-corrected index", {
+  args <- list(
+    pos = c(50, 30, 20, 5),
+    neg = c(5, 10, 40, 45),
+    presort_ig_freq = 0.3,
+    pos_ig_freq = 0.9,
+    neg_ig_freq = 0.1
+  )
+
+  index <- do.call(
+    compute_ig_score,
+    c(list(method = "purity_corrected_prob_index"), args)
+  )
+  ratio <- do.call(
+    compute_ig_score,
+    c(list(method = "purity_corrected_prob_ratio"), args)
+  )
+
+  # A taxon clamped out of one population lands at index 0 or 1, whose logit is
+  # infinite; compute_ig_score() maps that to NA for every score, so apply the
+  # same mapping to the expectation.
+  expected <- log2(index / (1 - index))
+  expected[is.nan(expected) | is.infinite(expected)] <- NA
+  expect_equal(ratio, expected)
+})
+
+test_that("the purity-corrected scores reduce to their uncorrected forms at a perfect sort", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
-  pre <- c(20, 20, 20, 40)
-  # w == 1 exactly when the pre-sort frequency equals the Ig+ fraction's purity
   presort_ig_freq <- 0.4
+  # At p = 1, q = 0 the fractions ARE the two populations, so the pre-sort
+  # composition consistent with the model is the P-weighted mixture of them.
+  pre_consistent <- presort_ig_freq * pos / sum(pos) +
+    (1 - presort_ig_freq) * neg / sum(neg)
 
   expect_equal(
     compute_ig_score(
       method = "purity_corrected_prob_index",
       pos = pos,
       neg = neg,
-      pre = pre,
       presort_ig_freq = presort_ig_freq,
-      pos_ig_freq = presort_ig_freq,
-      neg_ig_freq = 0.1
+      pos_ig_freq = 1,
+      neg_ig_freq = 0
     ),
     compute_ig_score(
       method = "prob_index",
       pos = pos,
-      pre = pre,
+      pre = pre_consistent,
+      presort_ig_freq = presort_ig_freq
+    )
+  )
+
+  expect_equal(
+    compute_ig_score(
+      method = "purity_corrected_prob_ratio",
+      pos = pos,
+      neg = neg,
+      presort_ig_freq = presort_ig_freq,
+      pos_ig_freq = 1,
+      neg_ig_freq = 0
+    ),
+    compute_ig_score(
+      method = "prob_ratio",
+      pos = pos,
+      neg = neg,
       presort_ig_freq = presort_ig_freq
     )
   )
 })
 
-test_that("compute_ig_score clamps an out-of-range sort recovery with a warning", {
+test_that("a pre-sort frequency outside the fractions' range warns but still scores", {
   pos <- c(50, 30, 20, 5)
   neg <- c(5, 10, 40, 45)
-  pre <- c(20, 20, 20, 40)
-  # presort above the Ig+ fraction's own purity => w > 1, which is impossible
-  # under the model; clamping to 1 makes it fall back to prob_index.
+  # P > p is impossible if all three frequencies were purities of the same two
+  # populations. Un-mixing uses P only as a prior, so unlike the old sort-recovery
+  # clamp the score must stay defined rather than fall back to an uncorrected one.
   expect_warning(
     result <- compute_ig_score(
       method = "purity_corrected_prob_index",
       pos = pos,
       neg = neg,
-      pre = pre,
       presort_ig_freq = 0.6,
       pos_ig_freq = 0.5,
       neg_ig_freq = 0.1
     ),
-    "outside \\[0, 1\\]"
+    "outside the range spanned by the sorted"
   )
-  expect_equal(
-    result,
-    compute_ig_score(
-      method = "prob_index",
-      pos = pos,
-      pre = pre,
-      presort_ig_freq = 0.6
-    )
-  )
+  expect_true(all(result >= 0 & result <= 1, na.rm = TRUE))
+  expect_false(all(is.na(result)))
 })
 
 test_that("compute_ig_score returns NA for purity-corrected scores when a frequency is missing", {

@@ -27,7 +27,8 @@ as \code{pos}. Required by \code{"palm"}, \code{"kau"}, \code{"prob_ratio"}, and
 methods.}
 
 \item{pre}{Numeric vector of pre-sort counts or relative abundances, same length as
-\code{pos}. Required by \code{"prob_index"} and the \verb{purity_corrected_*} methods.}
+\code{pos}. Required by \code{"prob_index"}. Accepted but \strong{ignored} by the \verb{purity_corrected_*}
+methods, which reconstruct the pre-sort composition from the fractions instead.}
 
 \item{presort_ig_freq}{Single probability in \verb{[0, 1]}, the Ig+ frequency measured in the
 pre-sort fraction, i.e. the total frequency of real Ig+ bacteria (P(Ig+)). Required by
@@ -54,18 +55,45 @@ directly from the pos/neg(/pre) abundance vectors. See \code{IG_SCORES} for the 
 method names used elsewhere in the package's pipeline.
 }
 \details{
-\code{"purity_corrected_prob_index"}/\code{"purity_corrected_prob_ratio"} are experimental: their
-derivation (see the inline comments in the source) is not yet fully verified. They correct
-for imperfect sorting using the Ig+ frequencies measured \emph{within} the sorted fractions
-(\code{pos_ig_freq}/\code{neg_ig_freq}) on top of the pre-sort one, and so require all three
-frequencies plus \code{pos}, \code{neg} and \code{pre}.
+\code{"purity_corrected_prob_index"}/\code{"purity_corrected_prob_ratio"} are experimental. They
+correct for imperfect sorting using the Ig+ frequencies measured \emph{within} the sorted
+fractions (\code{pos_ig_freq}/\code{neg_ig_freq}) on top of the pre-sort one, and so require those
+three frequencies plus \code{pos} and \code{neg}.
 
-Those two methods need one quantity beyond the three measured frequencies to describe how
-cells were partitioned between the fractions. Which quantity to use is \strong{not yet settled};
-the source documents both candidate parameterizations and currently derives the sort
-recovery \verb{w = P(Ig+ fraction | real Ig+)} from the three frequencies, so that no
-unmeasurable input is required. See the inline comments for the equivalence between the two
-parameterizations, and for the caveats of the derivation.
+Both are computed by \strong{un-mixing the two sorted fractions}. Each fraction is a mixture of
+the same two underlying populations -- the really-Ig+ and the really-Ig- cells -- in
+proportions given by that fraction's own measured Ig+ frequency. Writing \code{P}, \code{p}, \code{q} for
+the pre-sort, Ig+ fraction and Ig- fraction frequencies, and \code{a}, \code{b} for the two
+populations' compositions over taxa, that is a 2x2 system per taxon:
+
+\deqn{pos_t = p\,a_t + (1-p)\,b_t \qquad neg_t = q\,a_t + (1-q)\,b_t}
+
+solved by \eqn{a_t = ((1-q) pos_t - (1-p) neg_t)/(p-q)} and
+\eqn{b_t = (p\, neg_t - q\, pos_t)/(p-q)}, after which Bayes' rule with \code{presort_ig_freq} as
+the prior gives \eqn{P(Ig+ \mid taxon) = P a_t / (P a_t + (1-P) b_t)}. The ratio is the
+base-2 logit of that.
+
+Consequences worth knowing:
+\itemize{
+\item \code{pre} is \strong{not used} by these two methods (it is still accepted, and ignored). Only the
+sorted fractions and the three frequencies enter. This matters when the pre-sort library
+is not the same material as the fractions -- e.g. sequenced without the debris-removal
+step that precedes sorting -- in which case dividing by it biases every taxon.
+\item The index is bounded in \verb{[0, 1]} by construction, and the ratio is exactly its logit, so
+the corrected pair holds the same relationship that \code{"prob_index"}/\code{"prob_ratio"} do. A
+taxon the un-mixing places entirely in one population scores 0 or 1, whose logit is
+infinite, so such taxa are \code{NA} in the ratio but retained in the index.
+\item Nothing is assumed about how cells were \emph{partitioned} between the fractions, so a sort in
+which \code{presort_ig_freq} exceeds \code{pos_ig_freq} -- a positive selection that de-enriched --
+is scored normally rather than falling back to an uncorrected value. It does warn.
+\item At a perfect sort (\code{pos_ig_freq = 1}, \code{neg_ig_freq = 0}) the pair reduces exactly to
+\code{"prob_index"} and \code{"prob_ratio"}.
+}
+
+The assumption both rest on is that the Ig+ cells reaching a fraction are a representative
+sample of the whole Ig+ population, i.e. that capture efficiency does not vary by taxon.
+Where it fails, \code{a_t} or \code{b_t} can come out negative; they are clamped at 0, the nearest
+admissible point, which makes the affected taxa score 0 or 1.
 }
 \examples{
 pos <- c(50, 30, 20, 5)
