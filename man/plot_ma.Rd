@@ -4,7 +4,12 @@
 \alias{plot_ma}
 \title{Plot an IgSeq MA Plot}
 \usage{
-plot_ma(ma_plot_data, ellipses = FALSE, type = c("facet", "superposed"))
+plot_ma(
+  ma_plot_data,
+  ellipses = FALSE,
+  type = c("facet", "superposed"),
+  change_transform = NULL
+)
 }
 \arguments{
 \item{ma_plot_data}{A list as returned by \code{\link[=get_ma_plot_data]{get_ma_plot_data()}}.}
@@ -16,16 +21,35 @@ per \code{comparison} (only applies when \code{type = "facet"}). Default \code{F
 by \code{comparison}) or \code{"superposed"} (facet by \code{comparison}, color by
 \code{zero_treatment}, comparing zero-handling strategies within the same
 panel).}
+
+\item{change_transform}{Which change axis to draw when \code{ma_plot_data} carries
+more than one. \code{NULL} (default) draws the only one present, or \code{"log_ratio"}
+when several are. Errors if the requested axis was never computed.}
 }
 \value{
 A \code{ggplot} object.
 }
 \description{
 Draws the MA-plot coordinates produced by \code{\link[=get_ma_plot_data]{get_ma_plot_data()}} for one
-biological sample: log-abundance (\code{A}) on the x-axis, log-ratio (\code{M}) on
-the y-axis. Taxa with a zero abundance in at least one compared fraction
-(\code{ma_plot_data$imputed_taxa}) are drawn separately, jittered just past the
-plot's x-range rather than placed at their imputed/undefined \code{A} value.
+biological sample: log-abundance (\code{A}) on the x-axis, change (\code{M}) on
+the y-axis. Taxa whose coordinates come from an imputed zero are drawn
+separately, jittered just past the plot's x-range rather than placed at their
+imputed/undefined \code{A} value.
+}
+\details{
+Which taxa those are is read per \code{zero_treatment}, from \code{plot_data$imputed},
+not from the \code{imputed_taxa} union: a treatment that imputes nothing (\code{"no_zero"},
+which drops the taxa instead) must not inherit another treatment's imputed set,
+or every facet renders the same points the same way and the comparison the
+facets exist for shows nothing.
+
+Under \code{change_transform = "purity_corrected"}, taxa the un-mixing had to clamp
+(\code{in_cone = FALSE}) are drawn \strong{in place but hollow}. Unlike imputed taxa, whose
+\code{A} is an artefact of the pseudocount, these have a perfectly real \code{A} -- only
+their \code{M} is saturated -- so moving them off-axis would discard true information.
+They trace a rising envelope rather than a flat clipped line, because the
+saturation ceiling grows with abundance; a thick band riding that envelope means
+\code{pos_ig_freq} and \code{neg_ig_freq} are too close for the correction to say much.
 }
 \examples{
 data(ps_igseq)

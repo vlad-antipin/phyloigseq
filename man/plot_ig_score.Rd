@@ -49,7 +49,8 @@ within each taxon (\code{taxrank_score} level) and then across samples, or simul
 both dimensions. Only matters when \code{score_agglom_fn = "median"} (non-linear); with \code{"mean"}
 all three give the same result.}
 
-\item{z_alpha2}{Two-tailed significance threshold; only used when \code{score_name == "slide_z"}.}
+\item{z_alpha2}{Two-tailed significance threshold; only used for the sliding Z-scores
+(\code{names(SLIDE_Z_SCORES)}).}
 
 \item{exclude_na}{Logical. Drop rows with \code{NA} \code{score_name} values before plotting.}
 
@@ -73,11 +74,11 @@ jittered points colored by whether they cross \code{score_name}'s significance b
 }
 \details{
 \code{score_name}'s plotting boundary (significance thresholds, color-scale midpoint, and legal
-value range) is looked up internally for the 5 names in \code{IG_SCORES} (\code{"slide_z"}, \code{"kau"},
-\code{"prob_ratio"}, \code{"palm"}, \code{"prob_index"}) and errors for any other \code{score_name} — this covers
-every score currently produced by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}/\code{\link[=compute_ig_score]{compute_ig_score()}}, but a custom/future
-score name needs its own boundary added internally (\code{.ig_score_boundary()}) before it can be
-plotted here.
+value range) is looked up internally for every name in \code{IG_SCORES} and errors for any other
+\code{score_name} — so this covers every score currently produced by
+\code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}/\code{\link[=compute_ig_score]{compute_ig_score()}}/\code{\link[=get_slide_z]{get_slide_z()}}, but a custom/future score name needs
+its own boundary added internally (\code{.ig_score_boundary()}) before it can be plotted here. Each
+\verb{purity_corrected_*} score shares the boundary of its uncorrected counterpart.
 }
 \examples{
 phyloigseq_obj <- getPhyloIgSeq(

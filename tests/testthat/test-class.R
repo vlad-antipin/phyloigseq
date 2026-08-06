@@ -509,6 +509,54 @@ test_that("getPhyloIgSeq drops the purity-corrected scores when their inputs are
   expect_false("purity_corrected_prob_index" %in% names(pis@ig_coating))
 })
 
+test_that("getPhyloIgSeq drops the Bayesian scores when their prior is unreadable", {
+  # `prob_index` divides by the pre-sort fraction's abundance, so it needs that
+  # fraction under either layout; `prob_ratio` divides by the negative fraction
+  # and only needs the pre-sort fraction under "long", where P(Ig+) is recorded
+  # per fraction. Either way, dropped rather than returned as an all-NA column.
+  physeq <- make_long_ig_freq_physeq()
+
+  # one warning per score, so both have to be matched
+  expect_warning(
+    expect_warning(
+      pis <- getPhyloIgSeq(
+        physeq = physeq,
+        sample_id_name = "sample_id",
+        fraction_id_name = "sorting_fraction",
+        positive_fraction_name = "pos",
+        first_negative_fraction_name = "neg1",
+        ig_freq_name = "ig_pheno_fraction",
+        ig_freq_layout = "long",
+        scores = c("prob_index", "prob_ratio", "palm"),
+        empirical_null_distribution = FALSE
+      ),
+      "Cannot compute `prob_index`"
+    ),
+    "Cannot compute `prob_ratio`"
+  )
+  expect_equal(pis@score_names, "palm")
+  expect_false(any(c("prob_index", "prob_ratio") %in% names(pis@ig_coating)))
+
+  # Under "wide", P(Ig+) is a property of the sample, so `prob_ratio` stays
+  # computable without a pre-sort fraction -- only `prob_index` goes.
+  expect_warning(
+    pis_wide <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      ig_freq_name = "ig_pheno",
+      ig_freq_layout = "wide",
+      scores = c("prob_index", "prob_ratio"),
+      empirical_null_distribution = FALSE
+    ),
+    "Cannot compute `prob_index`"
+  )
+  expect_equal(pis_wide@score_names, "prob_ratio")
+  expect_false(all(is.na(pis_wide@ig_coating$prob_ratio)))
+})
+
 test_that("pos_ig_freq follows each row's own positive fraction with several of them", {
   physeq <- make_long_ig_freq_physeq()
   sd <- as(phyloseq::sample_data(physeq), "data.frame")
@@ -563,4 +611,224 @@ test_that("getPhyloIgSeq treats a non-existent ig_freq_name column as NA with a 
     "is not a column of sample_data"
   )
   expect_true(all(is.na(pis@ig_coating$prob_index)))
+})
+
+# ---- getPhyloIgSeq: two change axes, ma_coords slot, accessors ----
+
+test_that("getPhyloIgSeq stores one ma_coords block per requested change axis", {
+  # This fixture's made-up p/q leave a fifth of the taxa outside the admissible
+  # cone, which the run reports once; incidental to what is asserted here, and
+  # checked on its own below.
+  suppressWarnings(
+    pis <- run_long(
+      make_long_ig_freq_physeq(samples = c("sample_1", "sample_2")),
+      scores = c("slide_z", "purity_corrected_slide_z"),
+      confidence_levels = c(0.95, 0.99)
+    )
+  )
+
+  # Both scores are plain columns of ig_coating, so score_names/get_ig_score()
+  # and everything keyed off them keep working unchanged.
+  expect_true(all(
+    c("slide_z", "purity_corrected_slide_z") %in% pis@score_names
+  ))
+  expect_true(all(
+    c("slide_z", "purity_corrected_slide_z") %in% names(pis@ig_coating)
+  ))
+
+  coords <- ma_coords(pis)
+  expect_setequal(
+    unique(coords$change_transform),
+    c("log_ratio", "purity_corrected")
+  )
+  # One row per (sample, taxon) per axis, keyed the same way as ig_coating.
+  expect_equal(nrow(coords), 2 * nrow(pis@ig_coating))
+  expect_true(all(c("obs_in_cone", "null_in_cone") %in% names(coords)))
+
+  # The cone only exists on the purity-corrected axis.
+  log_ratio_block <- ma_coords(pis, "log_ratio")
+  purity_block <- ma_coords(pis, "purity_corrected")
+  expect_true(all(is.na(log_ratio_block$obs_in_cone)))
+  expect_false(all(is.na(purity_block$obs_in_cone)))
+
+  # Ellipses are labelled by axis too, so a consumer can draw the right ones.
+  expect_true("change_transform" %in% names(pis@ellipse_coords))
+  expect_setequal(
+    unique(pis@ellipse_coords$change_transform),
+    c("log_ratio", "purity_corrected")
+  )
+})
+
+test_that("getPhyloIgSeq no longer puts MA geometry in ig_coating", {
+  pis <- run_long(
+    make_long_ig_freq_physeq(samples = "sample_1"),
+    scores = "slide_z"
+  )
+  expect_false(any(
+    c(
+      "obs_change",
+      "obs_abundance",
+      "null_change",
+      "null_abundance",
+      "ellipse_level"
+    ) %in%
+      names(pis@ig_coating)
+  ))
+})
+
+test_that("purity_corrected_slide_z needs no presorting fraction, unlike the prob scores", {
+  physeq <- make_long_ig_freq_physeq(samples = c("sample_1", "sample_2"))
+  requested <- c(
+    "purity_corrected_slide_z",
+    "purity_corrected_prob_index",
+    "purity_corrected_prob_ratio"
+  )
+
+  # The pre-sort Ig+ frequency is only a prior on the purity-corrected change
+  # axis, and an additive constant at that, so the Z-score's centering removes
+  # it -- no presorting fraction required. The prob scores do need one, and each
+  # is gated (and so complains) separately, hence collecting every warning rather
+  # than expect_warning()'ing one and letting the other escape the test.
+  warnings_seen <- character(0)
+  withCallingHandlers(
+    pis <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      second_negative_fraction_name = "neg2",
+      ig_freq_name = "ig_pheno_fraction",
+      ig_freq_layout = "long",
+      scores = requested,
+      empirical_null_distribution = FALSE
+    ),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  dropped <- grep("^Cannot compute", warnings_seen, value = TRUE)
+  expect_true(any(grepl("purity_corrected_prob_index", dropped)))
+  expect_true(any(grepl("purity_corrected_prob_ratio", dropped)))
+  # Match the drop message specifically, not the score name anywhere: the
+  # out-of-cone report also names this score, and it is not a complaint about
+  # missing inputs.
+  expect_false(any(grepl("purity_corrected_slide_z", dropped)))
+
+  expect_true("purity_corrected_slide_z" %in% pis@score_names)
+  expect_false(any(
+    c("purity_corrected_prob_index", "purity_corrected_prob_ratio") %in%
+      pis@score_names
+  ))
+  expect_false(all(is.na(pis@ig_coating$purity_corrected_slide_z)))
+})
+
+test_that("purity_corrected_slide_z is dropped without the long ig_freq layout", {
+  physeq <- make_long_ig_freq_physeq(samples = "sample_1")
+
+  # This fixture's ig_freq column is deliberately per-fraction, so reading it as
+  # "wide" also warns that it varies within the sample -- incidental here, so
+  # collect every warning rather than let it escape the test.
+  warnings_seen <- character(0)
+  withCallingHandlers(
+    pis <- getPhyloIgSeq(
+      physeq = physeq,
+      sample_id_name = "sample_id",
+      fraction_id_name = "sorting_fraction",
+      positive_fraction_name = "pos",
+      first_negative_fraction_name = "neg1",
+      presorting_fraction_name = "whole",
+      ig_freq_name = "ig_pheno_fraction",
+      ig_freq_layout = "wide",
+      scores = c("slide_z", "purity_corrected_slide_z"),
+      empirical_null_distribution = FALSE
+    ),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true(any(grepl("purity_corrected_slide_z", warnings_seen)))
+  expect_false("purity_corrected_slide_z" %in% pis@score_names)
+  # The uncorrected axis survives, so the pipeline still produces geometry.
+  expect_equal(unique(ma_coords(pis)$change_transform), "log_ratio")
+})
+
+test_that("ig_fraction_names lists the abundance columns and nothing else", {
+  pis <- run_long(
+    make_long_ig_freq_physeq(samples = "sample_1"),
+    scores = c("slide_z", "palm")
+  )
+
+  fractions <- ig_fraction_names(pis)
+  expect_setequal(fractions, c("pos", "neg1", "neg2", "whole"))
+  # The point of the accessor: no identifier, score or diagnostic column leaks in
+  # the way a hand-maintained denylist over colnames(ig_coating) would let them.
+  expect_false(any(
+    c("taxon_id", "sample_id", "slide_z", "palm", "zeros_imputed") %in%
+      fractions
+  ))
+  expect_true(all(fractions %in% names(pis@ig_coating)))
+})
+
+test_that("ig_fraction_names follows the multi-positive-fraction rename", {
+  data("ps_phage_display", package = "PhyloIgSeq", envir = environment())
+  pis <- suppressWarnings(getPhyloIgSeq(
+    physeq = ps_phage_display,
+    sample_id_name = "sample_id",
+    fraction_id_name = "phage_fraction",
+    positive_fraction_name = c("round1", "round2"),
+    first_negative_fraction_name = "input",
+    scores = "palm"
+  ))
+
+  fractions <- ig_fraction_names(pis)
+  expect_true("positive_fraction_abundance" %in% fractions)
+  expect_false(any(c("round1", "round2") %in% fractions))
+  expect_true(all(fractions %in% names(pis@ig_coating)))
+})
+
+test_that("getPhyloIgSeq reports the out-of-cone rate once, cohort-wide", {
+  physeq <- make_long_ig_freq_physeq(
+    samples = c("sample_1", "sample_2", "sample_3")
+  )
+
+  warnings_seen <- character(0)
+  withCallingHandlers(
+    pis <- run_long(physeq, scores = "purity_corrected_slide_z"),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+
+  cone <- grep("admissible cone", warnings_seen, value = TRUE)
+  # Once for the whole run, not once per sample: the share across the cohort is
+  # the number that matters, and per-sample repeats would bury it.
+  expect_length(cone, 1)
+  expect_match(cone, "^[0-9]+% of the Ig\\+ vs Ig- pairs")
+  # It has to say what to do about it, or it is just noise.
+  expect_match(cone, "obs_in_cone")
+
+  # The reported share must match the slot it was computed from.
+  purity <- ma_coords(pis, "purity_corrected")
+  expected <- round(100 * mean(!purity$obs_in_cone, na.rm = TRUE))
+  expect_match(cone, paste0("^", expected, "%"))
+})
+
+test_that("no out-of-cone report when nothing was clamped", {
+  # A near-perfect sort leaves the whole cone open, so there is nothing to report.
+  physeq <- make_long_ig_freq_physeq(
+    presort = 0.40, pos = 0.999, neg = 0.001, samples = "sample_1"
+  )
+  warnings_seen <- character(0)
+  withCallingHandlers(
+    run_long(physeq, scores = "purity_corrected_slide_z"),
+    warning = function(w) {
+      warnings_seen <<- c(warnings_seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_length(grep("admissible cone", warnings_seen), 0)
 })

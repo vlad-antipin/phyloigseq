@@ -11,12 +11,14 @@ plot_slide_z(
   z_alpha2 = 1.96,
   signif_colors = c((ggsci::pal_npg())(2)[2], (ggsci::pal_npg())(2)[1]),
   ellipses = TRUE,
-  tooltip_max_chars = 40
+  tooltip_max_chars = 40,
+  change_transform = NULL
 )
 }
 \arguments{
-\item{phyloigseq_obj}{A \link[=PhyloIgSeq-class]{PhyloIgSeq} object with \code{"slide_z"} in \code{score_names} (i.e. built
-by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} with \code{"slide_z"} among \code{scores}).}
+\item{phyloigseq_obj}{A \link[=PhyloIgSeq-class]{PhyloIgSeq} object with a sliding Z-score in \code{score_names} (i.e.
+built by \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} with \code{"slide_z"} and/or \code{"purity_corrected_slide_z"} among
+\code{scores}).}
 
 \item{sample_ids}{Optional character vector of \code{sample_id}s to restrict/order the plot to;
 \code{NULL} (default) plots every sample in \code{ig_coating}, faceted by \code{sample_id} if there is more
@@ -39,18 +41,29 @@ two colors from \code{ggsci::pal_npg()}.}
 \item{tooltip_max_chars}{Single integer, the maximum number of characters of each \code{tax_table}
 value (e.g. \code{taxon_name}, which may be a full ASV/OTU sequence) shown in a point's hover
 tooltip before truncating with \code{"..."}. Default \code{40}.}
+
+\item{change_transform}{Which change axis to draw when the object carries more than one
+(\code{"log_ratio"} or \code{"purity_corrected"}). \code{NULL} (default) draws the only one present, or
+\code{"log_ratio"} when both are. Switching this needs no recomputation, since \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}
+stores every requested axis.}
 }
 \value{
 A \code{ggplot} object (one panel per \code{sample_id} if more than one is plotted).
 }
 \description{
-Draws the sliding-Z MA-plot for the sample(s) in a \code{PhyloIgSeq} object built with \code{"slide_z"}
-among its \code{scores}: log-abundance on the x-axis, log-ratio on the y-axis, colored/sized by
+Draws the sliding-Z MA-plot for the sample(s) in a \code{PhyloIgSeq} object built with a sliding
+Z-score among its \code{scores}: log-abundance on the x-axis, change on the y-axis, colored/sized by
 whether \verb{|slide_z|} exceeds \code{z_alpha2}. Optionally overlays the null distribution (empirical or
 theoretical, see \code{\link[=get_slide_z]{get_slide_z()}}) and the confidence ellipses from
 \code{phyloigseq_obj@ellipse_coords}. Taxa with an imputed zero (\code{phyloigseq_obj@imputed_taxa}) are
 drawn jittered just past the plot's x-range instead of at their (undefined) true abundance, as
 in \code{\link[=plot_ma]{plot_ma()}}.
+}
+\details{
+Geometry is read from the \code{ma_coords} slot rather than from \code{ig_coating}, and the score column
+is whichever member of \code{SLIDE_Z_SCORES} belongs to the chosen \code{change_transform}. Under
+\code{"purity_corrected"}, taxa the un-mixing had to clamp are drawn hollow at their true
+coordinates -- see \code{\link[=plot_ma]{plot_ma()}} for why they are not banished to the jitter band.
 }
 \examples{
 data(ps_igseq)

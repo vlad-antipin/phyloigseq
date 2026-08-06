@@ -12,7 +12,8 @@ compute_ig_score(
   pre = NULL,
   presort_ig_freq = NULL,
   pos_ig_freq = NULL,
-  neg_ig_freq = NULL
+  neg_ig_freq = NULL,
+  pool_prior = NULL
 )
 }
 \arguments{
@@ -41,6 +42,14 @@ fraction ("positive fraction purity"), P(real Ig+ | Ig+ fraction). Required by t
 \item{neg_ig_freq}{Single probability in \verb{[0, 1]}, the Ig+ frequency measured in the Ig-
 fraction ("negative fraction impurity"), P(real Ig+ | Ig- fraction). Required by the
 \verb{purity_corrected_*} methods.}
+
+\item{pool_prior}{Regularization of the un-mixed populations, read only by the
+\verb{purity_corrected_*} methods. \code{NULL} (default) derives one read's worth of composition
+mapped into pool space, \code{1/((pos_ig_freq - neg_ig_freq) * depth)}, which requires \code{pos} and
+\code{neg} to be raw counts -- relative abundances carry no read scale, and passing them warns
+and falls back to \code{0}. A number is used as given; \code{0} disables regularization and restores
+the bare clamp, in which a taxon placed entirely in one population scores 0 or 1 in the
+index and \code{NA} in the ratio. See Details.}
 }
 \value{
 A numeric vector of the same length as \code{pos}, one score per taxon. \code{NaN}/
@@ -80,20 +89,30 @@ sorted fractions and the three frequencies enter. This matters when the pre-sort
 is not the same material as the fractions -- e.g. sequenced without the debris-removal
 step that precedes sorting -- in which case dividing by it biases every taxon.
 \item The index is bounded in \verb{[0, 1]} by construction, and the ratio is exactly its logit, so
-the corrected pair holds the same relationship that \code{"prob_index"}/\code{"prob_ratio"} do. A
-taxon the un-mixing places entirely in one population scores 0 or 1, whose logit is
-infinite, so such taxa are \code{NA} in the ratio but retained in the index.
+the corrected pair holds the same relationship that \code{"prob_index"}/\code{"prob_ratio"} do.
 \item Nothing is assumed about how cells were \emph{partitioned} between the fractions, so a sort in
 which \code{presort_ig_freq} exceeds \code{pos_ig_freq} -- a positive selection that de-enriched --
 is scored normally rather than falling back to an uncorrected value. It does warn.
-\item At a perfect sort (\code{pos_ig_freq = 1}, \code{neg_ig_freq = 0}) the pair reduces exactly to
-\code{"prob_index"} and \code{"prob_ratio"}.
+\item At a perfect sort (\code{pos_ig_freq = 1}, \code{neg_ig_freq = 0}) and \code{pool_prior = 0} the pair
+reduces exactly to \code{"prob_index"} and \code{"prob_ratio"}.
 }
 
 The assumption both rest on is that the Ig+ cells reaching a fraction are a representative
 sample of the whole Ig+ population, i.e. that capture efficiency does not vary by taxon.
-Where it fails, \code{a_t} or \code{b_t} can come out negative; they are clamped at 0, the nearest
-admissible point, which makes the affected taxa score 0 or 1.
+Where it fails, \code{a_t} or \code{b_t} come out negative -- the taxon sits outside the \emph{admissible
+cone} \verb{pos_t/neg_t \\in [(1-p)/(1-q), p/q]}, the range any mixture of the two populations can
+produce. This is common rather than exceptional: a median of 41.5\% of taxa per sample on the
+SMILE cohort. Both bounds are attained at finite data (\code{p/q} is what a taxon reaches when it
+lives \emph{entirely} in the Ig+ population, i.e. infinite log-odds), so both the noisiest taxa and
+the most strongly coated ones escape.
+
+Such taxa are clamped at 0, the nearest admissible point, and then \strong{both pools are offset by
+\code{pool_prior}}. Bare clamping would score them 0 or 1 exactly, whose logit is infinite, making
+the ratio \code{NA} for precisely the most strongly coated taxa. The offset instead lets them
+saturate: finite, ordered, and shrunk toward the null by \code{O(pool_prior/a_t)}, so a rare taxon
+that escaped the cone on sampling noise is pulled back hard while an abundant, genuinely
+coated one barely moves. Because the offset is symmetric it does not disturb the model's fixed
+point -- \code{a_t = b_t} still gives an index of \code{P} and a ratio at the prior's logit.
 }
 \examples{
 pos <- c(50, 30, 20, 5)

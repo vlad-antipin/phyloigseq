@@ -111,7 +111,10 @@ row's own positive fraction.}
 
 \item{confidence_levels}{Optional. Confidence levels for scoring.}
 
-\item{scores}{Vector of score names to compute.}
+\item{scores}{Vector of score names to compute, from \link{IG_SCORES} (the default is all of
+them). A requested score whose inputs are not available -- a fraction it divides by, or
+the Ig+ frequency it weights with -- is dropped with a \code{warning()} rather than returned
+as an all-NA column, so \code{score_names} on the result lists what was actually computed.}
 
 \item{taxon_id_source}{How to derive the \code{taxon_id} used throughout \code{ig_coating}/\code{tax_table}:
 \code{"sequential"} (default) renumbers taxa as fresh sequential integers, recoverable via

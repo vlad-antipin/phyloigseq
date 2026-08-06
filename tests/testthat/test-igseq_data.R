@@ -336,7 +336,7 @@ test_that(".resolve_ig_freq_value warns when a value resolves to more than one r
   expect_true(is.na(result))
 })
 
-# ---- .resolve_ig_freqs ----
+# ---- resolve_ig_freqs ----
 
 make_ig_freq_metadata <- function(values = c(whole = 0.4, pos = 0.8, neg1 = 0.1, neg2 = 0.1)) {
   data.frame(
@@ -348,7 +348,7 @@ make_ig_freq_metadata <- function(values = c(whole = 0.4, pos = 0.8, neg1 = 0.1,
 }
 
 resolve <- function(metadata, layout, positive = "pos", ...) {
-  .resolve_ig_freqs(
+  resolve_ig_freqs(
     sam_metadata_df = metadata,
     fraction_id_name = "sorting_fraction",
     ig_freq_name = "ig_pheno",
@@ -363,7 +363,7 @@ resolve <- function(metadata, layout, positive = "pos", ...) {
   )
 }
 
-test_that(".resolve_ig_freqs reads one value per fraction under the long layout", {
+test_that("resolve_ig_freqs reads one value per fraction under the long layout", {
   result <- resolve(make_ig_freq_metadata(), "long")
 
   expect_equal(result$presort_ig_freq, 0.4)
@@ -372,7 +372,7 @@ test_that(".resolve_ig_freqs reads one value per fraction under the long layout"
   expect_equal(result$neg2_ig_freq, 0.1)
 })
 
-test_that(".resolve_ig_freqs follows the positive fraction it is asked for", {
+test_that("resolve_ig_freqs follows the positive fraction it is asked for", {
   metadata <- make_ig_freq_metadata(
     c(whole = 0.4, pos = 0.8, neg1 = 0.1, neg2 = 0.25)
   )
@@ -380,7 +380,7 @@ test_that(".resolve_ig_freqs follows the positive fraction it is asked for", {
   expect_equal(resolve(metadata, "long", positive = "neg2")$pos_ig_freq, 0.25)
 })
 
-test_that(".resolve_ig_freqs leaves a fraction NA when it has no row", {
+test_that("resolve_ig_freqs leaves a fraction NA when it has no row", {
   metadata <- make_ig_freq_metadata(c(whole = 0.4, pos = 0.8, neg1 = 0.1))
   result <- resolve(metadata, "long")
 
@@ -388,7 +388,7 @@ test_that(".resolve_ig_freqs leaves a fraction NA when it has no row", {
   expect_true(is.na(result$neg2_ig_freq))
 })
 
-test_that(".resolve_ig_freqs collapses to presort only under the wide layout", {
+test_that("resolve_ig_freqs collapses to presort only under the wide layout", {
   metadata <- make_ig_freq_metadata(
     c(whole = 0.3, pos = 0.3, neg1 = 0.3, neg2 = 0.3)
   )
@@ -401,7 +401,7 @@ test_that(".resolve_ig_freqs collapses to presort only under the wide layout", {
   expect_true(is.na(result$neg2_ig_freq))
 })
 
-test_that(".resolve_ig_freqs warns and gives up when a wide column varies by fraction", {
+test_that("resolve_ig_freqs warns and gives up when a wide column varies by fraction", {
   expect_warning(
     result <- resolve(make_ig_freq_metadata(), "wide"),
     'ig_freq_layout = "long"'
@@ -409,10 +409,10 @@ test_that(".resolve_ig_freqs warns and gives up when a wide column varies by fra
   expect_true(all(is.na(unlist(result))))
 })
 
-test_that(".resolve_ig_freqs returns all NA for a NULL or unknown ig_freq_name", {
+test_that("resolve_ig_freqs returns all NA for a NULL or unknown ig_freq_name", {
   metadata <- make_ig_freq_metadata()
 
-  result <- .resolve_ig_freqs(
+  result <- resolve_ig_freqs(
     sam_metadata_df = metadata,
     fraction_id_name = "sorting_fraction",
     ig_freq_name = NULL,
@@ -423,7 +423,7 @@ test_that(".resolve_ig_freqs returns all NA for a NULL or unknown ig_freq_name",
   expect_true(all(is.na(unlist(result))))
 
   expect_warning(
-    result <- .resolve_ig_freqs(
+    result <- resolve_ig_freqs(
       sam_metadata_df = metadata,
       fraction_id_name = "sorting_fraction",
       ig_freq_name = "no_such_column",

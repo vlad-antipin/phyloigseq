@@ -30,19 +30,29 @@
 #'   is not the same material as the fractions -- e.g. sequenced without the debris-removal
 #'   step that precedes sorting -- in which case dividing by it biases every taxon.
 #' * The index is bounded in `[0, 1]` by construction, and the ratio is exactly its logit, so
-#'   the corrected pair holds the same relationship that `"prob_index"`/`"prob_ratio"` do. A
-#'   taxon the un-mixing places entirely in one population scores 0 or 1, whose logit is
-#'   infinite, so such taxa are `NA` in the ratio but retained in the index.
+#'   the corrected pair holds the same relationship that `"prob_index"`/`"prob_ratio"` do.
 #' * Nothing is assumed about how cells were *partitioned* between the fractions, so a sort in
 #'   which `presort_ig_freq` exceeds `pos_ig_freq` -- a positive selection that de-enriched --
 #'   is scored normally rather than falling back to an uncorrected value. It does warn.
-#' * At a perfect sort (`pos_ig_freq = 1`, `neg_ig_freq = 0`) the pair reduces exactly to
-#'   `"prob_index"` and `"prob_ratio"`.
+#' * At a perfect sort (`pos_ig_freq = 1`, `neg_ig_freq = 0`) and `pool_prior = 0` the pair
+#'   reduces exactly to `"prob_index"` and `"prob_ratio"`.
 #'
 #' The assumption both rest on is that the Ig+ cells reaching a fraction are a representative
 #' sample of the whole Ig+ population, i.e. that capture efficiency does not vary by taxon.
-#' Where it fails, `a_t` or `b_t` can come out negative; they are clamped at 0, the nearest
-#' admissible point, which makes the affected taxa score 0 or 1.
+#' Where it fails, `a_t` or `b_t` come out negative -- the taxon sits outside the *admissible
+#' cone* `pos_t/neg_t \in [(1-p)/(1-q), p/q]`, the range any mixture of the two populations can
+#' produce. This is common rather than exceptional: a median of 41.5% of taxa per sample on the
+#' SMILE cohort. Both bounds are attained at finite data (`p/q` is what a taxon reaches when it
+#' lives *entirely* in the Ig+ population, i.e. infinite log-odds), so both the noisiest taxa and
+#' the most strongly coated ones escape.
+#'
+#' Such taxa are clamped at 0, the nearest admissible point, and then **both pools are offset by
+#' `pool_prior`**. Bare clamping would score them 0 or 1 exactly, whose logit is infinite, making
+#' the ratio `NA` for precisely the most strongly coated taxa. The offset instead lets them
+#' saturate: finite, ordered, and shrunk toward the null by `O(pool_prior/a_t)`, so a rare taxon
+#' that escaped the cone on sampling noise is pulled back hard while an abundant, genuinely
+#' coated one barely moves. Because the offset is symmetric it does not disturb the model's fixed
+#' point -- `a_t = b_t` still gives an index of `P` and a ratio at the prior's logit.
 #'
 #' @param method One of `"palm"`, `"kau"`, `"prob_index"`, `"prob_ratio"`,
 #'   `"purity_corrected_prob_index"`, `"purity_corrected_prob_ratio"`. See Details.
@@ -63,6 +73,13 @@
 #' @param neg_ig_freq Single probability in `[0, 1]`, the Ig+ frequency measured in the Ig-
 #'   fraction ("negative fraction impurity"), P(real Ig+ | Ig- fraction). Required by the
 #'   `purity_corrected_*` methods.
+#' @param pool_prior Regularization of the un-mixed populations, read only by the
+#'   `purity_corrected_*` methods. `NULL` (default) derives one read's worth of composition
+#'   mapped into pool space, `1/((pos_ig_freq - neg_ig_freq) * depth)`, which requires `pos` and
+#'   `neg` to be raw counts -- relative abundances carry no read scale, and passing them warns
+#'   and falls back to `0`. A number is used as given; `0` disables regularization and restores
+#'   the bare clamp, in which a taxon placed entirely in one population scores 0 or 1 in the
+#'   index and `NA` in the ratio. See Details.
 #'
 #' @return A numeric vector of the same length as `pos`, one score per taxon. `NaN`/
 #'   infinite values (e.g. from a zero-abundance taxon in a denominator) are converted to
@@ -102,7 +119,9 @@ compute_ig_score <- function(
   # each measured in one specific fraction:
   presort_ig_freq = NULL, # P(real Ig+) - measured before sorting
   pos_ig_freq = NULL, # P(real Ig+ | Ig+ fraction) - "positive fraction purity"
-  neg_ig_freq = NULL # P(real Ig+ | Ig- fraction) - "negative fraction impurity"
+  neg_ig_freq = NULL, # P(real Ig+ | Ig- fraction) - "negative fraction impurity"
+  # Regularization of the un-mixed pools; only the purity-corrected methods read it.
+  pool_prior = NULL # NULL = one read's worth, derived from the read depth
 ) {
   method <- match.arg(method)
 
@@ -168,6 +187,31 @@ compute_ig_score <- function(
     )
   }
 
+  # Regularization of the un-mixed pools, resolved once so both purity-corrected
+  # branches share it. Only they read it. Derived from the read scale, which
+  # relative-abundance input does not carry -- hence the warning rather than a
+  # silent fallback, since a caller asking for the default expects regularization.
+  resolved_pool_prior <- 0
+  if (grepl("^purity_corrected_", method)) {
+    resolved_pool_prior <- .resolve_pool_prior(
+      pool_prior = pool_prior,
+      pos = pos,
+      neg = neg,
+      pos_ig_freq = pos_ig_freq,
+      neg_ig_freq = neg_ig_freq
+    )
+    if (is.na(resolved_pool_prior)) {
+      warning(
+        "Cannot derive the default `pool_prior` because `pos`/`neg` are already ",
+        "compositional, so they carry no read scale. Falling back to 0, which ",
+        "leaves a taxon the un-mixing places entirely in one population at 0/1 in ",
+        "the index and NA in the ratio. Pass counts, or set `pool_prior` ",
+        "explicitly.\n"
+      )
+      resolved_pool_prior <- 0
+    }
+  }
+
   score <- switch(
     method,
     palm = pos_abund / neg_abund,
@@ -181,17 +225,30 @@ compute_ig_score <- function(
     ),
     purity_corrected_prob_index = {
       # P(real Ig+ | taxon) = P * a_t / (P * a_t + (1 - P) * b_t)
-      pools <- .unmix_ig_pools(pos_abund, neg_abund, pos_ig_freq, neg_ig_freq)
+      pools <- .unmix_ig_pools(
+        pos_abund,
+        neg_abund,
+        pos_ig_freq,
+        neg_ig_freq,
+        pool_prior = resolved_pool_prior
+      )
       ig_pos_mass <- presort_ig_freq * pools$ig_pos
       ig_neg_mass <- (1 - presort_ig_freq) * pools$ig_neg
-      # 0/0 for a taxon clamped to zero in BOTH populations (absent from both
-      # fractions); becomes NA at the end, as for the other scores.
+      # 0/0 only reachable at pool_prior = 0, for a taxon clamped to zero in BOTH
+      # populations (absent from both fractions); becomes NA at the end, as for
+      # the other scores.
       ig_pos_mass / (ig_pos_mass + ig_neg_mass)
     },
     purity_corrected_prob_ratio = {
       # Exactly the base-2 logit of the index above, since
       # score / (1 - score) = P * a_t / ((1 - P) * b_t).
-      pools <- .unmix_ig_pools(pos_abund, neg_abund, pos_ig_freq, neg_ig_freq)
+      pools <- .unmix_ig_pools(
+        pos_abund,
+        neg_abund,
+        pos_ig_freq,
+        neg_ig_freq,
+        pool_prior = resolved_pool_prior
+      )
       log2(
         presort_ig_freq *
           pools$ig_pos /
@@ -215,18 +272,32 @@ compute_ig_score <- function(
 #' @param pos_abund,neg_abund Relative abundances in the Ig+ / Ig- fractions, one per taxon.
 #' @param pos_ig_freq,neg_ig_freq The Ig+ frequency measured in each of those two fractions
 #'   (`p` and `q`).
+#' @param pool_prior Single non-negative number added to both clamped pools, in the same
+#'   (relative-abundance) units as `pos_abund`. `0` (default) reproduces the bare clamp. See
+#'   [compute_ig_score()]'s Details for why a read-scale value is the useful choice.
 #'
-#' @return A list with `ig_pos` and `ig_neg`, the two populations' compositions, each the same
-#'   length as `pos_abund`. Both are clamped at 0: a negative solution means the taxon sits
-#'   outside the range any mixture of the two populations can produce, and 0 is the nearest
-#'   admissible value. Returns all-`NA` when a frequency is missing or when `p <= q`, i.e. the
-#'   fractions are not separated and the system is singular.
+#' @return A list with `ig_pos`, `ig_neg` and `in_cone`, each the same length as `pos_abund`.
+#'   The two pools are clamped at 0 and then offset by `pool_prior`: a negative solution means
+#'   the taxon sits outside the range any mixture of the two populations can produce, and 0 is
+#'   the nearest admissible value. `in_cone` records, per taxon, whether *no* clamping was
+#'   needed, i.e. whether the taxon is admissible under the mixture model at all. Pools are
+#'   all-`NA` when a frequency is missing or when `p <= q`, i.e. the fractions are not separated
+#'   and the system is singular.
 #' @noRd
-.unmix_ig_pools <- function(pos_abund, neg_abund, pos_ig_freq, neg_ig_freq) {
+.unmix_ig_pools <- function(
+  pos_abund,
+  neg_abund,
+  pos_ig_freq,
+  neg_ig_freq,
+  pool_prior = 0
+) {
   separation <- pos_ig_freq - neg_ig_freq
   if (!isTRUE(is.finite(separation) && separation > 0)) {
     na_vec <- rep(NA_real_, length(pos_abund))
-    return(list(ig_pos = na_vec, ig_neg = na_vec))
+    return(list(ig_pos = na_vec, ig_neg = na_vec, in_cone = rep(NA, length(pos_abund))))
+  }
+  if (!isTRUE(is.finite(pool_prior) && pool_prior >= 0)) {
+    pool_prior <- 0
   }
 
   ig_pos <- ((1 - neg_ig_freq) * pos_abund - (1 - pos_ig_freq) * neg_abund) /
@@ -234,9 +305,112 @@ compute_ig_score <- function(
   ig_neg <- (pos_ig_freq * neg_abund - neg_ig_freq * pos_abund) / separation
 
   # Clamping keeps the score a probability. Not cosmetic: on real data a sizeable
-  # share of taxa fall outside the admissible cone, which is the signature of a
-  # taxon-dependent capture efficiency the model does not represent.
-  list(ig_pos = pmax(ig_pos, 0), ig_neg = pmax(ig_neg, 0))
+  # share of taxa fall outside the admissible cone (median 41.5% of taxa on the
+  # SMILE cohort), which is the signature of a taxon-dependent capture efficiency
+  # the model does not represent.
+  #
+  # `pool_prior` is then added to *both* pools. Symmetry matters: it keeps the
+  # model's fixed point exact, since ig_pos == ig_neg still gives a ratio of 1
+  # whatever the prior, so an uncoated taxon still scores as uncoated. It also
+  # keeps the log-ratio finite for a taxon clamped into one population, whose
+  # log-odds would otherwise be infinite -- those are the most strongly coated
+  # taxa, so dropping them as NA would discard the signal the score exists to find.
+  list(
+    ig_pos = pmax(ig_pos, 0) + pool_prior,
+    ig_neg = pmax(ig_neg, 0) + pool_prior,
+    # The two clamps can never both fire: (1-p)/(1-q) < p/q whenever p > q.
+    in_cone = !is.na(ig_pos) & !is.na(ig_neg) & ig_pos >= 0 & ig_neg >= 0
+  )
+}
+
+
+#' Derive a Read-Scale Pool Prior
+#'
+#' Resolves the `pool_prior` used by `.unmix_ig_pools()`. `NULL` means "derive one read's worth
+#' of composition, mapped through the un-mixing into pool space": one read is `1/depth` in
+#' relative-abundance units, and the un-mixing divides by `p - q`, so the pool-space equivalent
+#' is `reads / ((p - q) * depth)`.
+#'
+#' @param pool_prior `NULL` to derive, or a non-negative number to use as given (`0` disables).
+#' @param pos,neg The fraction vectors, needed for the read scale. Compositional input (totals
+#'   of 1) carries no read scale, so a prior cannot be derived from it; fractional counts left
+#'   by zero imputation are fine, since their totals are still the sequencing depth.
+#' @param pos_ig_freq,neg_ig_freq `p` and `q`.
+#' @param reads How many reads' worth to use. 1 is the resolution of the data.
+#'
+#' @return A single non-negative number, or `NA_real_` when `pool_prior` is `NULL` and no read
+#'   scale is available (compositional input or zero depth). Callers decide whether `NA_real_`
+#'   warrants a warning.
+#' @noRd
+.resolve_pool_prior <- function(
+  pool_prior,
+  pos,
+  neg,
+  pos_ig_freq,
+  neg_ig_freq,
+  reads = 1
+) {
+  if (!is.null(pool_prior)) {
+    if (!isTRUE(is.finite(pool_prior) && pool_prior >= 0)) {
+      warning(
+        "`pool_prior` must be a single non-negative number; using 0 ",
+        "(no regularization of the un-mixed pools).\n"
+      )
+      return(0)
+    }
+    return(pool_prior)
+  }
+
+  separation <- pos_ig_freq - neg_ig_freq
+  if (!isTRUE(is.finite(separation) && separation > 0)) {
+    # Singular sort: the pools are all-NA anyway, so the prior is irrelevant.
+    return(0)
+  }
+  depth <- min(sum(pos, na.rm = TRUE), sum(neg, na.rm = TRUE))
+  if (!isTRUE(is.finite(depth) && depth > 0)) {
+    return(NA_real_)
+  }
+  # The test is for a read *scale*, not for integrality. Zero imputation leaves
+  # abundances fractional (`pseudo_count` adds min(nonzero)/2) while the totals
+  # stay at the sequencing depth, so requiring whole numbers here would reject
+  # exactly the imputed data this regularization matters most for. A fraction
+  # total of ~1, on the other hand, means the abundances are already
+  # compositional and no read scale survives.
+  if (isTRUE(all.equal(depth, 1))) {
+    return(NA_real_)
+  }
+  reads / (separation * depth)
+}
+
+
+# Legend keys shared by plot_slide_z() and plot_ma(). Kept as constants so the two
+# plots label the same thing the same way, and so the level names used to build the
+# factors can never drift from the names used in the scales.
+.NS_LABEL <- "ns"
+.SIGNIF_LABEL <- "signif"
+.NULL_SERIES_LABEL <- "null"
+.IN_CONE_LABEL <- "inside admissible cone"
+.OUT_OF_CONE_LABEL <- "outside cone (change saturated)"
+
+
+#' Label Sliding Z-Scores as Significant or Not
+#'
+#' Top-level rather than a closure inside [plot_slide_z()] on purpose. A closure defined
+#' in that function would capture its frame, which also holds the accumulating `plt`, so
+#' saving the returned plot would serialize the whole thing a second time -- measured at
+#' ~12 MB before this was hoisted out.
+#'
+#' @param z Numeric vector of sliding Z-scores.
+#' @param z_alpha2 Two-tailed significance threshold.
+#'
+#' @return Character vector of `.NS_LABEL`/`.SIGNIF_LABEL`, `NA` where `z` is `NA`.
+#' @noRd
+.signif_label <- function(z, z_alpha2) {
+  ifelse(
+    is.na(z),
+    NA_character_,
+    ifelse(z >= z_alpha2 | z <= -z_alpha2, .SIGNIF_LABEL, .NS_LABEL)
+  )
 }
 
 
@@ -255,6 +429,37 @@ compute_ig_score <- function(
 .jitter_offset <- function(values) {
   jitter_width <- diff(range(values)) / 6
   list(width = jitter_width, x = min(values) - jitter_width * 3)
+}
+
+#' Log-Abundance Axis Breaks, None Below Zero
+#'
+#' Shared by [plot_slide_z()] and [plot_ma()]. Their x axis is
+#' `log10(a) + log10(b)`, so it only reaches negative values when a taxon carries
+#' less than one read's worth of signal in a fraction -- normally an artefact
+#' rather than a measurement, and the region is occupied mostly by the off-axis
+#' band `.jitter_offset()` parks imputed taxa in, which sits below `min(A)` by
+#' construction and is not an abundance at all.
+#'
+#' Only the *breaks* are dropped: the limits are left alone, so no point is
+#' clipped and the parked band stays visible where it is, just without tick
+#' labels implying it sits at a real abundance.
+#'
+#' Backs off when the negative side is where the data actually is, rather than
+#' leaving an unlabelled axis. `transform_by_sample = "compositional"` is the
+#' case that matters: fractions are all below 1, so every `A` is negative and
+#' legitimately so. Fewer than two surviving breaks means the axis is not the
+#' counts-with-a-parked-band shape this rule is for, and the defaults are kept.
+#'
+#' @param limits The axis limits ggplot2 passes to a `breaks` function.
+#'
+#' @return The default breaks for `limits`, minus any negative one -- or all of
+#'   them unchanged when dropping the negatives would leave too few to read.
+#' @noRd
+.nonnegative_abundance_breaks <- function(limits) {
+  breaks <- scales::extended_breaks()(limits)
+  breaks <- breaks[!is.na(breaks)]
+  kept <- breaks[breaks >= 0]
+  if (length(kept) < 2) breaks else kept
 }
 
 #' Truncate Long Values for a ggplot Hover Tooltip
@@ -336,16 +541,22 @@ compute_ig_score <- function(
 
 #' Plot Sliding Z-Scores
 #'
-#' Draws the sliding-Z MA-plot for the sample(s) in a `PhyloIgSeq` object built with `"slide_z"`
-#' among its `scores`: log-abundance on the x-axis, log-ratio on the y-axis, colored/sized by
+#' Draws the sliding-Z MA-plot for the sample(s) in a `PhyloIgSeq` object built with a sliding
+#' Z-score among its `scores`: log-abundance on the x-axis, change on the y-axis, colored/sized by
 #' whether `|slide_z|` exceeds `z_alpha2`. Optionally overlays the null distribution (empirical or
 #' theoretical, see [get_slide_z()]) and the confidence ellipses from
 #' `phyloigseq_obj@ellipse_coords`. Taxa with an imputed zero (`phyloigseq_obj@imputed_taxa`) are
 #' drawn jittered just past the plot's x-range instead of at their (undefined) true abundance, as
 #' in [plot_ma()].
 #'
-#' @param phyloigseq_obj A [PhyloIgSeq-class] object with `"slide_z"` in `score_names` (i.e. built
-#'   by [getPhyloIgSeq()] with `"slide_z"` among `scores`).
+#' Geometry is read from the `ma_coords` slot rather than from `ig_coating`, and the score column
+#' is whichever member of `SLIDE_Z_SCORES` belongs to the chosen `change_transform`. Under
+#' `"purity_corrected"`, taxa the un-mixing had to clamp are drawn hollow at their true
+#' coordinates -- see [plot_ma()] for why they are not banished to the jitter band.
+#'
+#' @param phyloigseq_obj A [PhyloIgSeq-class] object with a sliding Z-score in `score_names` (i.e.
+#'   built by [getPhyloIgSeq()] with `"slide_z"` and/or `"purity_corrected_slide_z"` among
+#'   `scores`).
 #' @param sample_ids Optional character vector of `sample_id`s to restrict/order the plot to;
 #'   `NULL` (default) plots every sample in `ig_coating`, faceted by `sample_id` if there is more
 #'   than one.
@@ -362,6 +573,10 @@ compute_ig_score <- function(
 #' @param tooltip_max_chars Single integer, the maximum number of characters of each `tax_table`
 #'   value (e.g. `taxon_name`, which may be a full ASV/OTU sequence) shown in a point's hover
 #'   tooltip before truncating with `"..."`. Default `40`.
+#' @param change_transform Which change axis to draw when the object carries more than one
+#'   (`"log_ratio"` or `"purity_corrected"`). `NULL` (default) draws the only one present, or
+#'   `"log_ratio"` when both are. Switching this needs no recomputation, since [getPhyloIgSeq()]
+#'   stores every requested axis.
 #'
 #' @return A `ggplot` object (one panel per `sample_id` if more than one is plotted).
 #'
@@ -389,13 +604,72 @@ plot_slide_z <- function(
   z_alpha2 = 1.96,
   signif_colors = c(ggsci::pal_npg()(2)[2], ggsci::pal_npg()(2)[1]),
   ellipses = TRUE,
-  tooltip_max_chars = 40
+  tooltip_max_chars = 40,
+  change_transform = NULL
 ) {
-  ig_df <- phyloigseq_obj@ig_coating
+  # Geometry lives in the `ma_coords` slot, long in `change_transform`; the score
+  # itself is a column of `ig_coating`. Draw exactly one axis, and take the score
+  # that belongs to it.
+  coords <- phyloigseq_obj@ma_coords
+  if (is.null(coords) || prod(dim(coords)) == 0) {
+    stop(
+      "This PhyloIgSeq object carries no MA coordinates, so there is no sliding ",
+      "Z-score to plot. Rebuild it with a sliding Z-score among `scores` (",
+      paste0("\"", names(SLIDE_Z_SCORES), "\"", collapse = ", "),
+      ").",
+      call. = FALSE
+    )
+  }
+  change_transform <- .pick_change_transform(
+    change_transform,
+    coords$change_transform
+  )
+  ig_df <- ma_coords(phyloigseq_obj, change_transform)
+
+  score_name <- names(SLIDE_Z_SCORES)[
+    SLIDE_Z_SCORES == (change_transform %||% "log_ratio")
+  ]
+  score_name <- intersect(score_name, colnames(phyloigseq_obj@ig_coating))
+  if (length(score_name) == 0) {
+    stop(
+      "No sliding Z-score column matching `change_transform = \"",
+      change_transform,
+      "\"` is present in `ig_coating`.",
+      call. = FALSE
+    )
+  }
+  ig_df <- merge(
+    ig_df,
+    phyloigseq_obj@ig_coating[, c("sample_id", "taxon_id", score_name[1])],
+    by = c("sample_id", "taxon_id"),
+    all.x = TRUE
+  )
+  ig_df$slide_z <- ig_df[[score_name[1]]]
+
   ellipse_df <- phyloigseq_obj@ellipse_coords
+  if (
+    !is.null(ellipse_df) &&
+      prod(dim(ellipse_df)) != 0 &&
+      !is.null(ellipse_df$change_transform) &&
+      !is.null(change_transform)
+  ) {
+    ellipse_df <- ellipse_df[
+      as.character(ellipse_df$change_transform) == change_transform,
+    ]
+  }
+
   if (
     empirical_null_distribution &
       !all(c("null_abundance", "null_change") %in% colnames(ig_df))
+  ) {
+    warning(
+      "No MA coordinates to plot empirical null distribution are furnished, using observed pos-neg distribution as null distribution...\n"
+    )
+    empirical_null_distribution <- FALSE
+  }
+  if (
+    empirical_null_distribution &&
+      all(is.na(ig_df$null_change))
   ) {
     warning(
       "No MA coordinates to plot empirical null distribution are furnished, using observed pos-neg distribution as null distribution...\n"
@@ -428,65 +702,182 @@ plot_slide_z <- function(
 
   is_imputed <- paste(ig_df$sample_id, ig_df$taxon_id) %in%
     .imputed_taxa_lookup(phyloigseq_obj@imputed_taxa)
+  # Out-of-cone taxa under the purity-corrected axis: their abundance is real and
+  # only their change value is saturated, so unlike imputed taxa they stay at
+  # their true coordinates and are marked hollow instead.
+  is_saturated <- !is_imputed &
+    !is.na(ig_df$obs_in_cone) &
+    !ig_df$obs_in_cone
 
+  # Two point populations, each drawn once. Imputed taxa go to the off-axis band
+  # (their abundance is an artefact of the pseudocount); everything else is drawn
+  # at its true coordinates, with the un-mixing's verdict carried by point shape
+  # rather than by a second layer painted over the first.
   ig_df_imputed <- ig_df[is_imputed, , drop = FALSE]
+  # Saturated taxa stay in here: only their *change* value is unusable, their
+  # abundance and their Ig-.1 vs Ig-.2 pair are generally fine, so excluding them
+  # would silently delete their null points and shift the jitter offset.
   ig_df <- ig_df[!is_imputed, , drop = FALSE]
+  ig_df$cone_status <- factor(
+    ifelse(is_saturated[!is_imputed], .OUT_OF_CONE_LABEL, .IN_CONE_LABEL),
+    levels = c(.IN_CONE_LABEL, .OUT_OF_CONE_LABEL)
+  )
+  ig_df$null_cone_status <- factor(
+    ifelse(
+      !is.na(ig_df$null_in_cone) & !ig_df$null_in_cone,
+      .OUT_OF_CONE_LABEL,
+      .IN_CONE_LABEL
+    ),
+    levels = c(.IN_CONE_LABEL, .OUT_OF_CONE_LABEL)
+  )
+  # The null series only counts when it is actually drawn, or a layer that never
+  # made it onto the plot can summon a legend key for a shape nothing uses.
+  any_saturated <- any(ig_df$cone_status == .OUT_OF_CONE_LABEL) ||
+    (empirical_null_distribution &&
+      any(ig_df$null_cone_status == .OUT_OF_CONE_LABEL))
 
-  stat_imputed <- ifelse(
-    ig_df_imputed$slide_z >= z_alpha2 | ig_df_imputed$slide_z <= -z_alpha2,
-    "signif",
-    "ns"
-  )
-  stat <- ifelse(
-    ig_df$slide_z >= z_alpha2 | ig_df$slide_z <= -z_alpha2,
-    "signif",
-    "ns"
-  )
+  # TODO(plot size): this function serializes large -- ~6.5 MB before the change
+  # axis work, ~8.6 MB after, on a 2-sample object. aes() captures this frame, and
+  # every layer keeps a reference to it, so each saved plot drags along
+  # `phyloigseq_obj` and the accumulating `plt`. The app's materialize_ggplot()
+  # does NOT help here (measured: 14103 KB before and after), unlike on the
+  # exploration plot where it collapsed ~27 MB to ~0.6 MB -- so this is a
+  # different leak from the promise-capture one it was written for.
+  # The fix is to move the whole ggplot chain into a dedicated top-level builder
+  # taking only the two data frames and small scalars, with every aes() reference
+  # a data column rather than a free variable. Deliberately out of scope here.
+  # plot_ma() has the same shape and would want the same treatment.
+  stat <- .signif_label(ig_df$slide_z, z_alpha2)
+  stat_imputed <- .signif_label(ig_df_imputed$slide_z, z_alpha2)
+  # Fold the null (Ig-.1 vs Ig-.2) points into the same colour scale, so they get
+  # a legend key instead of being an unexplained grey cloud.
+  stat_null <- rep(.NULL_SERIES_LABEL, nrow(ig_df))
+  stat_null_imputed <- rep(.NULL_SERIES_LABEL, nrow(ig_df_imputed))
 
   plt <- ggplot(ig_df)
 
   jitter <- .jitter_offset(c(ig_df$null_abundance, ig_df$obs_abundance))
   jitter_width <- jitter$width
   jitter_x <- jitter$x
-  plt <- plt +
-    geom_jitter(
-      data = ig_df_imputed,
-      aes(x = jitter_x, y = null_change, text = tooltip),
-      color = "darkgray",
-      alpha = 0.6,
-      position = position_jitter(width = jitter_width, height = 0)
-    ) +
-    geom_jitter(
-      data = ig_df_imputed,
-      aes(
-        x = jitter_x,
-        y = obs_change,
-        size = stat_imputed,
-        color = stat_imputed,
-        # shape = stat_imputed,
-        text = tooltip
-      ),
-      alpha = 0.8,
-      position = position_jitter(width = jitter_width, height = 0)
-    )
+
+  if (nrow(ig_df_imputed) > 0) {
+    plt <- plt +
+      geom_jitter(
+        data = ig_df_imputed,
+        aes(
+          x = jitter_x,
+          y = null_change,
+          color = stat_null_imputed,
+          text = tooltip
+        ),
+        alpha = 0.6,
+        position = position_jitter(width = jitter_width, height = 0)
+      ) +
+      geom_jitter(
+        data = ig_df_imputed,
+        aes(
+          x = jitter_x,
+          y = obs_change,
+          size = stat_imputed,
+          color = stat_imputed,
+          text = tooltip
+        ),
+        alpha = 0.8,
+        position = position_jitter(width = jitter_width, height = 0)
+      )
+  }
 
   if (empirical_null_distribution) {
     plt <- plt +
       geom_point(
-        aes(x = null_abundance, y = null_change, text = tooltip),
-        color = "darkgrey",
+        aes(
+          x = null_abundance,
+          y = null_change,
+          color = stat_null,
+          shape = null_cone_status,
+          text = tooltip
+        ),
         alpha = 0.6
       )
   }
 
   plt <- plt +
     geom_point(
-      aes(obs_abundance, obs_change, size = stat, color = stat, text = tooltip),
+      aes(
+        obs_abundance,
+        obs_change,
+        size = stat,
+        color = stat,
+        shape = cone_status,
+        text = tooltip
+      ),
       alpha = 0.8
+    )
+
+  plt <- plt +
+    scale_color_manual(
+      name = NULL,
+      values = c(
+        stats::setNames(signif_colors, c(.NS_LABEL, .SIGNIF_LABEL)),
+        stats::setNames("darkgrey", .NULL_SERIES_LABEL)
+      ),
+      breaks = c(.NS_LABEL, .SIGNIF_LABEL, .NULL_SERIES_LABEL),
+      labels = c(
+        stats::setNames(
+          c(
+            paste0("Ig+ vs Ig-  |Z| ≤ ", z_alpha2),
+            paste0("Ig+ vs Ig-  |Z| > ", z_alpha2)
+          ),
+          c(.NS_LABEL, .SIGNIF_LABEL)
+        ),
+        stats::setNames(
+          "Ig-.1 vs Ig-.2 (null)",
+          .NULL_SERIES_LABEL
+        )
+      ),
+      na.translate = FALSE
     ) +
-    # ggsci::scale_color_npg()+
-    scale_color_manual(values = signif_colors) +
-    scale_size_discrete(range = c(1.5, 3))
+    scale_shape_manual(
+      name = NULL,
+      values = stats::setNames(c(16, 1), c(.IN_CONE_LABEL, .OUT_OF_CONE_LABEL)),
+      drop = FALSE
+    ) +
+    scale_size_discrete(range = c(1.5, 3), guide = "none") +
+    guides(
+      color = guide_legend(order = 1, override.aes = list(shape = 16, size = 2.5)),
+      # The shape channel only says anything when the un-mixing actually clamped
+      # something, i.e. on the purity-corrected axis; without a correction every
+      # point is filled and the key is noise. It has to be dropped here and not
+      # via `scale_shape_manual(guide = "none")`, since `guides()` overrides the
+      # scale's own guide and would put the key back.
+      shape = if (any_saturated) {
+        guide_legend(order = 2, override.aes = list(color = "grey30", size = 2.5))
+      } else {
+        "none"
+      }
+    )
+
+  # A dashed divider and a bare name for the off-axis band, so the cluster parked
+  # to the left of the data does not read as real taxa at an impossibly low
+  # abundance. What "zero-imputed" means for interpretation is explained by the
+  # caller (the app's Sliding Z tab), not painted onto the panel.
+  if (nrow(ig_df_imputed) > 0) {
+    plt <- plt +
+      geom_vline(
+        xintercept = jitter_x + 2 * jitter_width,
+        color = "grey60",
+        linetype = 3
+      ) +
+      annotate(
+        "text",
+        x = jitter_x,
+        y = Inf,
+        label = "zero-imputed",
+        vjust = 1.5,
+        size = 2.4,
+        color = "grey35"
+      )
+  }
 
   if (nrow(ellipse_df) > 0 & ellipses) {
     plt <- plt +
@@ -523,22 +914,33 @@ plot_slide_z <- function(
         fraction2,
         "\\right)$"
       )),
-      y = latex2exp::TeX(paste0(
-        "Log-Ratio: $\\log_{2}\\left(\\frac{\\",
-        fraction1,
-        "}{\\",
-        fraction2,
-        "}\\right)$"
-      )),
+      y = if (identical(change_transform, "purity_corrected")) {
+        .change_axis_label(change_transform)
+      } else {
+        latex2exp::TeX(paste0(
+          "Log-Ratio: $\\log_{2}\\left(\\frac{\\",
+          fraction1,
+          "}{\\",
+          fraction2,
+          "}\\right)$"
+        ))
+      },
       color = paste0("|sliding Z| >", z_alpha2),
       size = paste0("|sliding Z| >", z_alpha2),
       title = paste0(
         "Sliding Z Score",
+        if (identical(change_transform, "purity_corrected")) {
+          " (purity-corrected)"
+        },
         if (length(sample_id_levels) == 1) {
           paste0(" of ", sample_id_levels)
         }
       )
+      # No subtitle spelling out what the hollow points mean: the shape legend
+      # names them, `getPhyloIgSeq()` already warns with the count, and the
+      # interpretation belongs in the caller's UI rather than in the image.
     ) +
+    scale_x_continuous(breaks = .nonnegative_abundance_breaks) +
     .plot_title_theme()
   return(plt)
 }
@@ -555,6 +957,7 @@ plot_slide_z <- function(
 .ig_score_boundary <- function(score_name, z_alpha2) {
   switch(
     score_name,
+    purity_corrected_slide_z = ,
     slide_z = list(
       left_lim = -z_alpha2,
       right_lim = z_alpha2,
@@ -947,7 +1350,8 @@ plot_slide_z <- function(
 #'   within each taxon (`taxrank_score` level) and then across samples, or simultaneously across
 #'   both dimensions. Only matters when `score_agglom_fn = "median"` (non-linear); with `"mean"`
 #'   all three give the same result.
-#' @param z_alpha2 Two-tailed significance threshold; only used when `score_name == "slide_z"`.
+#' @param z_alpha2 Two-tailed significance threshold; only used for the sliding Z-scores
+#'   (`names(SLIDE_Z_SCORES)`).
 #' @param exclude_na Logical. Drop rows with `NA` `score_name` values before plotting.
 #' @param transpose Logical. Flip the taxon/group axes (`coord_flip()`).
 #' @param signif_colors Length-2 color vector, `c(high, low)`, for points/boundary crossings.
@@ -958,11 +1362,11 @@ plot_slide_z <- function(
 #'
 #' @details
 #' `score_name`'s plotting boundary (significance thresholds, color-scale midpoint, and legal
-#' value range) is looked up internally for the 5 names in `IG_SCORES` (`"slide_z"`, `"kau"`,
-#' `"prob_ratio"`, `"palm"`, `"prob_index"`) and errors for any other `score_name` — this covers
-#' every score currently produced by [getPhyloIgSeq()]/[compute_ig_score()], but a custom/future
-#' score name needs its own boundary added internally (`.ig_score_boundary()`) before it can be
-#' plotted here.
+#' value range) is looked up internally for every name in `IG_SCORES` and errors for any other
+#' `score_name` — so this covers every score currently produced by
+#' [getPhyloIgSeq()]/[compute_ig_score()]/[get_slide_z()], but a custom/future score name needs
+#' its own boundary added internally (`.ig_score_boundary()`) before it can be plotted here. Each
+#' `purity_corrected_*` score shares the boundary of its uncorrected counterpart.
 #'
 #' @return A `ggplot` object.
 #'
@@ -999,7 +1403,7 @@ plot_ig_score <- function(
   score_agglom_fn <- match.arg(score_agglom_fn)
   first_score_agglom_for_each <- match.arg(first_score_agglom_for_each)
 
-  if (score_name == "slide_z" && is.null(z_alpha2)) {
+  if (score_name %in% names(SLIDE_Z_SCORES) && is.null(z_alpha2)) {
     z_alpha2 <- 1.96
   }
 

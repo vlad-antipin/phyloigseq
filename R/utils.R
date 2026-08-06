@@ -256,7 +256,28 @@ IG_SCORES <- c(
   # `ig_freq_layout = "long"` run of getPhyloIgSeq(), and are dropped from
   # `scores` with a warning when those aren't available.
   "purity_corrected_prob_index",
-  "purity_corrected_prob_ratio"
+  "purity_corrected_prob_ratio",
+  # The sliding Z-score computed on the purity-corrected change axis instead of
+  # the plain log-ratio (see get_ma_coordinates()). Also experimental, and also
+  # needs `ig_freq_layout = "long"`, but unlike the two above it does *not* need
+  # a pre-sort fraction: the pre-sort frequency enters that axis only as an
+  # additive constant, which the Z-score's centering removes.
+  "purity_corrected_slide_z"
+)
+
+#' Score Names Computed Through the Sliding-Window Machinery
+#'
+#' The subset of \code{\link{IG_SCORES}} produced by \code{\link{get_slide_z}} rather than
+#' \code{\link{compute_ig_score}}, paired with the change axis each one scores on. Named by
+#' score, valued by `change_transform`.
+#'
+#' @examples
+#' SLIDE_Z_SCORES
+#'
+#' @export
+SLIDE_Z_SCORES <- c(
+  slide_z = "log_ratio",
+  purity_corrected_slide_z = "purity_corrected"
 )
 
 # Prevent R CMD check NOTEs about undefined global variables: IG_SCORES (a

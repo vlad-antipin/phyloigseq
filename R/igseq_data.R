@@ -442,9 +442,15 @@ impute_zeros <- function(
 
 #' Resolve the Per-Fraction Ig+ Frequencies of One Sample
 #'
-#' Internal. Reads `getPhyloIgSeq()`'s `ig_freq_name` column out of one sample's `sample_data`
-#' rows and returns the Ig+ frequency of each sort fraction, all validated through
-#' `.resolve_ig_freq_value()`.
+#' Reads `getPhyloIgSeq()`'s `ig_freq_name` column out of one sample's `sample_data`
+#' rows and returns the Ig+ frequency of each sort fraction, all validated the same way
+#' [getPhyloIgSeq()] validates them internally.
+#'
+#' Exported because callers that bypass [getPhyloIgSeq()] still need the same numbers on
+#' the same terms: the companion Shiny app's MA-plot preview goes straight from
+#' [group_sorted_samples()] to [get_ma_coordinates()], and the purity-corrected change
+#' axis needs `pos_ig_freq`/`neg1_ig_freq` resolved with the same unit conversion and
+#' `[0, 1]` range checking rather than re-implemented.
 #'
 #' The two layouts differ in what the column is taken to mean:
 #' \describe{
@@ -472,8 +478,21 @@ impute_zeros <- function(
 #' @return A one-row data frame with numeric columns `presort_ig_freq`, `pos_ig_freq`,
 #'   `neg1_ig_freq` and `neg2_ig_freq`.
 #'
-#' @noRd
-.resolve_ig_freqs <- function(
+#' @examples
+#' data(ps_igseq)
+#' metadata <- as(phyloseq::sample_data(ps_igseq), "data.frame")
+#' resolve_ig_freqs(
+#'   sam_metadata_df = metadata[metadata$sample_id == "sample_1", ],
+#'   fraction_id_name = "sorting_fraction",
+#'   ig_freq_name = "ig_pheno",
+#'   ig_freq_units = "frequency",
+#'   ig_freq_layout = "wide",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1"
+#' )
+#'
+#' @export
+resolve_ig_freqs <- function(
   sam_metadata_df,
   fraction_id_name,
   ig_freq_name,

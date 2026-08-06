@@ -17,12 +17,18 @@ fractions, and taxonomic or sample-level metadata.
 }
 \details{
 \code{ig_coating} always carries the identifier columns \code{taxon_id}/\code{sample_id},
-followed by the actual Ig score columns (named in \code{score_names}), followed by
-whichever per-fraction abundance and scoring-diagnostic columns (e.g. the fraction names
-themselves, \code{zeros_imputed}, \code{ellipse_level}, \code{obs_change}/\code{obs_abundance}/
-\code{null_change}/\code{null_abundance}) happened to be produced upstream. Only the columns
-listed in \code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one
-out without having to know which of the remaining columns are metadata.
+followed by the actual Ig score columns (named in \code{score_names}), followed by the
+per-fraction abundance columns and \code{zeros_imputed}. Only the columns listed in
+\code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one out, and
+\code{\link{ig_fraction_names}} to enumerate the abundance columns, rather than inferring
+either from what is left over.
+
+The MA-plot geometry a sliding Z-score is derived from lives in its own \code{ma_coords} slot
+rather than alongside the scores, because there can be more than one change axis per run (see
+\code{\link{get_ma_coordinates}}) and they would otherwise collide on one set of
+\code{obs_change}/\code{null_change} column names. That slot is long in
+\code{change_transform}: one block of rows per axis, so adding an axis costs rows rather than
+columns. \code{\link{ma_coords}} is the accessor.
 }
 \section{Slots}{
 
@@ -32,6 +38,11 @@ out without having to know which of the remaining columns are metadata.
 
 \item{\code{score_names}}{Character. Names of the \code{ig_coating} columns that are actual Ig scores
 (as opposed to fraction/diagnostic metadata columns)}
+
+\item{\code{ma_coords}}{A data.frame or NULL. Per-taxon/sample MA-plot geometry underlying the sliding
+Z-scores, long in \code{change_transform}: \code{sample_id}, \code{taxon_id},
+\code{change_transform}, \code{obs_abundance}, \code{obs_change}, \code{null_abundance},
+\code{null_change}, \code{ellipse_level}, \code{obs_in_cone}, \code{null_in_cone}}
 
 \item{\code{positive_fraction_name}}{Character. Name(s) of the positive Ig-coated fraction(s) used
 to build this object. A single value in the common case; when \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}} was given
@@ -52,7 +63,8 @@ read from. The resolved per-fraction values themselves live in the \code{sample_
 \item{\code{ig_freq_layout}}{Character or NULL. Which layout \code{ig_freq_name} was read with, \code{"wide"}
 (one Ig+ frequency per sample) or \code{"long"} (one per sort fraction) -- see \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}.}
 
-\item{\code{ellipse_coords}}{A data.frame or NULL. Stores coordinates for sliding Z-score ellipses}
+\item{\code{ellipse_coords}}{A data.frame or NULL. Stores coordinates for sliding Z-score ellipses,
+with a \code{change_transform} column identifying which change axis each block belongs to}
 
 \item{\code{sample_data}}{A data.frame or NULL. Optional metadata for each sample}
 

@@ -12,7 +12,12 @@ get_slide_z(
   window_size = 50,
   empirical_null_distribution = TRUE,
   confidence_levels = NULL,
-  imputed_taxa = NULL
+  imputed_taxa = NULL,
+  change_transform = c("log_ratio", "purity_corrected"),
+  pos_ig_freq = NULL,
+  neg_ig_freq = NULL,
+  cone_policy = c("regularize", "na"),
+  pool_prior = NULL
 )
 }
 \arguments{
@@ -48,9 +53,21 @@ itself. Forced to \code{FALSE} when \code{second_negative_fraction_name} is
 (e.g. \code{c(0.95, 0.99, 0.999)}) to build confidence ellipses for; \code{NULL}
 (default) skips ellipse construction.}
 
-\item{imputed_taxa}{Optional vector of \code{taxon_id}s to score separately
+\item{imputed_taxa}{Optional vector of \code{taxon_id}s to score as a population apart
 from the sliding-window scheme (see \code{\link[=compute_slide_z]{compute_slide_z()}}), typically
 the taxa \code{\link[=impute_zeros]{impute_zeros()}} filled in for this sample.}
+
+\item{change_transform}{Which change (\code{M}) axis to score on: \code{"log_ratio"}
+(default) or \code{"purity_corrected"}. See \code{\link[=get_ma_coordinates]{get_ma_coordinates()}} for the two axes.
+Because the Z-score centers and scales, only a \emph{non-affine} axis changes the
+result -- so \code{"purity_corrected"} differs from the default in the tails, where
+the un-mixing is curved, and barely at all near the null, where its local slope
+is the constant \code{1/(pos_ig_freq - neg_ig_freq)}. \strong{Read the note on saturated
+taxa below before thresholding its output.}}
+
+\item{pos_ig_freq, neg_ig_freq, cone_policy, pool_prior}{Passed to
+\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}; only read under \code{change_transform = "purity_corrected"},
+which needs the two Ig+ frequencies but \emph{not} a pre-sort fraction.}
 }
 \value{
 A list:
@@ -65,9 +82,11 @@ which the taxon falls (see \code{\link[=get_ellipse_data]{get_ellipse_data()}}),
 \item{\code{ellipse_coords}}{Data frame of confidence ellipse boundary
 coordinates, or an empty data frame if \code{confidence_levels} is
 \code{NULL}.}
+\item{\code{change_transform}}{Which change axis was used, so callers storing
+several can tell them apart.}
 }
 If \code{sorted_sample_df} is missing one of the three fraction columns,
-this issues a \code{warning()} and returns \code{list(slide_z = NA, ma_coords = data.frame(), ellipse_level = NA, ellipse_coords = data.frame())}
+this issues a \code{warning()} and returns \verb{list(slide_z = NA, ma_coords = data.frame(), ellipse_level = NA, ellipse_coords = data.frame(), change_transform = <requested>)}
 instead of erroring, so that callers processing many samples (e.g.
 \code{\link[=getPhyloIgSeq]{getPhyloIgSeq()}}) can skip the failing one rather than abort the
 whole batch — callers are expected to check for this rather than
@@ -82,6 +101,35 @@ estimates a \emph{local} null distribution along the abundance axis
 optionally builds per-taxon confidence ellipses/levels
 (\code{\link[=get_ellipse_data]{get_ellipse_data()}}).
 }
+\section{Saturated taxa under the purity-corrected axis}{
+
+A taxon the un-mixing has to clamp (\code{obs_in_cone = FALSE}) gets a change value of
+\verb{±(log2(pool) - log2(pool_prior))} -- one pool is 0, so what is left is the
+regularization scale, not a measurement. Two consequences, both measured on a real
+cohort rather than argued:
+\itemize{
+\item On an MA plot these taxa fall on two straight lines forming a \strong{V opening to the
+right}, with slopes \verb{±log2(10)/2 ≈ ±1.66} (observed \code{+1.77}/\code{-1.76}, R² 0.89),
+because the change is a log of one pool while the abundance axis is a log of the
+product of two. Taxa inside the cone show no such structure (slope 0.00, R² 0.000).
+The V is the saturation boundary, drawn by the model's own geometry -- it is not a
+feature of the data and should not be read as one.
+\item Their \verb{|Z|} is large \strong{by construction}: a change value fixed by \code{pool_prior},
+divided by a null that measures only technical-replicate noise. On that cohort
+\emph{every} out-of-cone taxon cleared \verb{|Z| > 1.96} (median 7.3, versus 1.5 and a 37\%
+significant rate for taxa inside the cone), and scaling \code{pool_prior} over three
+orders of magnitude moved the largest \verb{|Z|} around without shrinking it.
+}
+
+So the \emph{ranking} among saturated taxa is meaningful and they are deliberately kept
+rather than dropped, but their magnitude is a floor and a \verb{|Z|} threshold does not
+test anything for them. Split them out with \code{obs_in_cone} before thresholding.
+\code{\link[=plot_slide_z]{plot_slide_z()}} draws them hollow for the same reason. Note this is a property of
+point-estimating an unbounded quantity from noisy counts, not of the clamp: shrinking
+the underlying enrichment toward the null instead would address it, and is not
+implemented.
+}
+
 \examples{
 data(ps_igseq)
 grouped <- group_sorted_samples(

@@ -64,12 +64,21 @@ test_that("compute_ig_score computes 'prob_ratio' from pos, neg, and presort_ig_
 
 # The purity-corrected scores un-mix the two fractions into the really-Ig+ and
 # really-Ig- populations using each fraction's own Ig+ frequency (see
-# parameterization (C) in compute_ig_score()'s source). These tests re-solve that
-# 2x2 system here rather than reusing the package's internal helper.
-unmix_of <- function(pos_abund, neg_abund, p, q) {
+# compute_ig_score()'s Details for the model). These tests re-solve that 2x2
+# system here rather than reusing the package's internal helper.
+#
+# `prior` is the regularization added to both clamped pools. Recomputed here
+# rather than taken from the package so the expectation is independent of it:
+# one read's worth of composition, mapped through the un-mixing into pool space.
+default_pool_prior <- function(pos, neg, p, q) {
+  1 / ((p - q) * min(sum(pos), sum(neg)))
+}
+
+unmix_of <- function(pos_abund, neg_abund, p, q, prior = 0) {
   list(
-    ig_pos = pmax(((1 - q) * pos_abund - (1 - p) * neg_abund) / (p - q), 0),
-    ig_neg = pmax((p * neg_abund - q * pos_abund) / (p - q), 0)
+    ig_pos = pmax(((1 - q) * pos_abund - (1 - p) * neg_abund) / (p - q), 0) +
+      prior,
+    ig_neg = pmax((p * neg_abund - q * pos_abund) / (p - q), 0) + prior
   )
 }
 
@@ -91,11 +100,121 @@ test_that("compute_ig_score computes 'purity_corrected_prob_index' by un-mixing 
     neg_ig_freq = neg_ig_freq
   )
 
+  pools <- unmix_of(
+    pos / sum(pos),
+    neg / sum(neg),
+    pos_ig_freq,
+    neg_ig_freq,
+    prior = default_pool_prior(pos, neg, pos_ig_freq, neg_ig_freq)
+  )
+  expected <- presort_ig_freq *
+    pools$ig_pos /
+    (presort_ig_freq * pools$ig_pos + (1 - presort_ig_freq) * pools$ig_neg)
+  expect_equal(result, expected)
+})
+
+test_that("`pool_prior = 0` restores the unregularized clamp", {
+  pos <- c(50, 30, 20, 5)
+  neg <- c(5, 10, 40, 45)
+  presort_ig_freq <- 0.3
+  pos_ig_freq <- 0.9
+  neg_ig_freq <- 0.1
+
+  result <- compute_ig_score(
+    method = "purity_corrected_prob_index",
+    pos = pos,
+    neg = neg,
+    presort_ig_freq = presort_ig_freq,
+    pos_ig_freq = pos_ig_freq,
+    neg_ig_freq = neg_ig_freq,
+    pool_prior = 0
+  )
+
   pools <- unmix_of(pos / sum(pos), neg / sum(neg), pos_ig_freq, neg_ig_freq)
   expected <- presort_ig_freq *
     pools$ig_pos /
     (presort_ig_freq * pools$ig_pos + (1 - presort_ig_freq) * pools$ig_neg)
   expect_equal(result, expected)
+  # Taxa clamped entirely into one population sit exactly at the bounds without
+  # regularization -- which is what makes their logit infinite, see below.
+  expect_true(any(result %in% c(0, 1)))
+})
+
+test_that("regularization keeps maximally coated taxa finite instead of NA", {
+  # Taxon 1 is far enough above the cone's ceiling (pos/neg > p/q) that the
+  # un-mixing places it entirely in the Ig+ population.
+  pos <- c(500, 30, 20, 5)
+  neg <- c(1, 10, 40, 45)
+  args <- list(
+    pos = pos,
+    neg = neg,
+    presort_ig_freq = 0.3,
+    pos_ig_freq = 0.9,
+    neg_ig_freq = 0.1
+  )
+
+  bare <- do.call(
+    compute_ig_score,
+    c(list(method = "purity_corrected_prob_ratio", pool_prior = 0), args)
+  )
+  regularized <- do.call(
+    compute_ig_score,
+    c(list(method = "purity_corrected_prob_ratio"), args)
+  )
+
+  # Without regularization the most strongly coated taxon -- the one the score
+  # exists to find -- is dropped as NA. With it, it saturates instead.
+  expect_true(is.na(bare[1]))
+  expect_true(is.finite(regularized[1]))
+  # And it is still ranked above every other taxon.
+  expect_equal(which.max(regularized), 1L)
+})
+
+test_that("regularization shrinks rare taxa harder than abundant ones", {
+  # Two taxa with the same fold change but a 100x difference in depth. Both are
+  # above the cone ceiling, so both saturate; the rare one is pulled far closer
+  # to the null because the prior is a larger share of its pool.
+  p <- 0.9
+  q <- 0.1
+  filler <- rep(1000, 4)
+  abundant <- compute_ig_score(
+    method = "purity_corrected_prob_ratio",
+    pos = c(1000, filler),
+    neg = c(1, filler),
+    presort_ig_freq = 0.3,
+    pos_ig_freq = p,
+    neg_ig_freq = q
+  )[1]
+  rare <- compute_ig_score(
+    method = "purity_corrected_prob_ratio",
+    pos = c(10, filler),
+    neg = c(1, filler),
+    presort_ig_freq = 0.3,
+    pos_ig_freq = p,
+    neg_ig_freq = q
+  )[1]
+
+  expect_true(is.finite(abundant) && is.finite(rare))
+  expect_gt(abundant, rare)
+})
+
+test_that("compute_ig_score warns and gives up regularizing compositional input", {
+  pos <- c(50, 30, 20, 5)
+  neg <- c(5, 10, 40, 45)
+
+  expect_warning(
+    result <- compute_ig_score(
+      method = "purity_corrected_prob_ratio",
+      pos = pos / sum(pos),
+      neg = neg / sum(neg),
+      presort_ig_freq = 0.3,
+      pos_ig_freq = 0.9,
+      neg_ig_freq = 0.1
+    ),
+    "already compositional"
+  )
+  # Falling back to pool_prior = 0 means the clamped taxa are NA again.
+  expect_true(anyNA(result))
 })
 
 test_that("the purity-corrected scores ignore `pre` and stay in range", {
@@ -155,6 +274,9 @@ test_that("the purity-corrected scores reduce to their uncorrected forms at a pe
   pre_consistent <- presort_ig_freq * pos / sum(pos) +
     (1 - presort_ig_freq) * neg / sum(neg)
 
+  # `pool_prior = 0` because the reduction is exact only for the bare un-mixing;
+  # the default read-scale prior perturbs every taxon by O(prior/pool), which is
+  # the point of it. See the separate test that the two agree to within that.
   expect_equal(
     compute_ig_score(
       method = "purity_corrected_prob_index",
@@ -162,7 +284,8 @@ test_that("the purity-corrected scores reduce to their uncorrected forms at a pe
       neg = neg,
       presort_ig_freq = presort_ig_freq,
       pos_ig_freq = 1,
-      neg_ig_freq = 0
+      neg_ig_freq = 0,
+      pool_prior = 0
     ),
     compute_ig_score(
       method = "prob_index",
@@ -179,7 +302,8 @@ test_that("the purity-corrected scores reduce to their uncorrected forms at a pe
       neg = neg,
       presort_ig_freq = presort_ig_freq,
       pos_ig_freq = 1,
-      neg_ig_freq = 0
+      neg_ig_freq = 0,
+      pool_prior = 0
     ),
     compute_ig_score(
       method = "prob_ratio",
@@ -188,6 +312,36 @@ test_that("the purity-corrected scores reduce to their uncorrected forms at a pe
       presort_ig_freq = presort_ig_freq
     )
   )
+})
+
+test_that("the default pool prior perturbs a perfect sort only at the read scale", {
+  pos <- c(5000, 3000, 2000, 500)
+  neg <- c(500, 1000, 4000, 4500)
+  presort_ig_freq <- 0.4
+
+  bare <- compute_ig_score(
+    method = "purity_corrected_prob_index",
+    pos = pos,
+    neg = neg,
+    presort_ig_freq = presort_ig_freq,
+    pos_ig_freq = 1,
+    neg_ig_freq = 0,
+    pool_prior = 0
+  )
+  regularized <- compute_ig_score(
+    method = "purity_corrected_prob_index",
+    pos = pos,
+    neg = neg,
+    presort_ig_freq = presort_ig_freq,
+    pos_ig_freq = 1,
+    neg_ig_freq = 0
+  )
+
+  # Every taxon here is well inside the cone and far above one read, so the prior
+  # is a negligible share of each pool: the two agree to a few parts in a
+  # thousand rather than exactly.
+  expect_equal(regularized, bare, tolerance = 0.01)
+  expect_false(isTRUE(all.equal(regularized, bare, tolerance = 1e-12)))
 })
 
 test_that("a pre-sort frequency outside the fractions' range warns but still scores", {
@@ -350,6 +504,64 @@ test_that(".jitter_offset computes a jitter band below the value range", {
   expect_equal(result$x, min(1:5) - result$width * 3)
 })
 
+test_that(".nonnegative_abundance_breaks drops breaks below zero", {
+  breaks <- PhyloIgSeq:::.nonnegative_abundance_breaks(c(-4, 9))
+
+  expect_true(all(breaks >= 0))
+  expect_gte(length(breaks), 2)
+})
+
+test_that(".nonnegative_abundance_breaks keeps them when the axis is all negative", {
+  # `transform_by_sample = "compositional"` puts every A below zero legitimately;
+  # filtering there would leave the axis with no labels at all.
+  breaks <- PhyloIgSeq:::.nonnegative_abundance_breaks(c(-13, -1))
+
+  expect_true(any(breaks < 0))
+  expect_gte(length(breaks), 2)
+})
+
+test_that("plot_ma and plot_slide_z hide negative x breaks without clipping points", {
+  data("ps_igseq", package = "PhyloIgSeq", envir = environment())
+  physeq <- ps_igseq
+  sd <- as(phyloseq::sample_data(physeq), "data.frame")
+  physeq <- phyloseq::prune_samples(
+    rownames(sd)[!sd$sample_id %in% c("sample_6", "sample_7")],
+    physeq
+  )
+  # pseudo-count imputation parks taxa below zero on the abundance axis, which is
+  # what puts negative breaks on an otherwise count-scaled axis
+  grouped <- suppressWarnings(group_sorted_samples(
+    physeq = physeq,
+    sample_id_name = "sample_id",
+    fraction_id_name = "sorting_fraction",
+    sample_ids = "sample_1",
+    fraction_ids = c("pos", "neg1", "neg2"),
+    rarefy_by_sample = TRUE,
+    transform_by_sample = "identity"
+  ))
+  ma_plot_data <- suppressWarnings(get_ma_plot_data(
+    sorted_sample_df = grouped[[1]],
+    positive_fraction_name = "pos",
+    first_negative_fraction_name = "neg1",
+    second_negative_fraction_name = "neg2",
+    zero_treatments = "pseudo_count"
+  ))
+
+  built <- ggplot2::ggplot_build(suppressWarnings(plot_ma(ma_plot_data)))
+  panel <- built$layout$panel_params[[1]]
+  breaks <- panel$x$breaks
+  breaks <- breaks[!is.na(breaks)]
+  drawn_x <- unlist(lapply(built$data, function(layer) layer$x))
+  drawn_x <- drawn_x[is.finite(drawn_x)]
+
+  expect_true(all(breaks >= 0))
+  # the parked band is still drawn, below the lowest break and inside the range
+  expect_lt(min(drawn_x), 0)
+  expect_true(all(
+    drawn_x >= panel$x.range[1] & drawn_x <= panel$x.range[2]
+  ))
+})
+
 test_that(".truncate_for_tooltip leaves short values and NA untouched", {
   expect_equal(PhyloIgSeq:::.truncate_for_tooltip("short", 10), "short")
   expect_true(is.na(PhyloIgSeq:::.truncate_for_tooltip(NA, 10)))
@@ -408,18 +620,38 @@ test_that(".slide_z_tooltip includes every tax_table column, matched by taxon_id
 make_phyloigseq_fixture <- function(
   with_tax_table = TRUE,
   with_ellipses = TRUE,
-  with_null = TRUE
+  with_null = TRUE,
+  change_transform = "log_ratio",
+  # NA everywhere is what the "log_ratio" axis produces (it has no cone); set
+  # FALSE entries to exercise the hollow saturated-point layer.
+  obs_in_cone = NA
 ) {
   ig_coating <- data.frame(
     taxon_id = c(1, 2, 3, 4, 1, 2, 3, 4),
     sample_id = rep(c("s1", "s2"), each = 4),
-    slide_z = c(-3, -0.5, 0.5, 3, -4, 0, 1, 4),
+    slide_z = c(-3, -0.5, 0.5, 3, -4, 0, 1, 4)
+  )
+  names(ig_coating)[3] <- names(SLIDE_Z_SCORES)[
+    SLIDE_Z_SCORES == change_transform
+  ]
+
+  # MA geometry lives in its own slot, long in change_transform, keyed the same
+  # way as ig_coating.
+  ma_coords <- data.frame(
+    sample_id = ig_coating$sample_id,
+    taxon_id = ig_coating$taxon_id,
+    change_transform = change_transform,
+    obs_abundance = c(5, 6, 7, 8, 5, 6, 7, 8),
     obs_change = c(-1.2, -0.2, 0.2, 1.2, -1.5, 0, 0.5, 1.5),
-    obs_abundance = c(5, 6, 7, 8, 5, 6, 7, 8)
+    null_abundance = NA_real_,
+    null_change = NA_real_,
+    obs_in_cone = obs_in_cone,
+    null_in_cone = NA,
+    ellipse_level = NA_character_
   )
   if (with_null) {
-    ig_coating$null_change <- c(-0.1, 0.05, -0.05, 0.1, 0, 0.1, -0.1, 0)
-    ig_coating$null_abundance <- c(5, 6, 7, 8, 5, 6, 7, 8)
+    ma_coords$null_change <- c(-0.1, 0.05, -0.05, 0.1, 0, 0.1, -0.1, 0)
+    ma_coords$null_abundance <- c(5, 6, 7, 8, 5, 6, 7, 8)
   }
 
   tax_table <- if (with_tax_table) {
@@ -438,7 +670,8 @@ make_phyloigseq_fixture <- function(
       sample_id = "s1",
       x = c(1, 2, 3),
       y = c(1, 2, 1),
-      ellipse_level = "0.95"
+      ellipse_level = "0.95",
+      change_transform = change_transform
     )
   } else {
     data.frame()
@@ -447,7 +680,8 @@ make_phyloigseq_fixture <- function(
   new(
     "PhyloIgSeq",
     ig_coating = ig_coating,
-    score_names = "slide_z",
+    score_names = names(ig_coating)[3],
+    ma_coords = ma_coords,
     positive_fraction_name = "Pos",
     first_negative_fraction_name = "Neg1",
     second_negative_fraction_name = "Neg2",
@@ -517,6 +751,50 @@ test_that("plot_slide_z routes imputed taxa to the jittered layer instead of the
   expect_true(
     any(imputed_layer_data$sample_id == "s1" & imputed_layer_data$taxon_id == 4)
   )
+})
+
+# The cone legend has to be judged on the *rendered* plot: `scale_shape_manual(guide =)`
+# alone does not settle it, because the later `guides()` call overrides the scale's own
+# guide. Collect every piece of legend text from the built gtable and look for the labels.
+legend_text <- function(plt) {
+  gtable <- ggplot2::ggplotGrob(plt)
+  boxes <- gtable$grobs[grepl("guide-box", gtable$layout$name)]
+  labels <- character(0)
+  collect <- function(grob) {
+    if (!is.null(grob$label)) {
+      labels <<- c(labels, as.character(grob$label))
+    }
+    for (child in c(grob$children, grob$grobs)) collect(child)
+  }
+  for (box in boxes) collect(box)
+  labels
+}
+
+test_that("plot_slide_z hides the admissible-cone legend when nothing was clamped", {
+  pis <- make_phyloigseq_fixture()
+
+  plt <- suppressWarnings(plot_slide_z(pis, ellipses = FALSE))
+
+  labels <- legend_text(plt)
+  expect_true(any(grepl("Ig+ vs Ig-", labels, fixed = TRUE)))
+  expect_false(any(grepl("cone", labels, fixed = TRUE)))
+})
+
+test_that("plot_slide_z shows the admissible-cone legend once the un-mixing clamped a taxon", {
+  # Taxon 3 of s1, not taxon 4: taxon 4 is the fixture's imputed one, and imputed
+  # taxa are drawn in the jitter band rather than hollow in place.
+  pis <- make_phyloigseq_fixture(
+    change_transform = "purity_corrected",
+    obs_in_cone = c(TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)
+  )
+
+  plt <- suppressWarnings(
+    plot_slide_z(pis, ellipses = FALSE, change_transform = "purity_corrected")
+  )
+
+  labels <- legend_text(plt)
+  expect_true(any(grepl("inside admissible cone", labels, fixed = TRUE)))
+  expect_true(any(grepl("outside cone", labels, fixed = TRUE)))
 })
 
 test_that("plot_slide_z truncates tax_table values in the tooltip via tooltip_max_chars", {

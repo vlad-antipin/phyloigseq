@@ -49,9 +49,22 @@ test_that("IG_SCORES is the expected character vector", {
       "prob_index",
       "prob_ratio",
       "purity_corrected_prob_index",
-      "purity_corrected_prob_ratio"
+      "purity_corrected_prob_ratio",
+      "purity_corrected_slide_z"
     )
   )
+})
+
+test_that("SLIDE_Z_SCORES maps every windowed score to a change axis", {
+  expect_type(SLIDE_Z_SCORES, "character")
+  # Every windowed score must be a real score, and must name the change axis it
+  # is computed on -- getPhyloIgSeq() and plot_slide_z() both index by this.
+  expect_true(all(names(SLIDE_Z_SCORES) %in% IG_SCORES))
+  expect_setequal(
+    unname(SLIDE_Z_SCORES),
+    c("log_ratio", "purity_corrected")
+  )
+  expect_equal(SLIDE_Z_SCORES[["slide_z"]], "log_ratio")
 })
 
 # ---- reverseASV ----

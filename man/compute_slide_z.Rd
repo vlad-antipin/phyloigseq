@@ -8,7 +8,8 @@ compute_slide_z(
   ma_coords,
   was_imputed = NULL,
   window_size = 50,
-  empirical_null_distribution = TRUE
+  empirical_null_distribution = TRUE,
+  estimate_from = NULL
 )
 }
 \arguments{
@@ -19,11 +20,17 @@ returned by \code{\link[=get_ma_coordinates]{get_ma_coordinates()}} (\code{taxon
 
 \item{was_imputed}{Optional logical vector, same length/row order as
 \code{ma_coords}, flagging which taxa had an imputed zero and should be
-scored separately from the sliding-window scheme.}
+scored as a population apart.}
 
 \item{window_size}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{50}.}
 
 \item{empirical_null_distribution}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{TRUE}.}
+
+\item{estimate_from}{Optional logical vector, same length/row order as \code{ma_coords},
+marking which taxa may contribute to a window's mean/sd. \code{NULL} (default) derives
+it from \code{ma_coords}'s \code{obs_in_cone}/\code{null_in_cone} columns -- whichever pair
+supplies the reference -- treating \code{NA} (the \code{"log_ratio"} axis, which has no
+cone) as usable.}
 }
 \value{
 A numeric vector of per-taxon sliding Z-scores, in \code{ma_coords}'s
@@ -37,10 +44,43 @@ ranked by observed abundance and processed in overlapping windows of
 \code{window_size} taxa, each window's own local mean/sd (of either the
 empirical null or the observed change, see \code{empirical_null_distribution})
 used to center/scale the Z-scores of the taxa in that window's non-
-overlapping "core". Taxa flagged via \code{was_imputed} are scored separately,
-against the null/observed distribution taken over \emph{all} imputed taxa at
-once rather than a local window (there are usually too few of them to
-window meaningfully).
+overlapping "core".
+}
+\details{
+Taxa flagged via \code{was_imputed} form a \strong{separate population}, scored against a
+single pooled mean/sd taken over all of them at once rather than mixed into the
+sliding windows. Two separate reasons, both measured on \code{ps_igseq} under
+\code{pseudo_count}: their null is 2.8x-6.9x wider than that of taxa with no imputed
+zero and they barely overlap the rest in abundance, so windowing them \emph{with} the
+rest would inflate their Z-scores several-fold; and their abundance axis is largely
+an artefact of the imputation -- 75-83\% of them share an \code{obs_abundance} with
+another taxon -- so windowing them \emph{among themselves} estimates the scale from tied,
+arbitrary slices and deflates it by up to 5x, which inflates the Z-scores just as
+badly in the other direction. Pooling is what neither failure mode reaches.
+
+Independently of that split, \code{estimate_from} marks rows that are scored but may not
+\emph{inform} a window's mean/sd. This is how out-of-cone taxa on the
+\code{"purity_corrected"} change axis are handled: their reference value is saturated
+rather than measured, so it must not enter the estimate, but they still receive a
+score on their window's scale. Unlike imputed taxa they are not segregated, because
+measurement shows they sit at the same abundances as the rest and their null spread
+is within noise of it.
+
+That cone exclusion is deliberately \strong{not} applied inside the imputed population,
+where the flag stops reporting measurement quality and starts reporting the
+imputation pattern. A taxon zeroed in \emph{both} negative fractions receives the same
+substituted value twice, so its Ig-.1 vs Ig-.2 ratio is exactly 1 and it lands inside
+the cone with a \code{null_change} of exactly 0 -- a number the zero treatment
+manufactured, not replicate noise it measured. A taxon zeroed in only one of them
+gets an extreme ratio and falls outside. Masking on the cone therefore keeps the
+fabricated zeros and discards the taxa carrying real spread: on \code{ps_igseq} under
+\code{pseudo_count} it retained a subset that was 58-62\% exact zeros and shrank the
+reference sd from 1.8-3.4 to 0.84-1.4, inflating every imputed taxon's \verb{|Z|} about
+2.5x and calling 92-412 of them significant per sample instead of 20-71. Neither
+subset of this population is clean -- the in-cone ones are fabricated, the
+out-of-cone ones saturated -- so pooling over all of them is the least-wrong
+estimate, not a good one. Their \verb{|Z|} remains a floor rather than a test, exactly as
+for the saturated taxa described in \code{\link[=get_slide_z]{get_slide_z()}}.
 }
 \examples{
 data(ps_igseq)

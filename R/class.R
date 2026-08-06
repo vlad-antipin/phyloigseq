@@ -8,17 +8,27 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #'
 #' @details
 #' \code{ig_coating} always carries the identifier columns \code{taxon_id}/\code{sample_id},
-#' followed by the actual Ig score columns (named in \code{score_names}), followed by
-#' whichever per-fraction abundance and scoring-diagnostic columns (e.g. the fraction names
-#' themselves, \code{zeros_imputed}, \code{ellipse_level}, \code{obs_change}/\code{obs_abundance}/
-#' \code{null_change}/\code{null_abundance}) happened to be produced upstream. Only the columns
-#' listed in \code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one
-#' out without having to know which of the remaining columns are metadata.
+#' followed by the actual Ig score columns (named in \code{score_names}), followed by the
+#' per-fraction abundance columns and \code{zeros_imputed}. Only the columns listed in
+#' \code{score_names} are Ig-coating scores; use \code{\link{get_ig_score}} to pull one out, and
+#' \code{\link{ig_fraction_names}} to enumerate the abundance columns, rather than inferring
+#' either from what is left over.
+#'
+#' The MA-plot geometry a sliding Z-score is derived from lives in its own \code{ma_coords} slot
+#' rather than alongside the scores, because there can be more than one change axis per run (see
+#' \code{\link{get_ma_coordinates}}) and they would otherwise collide on one set of
+#' \code{obs_change}/\code{null_change} column names. That slot is long in
+#' \code{change_transform}: one block of rows per axis, so adding an axis costs rows rather than
+#' columns. \code{\link{ma_coords}} is the accessor.
 #'
 #' @slot ig_coating A data.frame containing per-taxon/sample Ig scores plus supporting metadata
 #'   (see Details)
 #' @slot score_names Character. Names of the \code{ig_coating} columns that are actual Ig scores
 #'   (as opposed to fraction/diagnostic metadata columns)
+#' @slot ma_coords A data.frame or NULL. Per-taxon/sample MA-plot geometry underlying the sliding
+#'   Z-scores, long in \code{change_transform}: \code{sample_id}, \code{taxon_id},
+#'   \code{change_transform}, \code{obs_abundance}, \code{obs_change}, \code{null_abundance},
+#'   \code{null_change}, \code{ellipse_level}, \code{obs_in_cone}, \code{null_in_cone}
 #' @slot positive_fraction_name Character. Name(s) of the positive Ig-coated fraction(s) used
 #'   to build this object. A single value in the common case; when [getPhyloIgSeq()] was given
 #'   more than one, this holds the full set folded into the sample dimension (see
@@ -32,7 +42,8 @@ setClassUnion("listOrNULL", c("list", "NULL"))
 #'   `presort_ig_freq`/`pos_ig_freq`/`neg1_ig_freq`/`neg2_ig_freq` columns.
 #' @slot ig_freq_layout Character or NULL. Which layout `ig_freq_name` was read with, `"wide"`
 #'   (one Ig+ frequency per sample) or `"long"` (one per sort fraction) -- see [getPhyloIgSeq()].
-#' @slot ellipse_coords A data.frame or NULL. Stores coordinates for sliding Z-score ellipses
+#' @slot ellipse_coords A data.frame or NULL. Stores coordinates for sliding Z-score ellipses,
+#'   with a \code{change_transform} column identifying which change axis each block belongs to
 #' @slot sample_data A data.frame or NULL. Optional metadata for each sample
 #' @slot tax_table A data.frame or NULL. Taxonomic information
 #' @slot total_reads A data.frame or NULL. Total read counts per sample and fraction before rarefaction
@@ -44,6 +55,7 @@ setClass(
   slots = list(
     ig_coating = "data.frame",
     score_names = "character",
+    ma_coords = "data.frameOrNULL",
     positive_fraction_name = "character",
     first_negative_fraction_name = "characterOrNULL", # 9/10 of the whole negative fraction for IgSeq
     second_negative_fraction_name = "characterOrNULL", # 1/10 -//-
@@ -143,6 +155,7 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
   ig_coating <- data.frame()
   sample_data <- data.frame()
   ellipse_coords <- data.frame()
+  ma_coords <- data.frame()
   imputed_taxa <- list()
   score_names <- character(0)
   for (phyloigseq_obj in phyloigseq_list) {
@@ -150,6 +163,7 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
       # bind_rows() matches columns by name, fills in NA for missing columns
       ig_coating <- bind_rows(ig_coating, phyloigseq_obj@ig_coating)
       ellipse_coords <- bind_rows(ellipse_coords, phyloigseq_obj@ellipse_coords)
+      ma_coords <- bind_rows(ma_coords, phyloigseq_obj@ma_coords)
       sample_data <- bind_rows(sample_data, phyloigseq_obj@sample_data)
       imputed_taxa <- c(imputed_taxa, phyloigseq_obj@imputed_taxa)
       score_names <- union(score_names, phyloigseq_obj@score_names)
@@ -160,11 +174,154 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
     Class = "PhyloIgSeq",
     ig_coating = ig_coating,
     score_names = score_names,
+    ma_coords = ma_coords,
     ellipse_coords = ellipse_coords,
     sample_data = sample_data,
     tax_table = NULL,
     imputed_taxa = imputed_taxa
   ))
+}
+
+
+#' Report How Much of a Run the Un-Mixing Had to Clamp
+#'
+#' Warns once per [getPhyloIgSeq()] call when a material share of taxa fall outside the
+#' admissible cone on the purity-corrected change axis. Their change value is then set by
+#' `pool_prior` rather than measured, so their sliding Z-score's magnitude -- and its
+#' significance call -- are properties of the regularization, not of the data.
+#'
+#' @param ma_coords The `ma_coords` slot of the assembled object.
+#' @param threshold Share of out-of-cone taxa above which to warn.
+#'
+#' @return `invisible(NULL)`, called for the `warning()`.
+#' @noRd
+.warn_out_of_cone_rate <- function(ma_coords, threshold = 0.1) {
+  if (is.null(ma_coords) || prod(dim(ma_coords)) == 0) {
+    return(invisible(NULL))
+  }
+  purity <- ma_coords[
+    as.character(ma_coords$change_transform) == "purity_corrected",
+  ]
+  if (nrow(purity) == 0) {
+    return(invisible(NULL))
+  }
+  for (which_pair in c("obs", "null")) {
+    flag <- purity[[paste0(which_pair, "_in_cone")]]
+    flag <- flag[!is.na(flag)]
+    if (length(flag) == 0) next
+    share <- mean(!flag)
+    if (share <= threshold) next
+    warning(
+      sprintf("%.0f%%", 100 * share),
+      " of the ",
+      if (which_pair == "obs") "Ig+ vs Ig-" else "Ig-.1 vs Ig-.2",
+      " pairs fall outside the admissible cone of the purity-corrected change ",
+      "axis, so the un-mixing had to clamp them. Their change value is then set ",
+      "by `pool_prior` rather than measured: their `purity_corrected_slide_z` ",
+      "ranking is still meaningful, but its magnitude and any |Z| threshold ",
+      "applied to it are not. Use the `obs_in_cone`/`null_in_cone` columns of ",
+      "the `ma_coords` slot to separate or exclude them",
+      if (which_pair == "null") {
+        ", and note that a high rate here also distorts the null every Z-score is divided by"
+      },
+      ". A high rate means `pos_ig_freq` and `neg_ig_freq` are close together, ",
+      "or that capture efficiency varies by taxon in a way the model does not ",
+      "represent.\n"
+    )
+  }
+  invisible(NULL)
+}
+
+#' MA-Plot Geometry Behind the Sliding Z-Scores
+#'
+#' Accessor for the \code{ma_coords} slot: the per-taxon/sample MA-plot coordinates each
+#' sliding Z-score was derived from. Long in \code{change_transform}, one block of rows per
+#' change axis (see \code{\link{get_ma_coordinates}}), so requesting both
+#' \code{"slide_z"} and \code{"purity_corrected_slide_z"} from \code{\link{getPhyloIgSeq}}
+#' yields two blocks and a consumer can switch between them by filtering instead of
+#' recomputing.
+#'
+#' @param phyloigseq_obj A \code{\link{PhyloIgSeq-class}} object.
+#' @param change_transform Optional. Restrict to one change axis (\code{"log_ratio"} or
+#'   \code{"purity_corrected"}); \code{NULL} (the default) returns every axis present.
+#'
+#' @return A data frame with \code{sample_id}, \code{taxon_id}, \code{change_transform},
+#'   \code{obs_abundance}, \code{obs_change}, \code{null_abundance}, \code{null_change},
+#'   \code{obs_in_cone}, \code{null_in_cone} and \code{ellipse_level}; or \code{NULL} when no
+#'   sliding Z-score was computed.
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_ids = c("sample_1", "sample_2"),
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
+#'   scores = "slide_z"
+#' )
+#' head(ma_coords(pis))
+#'
+#' @export
+ma_coords <- function(phyloigseq_obj, change_transform = NULL) {
+  coords <- phyloigseq_obj@ma_coords
+  if (is.null(coords) || prod(dim(coords)) == 0) {
+    return(coords)
+  }
+  if (!is.null(change_transform)) {
+    change_transform <- match.arg(
+      change_transform,
+      choices = c("log_ratio", "purity_corrected")
+    )
+    coords <- coords[
+      as.character(coords$change_transform) == change_transform,
+    ]
+  }
+  coords
+}
+
+
+#' Names of the Per-Fraction Abundance Columns in \code{ig_coating}
+#'
+#' Returns which \code{ig_coating} columns hold per-fraction abundances, derived from the
+#' object's own fraction-name slots. Use this rather than subtracting a hand-maintained set of
+#' identifier/score/diagnostic names from \code{colnames(ig_coating)}: that denylist approach
+#' silently absorbs any new diagnostic column as though it were a fraction, which is how a
+#' column like \code{zeros_imputed} ends up offered as an abundance to weight by.
+#'
+#' @param phyloigseq_obj A \code{\link{PhyloIgSeq-class}} object.
+#'
+#' @return A character vector of column names present in \code{ig_coating}. In
+#'   multiple-positive-fraction mode the positive fraction's column is
+#'   \code{"positive_fraction_abundance"} rather than the fraction's own name (see
+#'   \code{\link{getPhyloIgSeq}}), and that is what is returned.
+#'
+#' @examples
+#' data(ps_igseq)
+#' pis <- getPhyloIgSeq(
+#'   physeq = ps_igseq,
+#'   sample_ids = c("sample_1", "sample_2"),
+#'   sample_id_name = "sample_id",
+#'   fraction_id_name = "sorting_fraction",
+#'   positive_fraction_name = "pos",
+#'   first_negative_fraction_name = "neg1",
+#'   second_negative_fraction_name = "neg2",
+#'   scores = "palm"
+#' )
+#' ig_fraction_names(pis)
+#'
+#' @export
+ig_fraction_names <- function(phyloigseq_obj) {
+  candidates <- c(
+    phyloigseq_obj@positive_fraction_name,
+    "positive_fraction_abundance",
+    phyloigseq_obj@first_negative_fraction_name,
+    phyloigseq_obj@second_negative_fraction_name,
+    phyloigseq_obj@presorting_fraction_name
+  )
+  intersect(unique(candidates), colnames(phyloigseq_obj@ig_coating))
 }
 
 #' Compute Ig Scores from a Phyloseq Object
@@ -236,7 +393,10 @@ collapsePhyloIgSeq <- function(phyloigseq_list) {
 #' @param window_size Integer. Window size for smoothing.
 #' @param empirical_null_distribution Logical. Whether to estimate null distribution.
 #' @param confidence_levels Optional. Confidence levels for scoring.
-#' @param scores Vector of score names to compute.
+#' @param scores Vector of score names to compute, from [IG_SCORES] (the default is all of
+#'   them). A requested score whose inputs are not available -- a fraction it divides by, or
+#'   the Ig+ frequency it weights with -- is dropped with a `warning()` rather than returned
+#'   as an all-NA column, so `score_names` on the result lists what was actually computed.
 #' @param taxon_id_source How to derive the `taxon_id` used throughout `ig_coating`/`tax_table`:
 #'   `"sequential"` (default) renumbers taxa as fresh sequential integers, recoverable via
 #'   `tax_table$taxon_name`; `"original"` uses `physeq`'s own (possibly `taxrank`-agglomerated,
@@ -289,7 +449,6 @@ getPhyloIgSeq <- function(
   empirical_null_distribution = TRUE,
   confidence_levels = NULL,
   scores = IG_SCORES,
-  # TODO: purity corrected scores
   taxon_id_source = c("sequential", "original")
 ) {
   taxon_id_source <- match.arg(taxon_id_source)
@@ -305,26 +464,45 @@ getPhyloIgSeq <- function(
       "(required to compute `prob_index` without a negative fraction)."
     )
   }
-  if (is.null(first_negative_fraction_name) && "slide_z" %in% scores) {
+  if (
+    is.null(first_negative_fraction_name) &&
+      any(names(SLIDE_Z_SCORES) %in% scores)
+  ) {
     warning(
-      "No negative fraction furnished, cannot compute `slide_z` (or the MA-plot ",
-      "geometry it depends on); dropping it from `scores`.\n"
+      "No negative fraction furnished, cannot compute ",
+      paste0(
+        "`",
+        intersect(names(SLIDE_Z_SCORES), scores),
+        "`",
+        collapse = " / "
+      ),
+      " (or the MA-plot geometry they depend on); dropping from `scores`.\n"
     )
-    scores <- setdiff(scores, "slide_z")
+    scores <- setdiff(scores, names(SLIDE_Z_SCORES))
   }
-  # The purity-corrected scores weight the two sorted fractions against the
-  # pre-sort one using the Ig+ frequency measured *inside* each fraction, so
-  # they need all three fractions and a "long" ig_freq column. Drop them rather
-  # than emit all-NA columns -- they are part of the default `scores` since
-  # they joined IG_SCORES, so most calls would otherwise pick them up silently.
-  purity_corrected_scores <- c(
-    "purity_corrected_prob_index",
-    "purity_corrected_prob_ratio"
+  # The purity-corrected scores need the Ig+ frequency measured *inside* each
+  # sorted fraction, i.e. a negative fraction and a "long" ig_freq column. Drop
+  # them rather than emit all-NA columns -- they are part of the default `scores`
+  # since they joined IG_SCORES, so most calls would otherwise pick them up
+  # silently.
+  #
+  # Their requirements are NOT the same, so they are gated per score rather than
+  # as one block: `purity_corrected_prob_index`/`_ratio` use the pre-sort Ig+
+  # frequency as a Bayesian prior and so need a pre-sort fraction to read it off
+  # under the long layout, whereas `purity_corrected_slide_z` does not -- that
+  # prior is an additive constant on its change axis, which the Z-score's
+  # centering removes. Don't "simplify" this back into a single check.
+  purity_requirements <- list(
+    purity_corrected_prob_index = TRUE,
+    purity_corrected_prob_ratio = TRUE,
+    purity_corrected_slide_z = FALSE # needs no pre-sort fraction
   )
-  if (any(purity_corrected_scores %in% scores)) {
+  for (score in intersect(names(purity_requirements), scores)) {
     missing_inputs <- c(
       if (is.null(first_negative_fraction_name)) "a negative fraction",
-      if (is.null(presorting_fraction_name)) "a presorting fraction",
+      if (purity_requirements[[score]] && is.null(presorting_fraction_name)) {
+        "a presorting fraction"
+      },
       if (is.null(ig_freq_name)) {
         "`ig_freq_name`"
       } else if (!identical(ig_freq_layout, "long")) {
@@ -333,19 +511,73 @@ getPhyloIgSeq <- function(
     )
     if (length(missing_inputs) > 0) {
       warning(
-        "Cannot compute ",
-        paste0("`", intersect(purity_corrected_scores, scores), "`", collapse = " / "),
-        " without ",
+        "Cannot compute `",
+        score,
+        "` without ",
         paste(missing_inputs, collapse = " and "),
         "; dropping from `scores`.\n"
       )
-      scores <- setdiff(scores, purity_corrected_scores)
+      scores <- setdiff(scores, score)
     }
   }
-  # Only relevant when slide_z is actually being computed -- otherwise
+  # `prob_index`/`prob_ratio` are Bayesian: both weight the sorted fractions by
+  # the pre-sort P(Ig+), which comes from `ig_freq_name`. Gated for the same
+  # reason as the purity-corrected block above -- they are in the default
+  # `scores`, so a call that never asked for them would otherwise carry a silent
+  # all-NA column -- and, like that block, per score rather than as one, since
+  # their inputs differ:
+  #
+  #   * `prob_index` is P(taxon | Ig+) P(Ig+) / P(taxon), so the denominator is
+  #     the pre-sort fraction's own abundance: it needs that fraction under
+  #     either layout.
+  #   * `prob_ratio` divides by the negative fraction instead, so it needs a
+  #     negative fraction, and a pre-sort fraction only under
+  #     `ig_freq_layout = "long"`, where P(Ig+) is recorded per fraction and is
+  #     therefore readable only off the pre-sort rows. Under `"wide"` P(Ig+) is a
+  #     property of the sample and any fraction's row carries it.
+  prior_requirements <- list(
+    prob_index = "presort",
+    prob_ratio = if (identical(ig_freq_layout, "long")) "presort" else "negative"
+  )
+  for (score in intersect(names(prior_requirements), scores)) {
+    missing_inputs <- c(
+      if (
+        identical(prior_requirements[[score]], "presort") &&
+          is.null(presorting_fraction_name)
+      ) {
+        "a presorting fraction"
+      },
+      if (
+        identical(prior_requirements[[score]], "negative") &&
+          is.null(first_negative_fraction_name)
+      ) {
+        "a negative fraction"
+      },
+      if (is.null(ig_freq_name)) "`ig_freq_name`"
+    )
+    if (length(missing_inputs) > 0) {
+      warning(
+        "Cannot compute `",
+        score,
+        "` without ",
+        paste(missing_inputs, collapse = " and "),
+        if (
+          identical(score, "prob_ratio") && identical(ig_freq_layout, "long")
+        ) {
+          paste0(
+            " (under `ig_freq_layout = \"long\"` the pre-sort Ig+ frequency it ",
+            "uses as a prior is recorded on the presorting fraction's own rows)"
+          )
+        },
+        "; dropping from `scores`.\n"
+      )
+      scores <- setdiff(scores, score)
+    }
+  }
+  # Only relevant when a sliding Z-score is actually being computed -- otherwise
   # empirical_null_distribution is never read.
   if (
-    "slide_z" %in% scores &&
+    any(names(SLIDE_Z_SCORES) %in% scores) &&
       is.null(second_negative_fraction_name) &&
       empirical_null_distribution
   ) {
@@ -515,7 +747,7 @@ getPhyloIgSeq <- function(
       # Inside the positive-fraction loop because `pos_ig_freq` is a property of
       # the positive fraction being scored, so it has to follow `pos` -- the
       # other three are the same for every iteration.
-      ig_freqs <- .resolve_ig_freqs(
+      ig_freqs <- resolve_ig_freqs(
         sam_metadata_df = sam_metadata_df,
         fraction_id_name = fraction_id_name,
         ig_freq_name = ig_freq_column,
@@ -565,8 +797,17 @@ getPhyloIgSeq <- function(
         next
       }
 
-      # Compute scores
-      if ("slide_z" %in% scores) {
+      # Compute scores.
+      #
+      # Every requested sliding Z-score is computed here, one per change axis (see
+      # SLIDE_Z_SCORES). Only the score itself goes into `ig_coating`; the MA
+      # geometry it came from goes to the `ma_coords` slot, long in
+      # `change_transform`, since two axes cannot share one set of
+      # obs_change/null_change columns.
+      ellipse_coords <- data.frame()
+      ma_coords_this <- data.frame()
+      for (slide_score in intersect(names(SLIDE_Z_SCORES), scores)) {
+        this_transform <- SLIDE_Z_SCORES[[slide_score]]
         slide_z_result <-
           get_slide_z(
             sorted_sample_df = ig_coating,
@@ -576,26 +817,51 @@ getPhyloIgSeq <- function(
             window_size = window_size,
             empirical_null_distribution = empirical_null_distribution,
             confidence_levels = confidence_levels,
-            imputed_taxa = zero_imputation_result$imputed_taxa
+            imputed_taxa = zero_imputation_result$imputed_taxa,
+            change_transform = this_transform,
+            # NA outside `ig_freq_layout = "long"`; only the purity-corrected axis
+            # reads them, and its score is dropped from `scores` above when the
+            # long layout isn't in use.
+            pos_ig_freq = ig_freqs$pos_ig_freq,
+            neg_ig_freq = ig_freqs$neg1_ig_freq
           )
 
-        ig_coating$slide_z <- slide_z_result$slide_z
-        ig_coating$ellipse_level <- slide_z_result$ellipse_level
+        ig_coating[[slide_score]] <- slide_z_result$slide_z
+
         if (prod(dim(slide_z_result$ma_coords)) != 0) {
-          ig_coating <- cbind(
-            ig_coating,
-            slide_z_result$ma_coords[, c(
-              "obs_change",
-              "obs_abundance",
-              if (empirical_null_distribution) {
-                c("null_change", "null_abundance")
-              }
-            )]
+          ma_coords_this <- rbind(
+            ma_coords_this,
+            data.frame(
+              sample_id = synthetic_id,
+              taxon_id = slide_z_result$ma_coords$taxon_id,
+              change_transform = this_transform,
+              slide_z_result$ma_coords[, c(
+                "obs_abundance",
+                "obs_change",
+                "null_abundance",
+                "null_change",
+                "obs_in_cone",
+                "null_in_cone"
+              )],
+              ellipse_level = if (is.null(slide_z_result$ellipse_level)) {
+                NA
+              } else {
+                as.character(slide_z_result$ellipse_level)
+              },
+              row.names = NULL
+            )
           )
         }
-        ellipse_coords <- slide_z_result$ellipse_coords
-      } else {
-        ellipse_coords <- data.frame()
+        if (prod(dim(slide_z_result$ellipse_coords)) != 0) {
+          ellipse_coords <- rbind(
+            ellipse_coords,
+            data.frame(
+              slide_z_result$ellipse_coords,
+              change_transform = this_transform,
+              row.names = NULL
+            )
+          )
+        }
       }
 
       # Other Ig scores:
@@ -604,7 +870,7 @@ getPhyloIgSeq <- function(
       # score. That reads like the sample was processed twice; report each
       # distinct complaint once per (sample x positive fraction) instead.
       warned_here <- character(0)
-      for (score in scores[scores != "slide_z"]) {
+      for (score in setdiff(scores, names(SLIDE_Z_SCORES))) {
         ig_coating[[score]] <-
           withCallingHandlers(
             compute_ig_score(
@@ -673,6 +939,7 @@ getPhyloIgSeq <- function(
           Class = "PhyloIgSeq",
           ig_coating = ig_coating,
           score_names = score_names_present,
+          ma_coords = ma_coords_this,
           positive_fraction_name = pos,
           first_negative_fraction_name = first_negative_fraction_name,
           second_negative_fraction_name = second_negative_fraction_name,
@@ -701,6 +968,19 @@ getPhyloIgSeq <- function(
   phyloigseq_obj@presorting_fraction_name <- presorting_fraction_name
   phyloigseq_obj@ig_freq_name <- ig_freq_name
   phyloigseq_obj@ig_freq_layout <- if (!is.null(ig_freq_name)) ig_freq_layout
+
+  # Cohort-level saturation report for the purity-corrected axis. Warned once
+  # here rather than per sample, because the number that matters is the share
+  # across the run, and 50 identical per-sample warnings would bury it.
+  #
+  # This is not a cosmetic complaint. A saturated taxon's change value is set by
+  # `pool_prior` rather than measured, while the null it is divided by is
+  # technical-replicate noise, so its |Z| is large by construction: on the SMILE
+  # cohort every single out-of-cone taxon clears |Z| > 1.96, and multiplying
+  # `pool_prior` by 1000 moves the largest |Z| around without shrinking it. The
+  # ranking among such taxa is meaningful; the magnitude and the significance
+  # call are not.
+  .warn_out_of_cone_rate(phyloigseq_obj@ma_coords)
 
   taxon_ids_to_keep <- unique(phyloigseq_obj@ig_coating$taxon_id)
   tax_table <- as.matrix(phyloseq::tax_table(physeq)@.Data)[

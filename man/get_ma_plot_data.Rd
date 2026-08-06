@@ -9,7 +9,12 @@ get_ma_plot_data(
   positive_fraction_name,
   first_negative_fraction_name,
   second_negative_fraction_name = NULL,
-  zero_treatments = c("keep_zeros")
+  zero_treatments = c("keep_zeros"),
+  change_transform = c("log_ratio"),
+  pos_ig_freq = NULL,
+  neg_ig_freq = NULL,
+  cone_policy = c("regularize", "na"),
+  pool_prior = NULL
 )
 }
 \arguments{
@@ -31,7 +36,29 @@ empirical null distribution, or \code{NULL} (default) to skip it.}
 \item{zero_treatments}{Character vector of \code{\link[=impute_zeros]{impute_zeros()}} \code{method}
 values to compute MA coordinates for; each contributes one
 \code{zero_treatment} level to the returned \code{plot_data}. Default
-\code{"keep_zeros"} (zeros left as-is, no imputation).}
+\code{"keep_zeros"} (zeros left as-is, no imputation).
+
+Comparing these on \code{change_transform = "purity_corrected"} is much less
+informative than it looks: the un-mixing regularizes both pools by
+\code{pool_prior}, one read's worth of composition by default, and imputed
+abundances are typically \emph{below} that (3.6x below under \code{"pseudo_count"},
+347x under \code{"bayesian_inference"}, on \code{ps_igseq}), so the prior rather than
+the imputed value sets the change of every imputed taxon. The treatments
+then agree to within ~2\% of the spread and render as one band. That is the
+regularization behaving as intended -- an imputed abundance below one read
+carries less than one read of evidence -- but it means an apparent
+insensitivity to zero handling on that axis is not evidence of one. Compare
+on \code{"log_ratio"}, where the same taxa separate by 29x more.}
+
+\item{change_transform}{Character vector of change (\code{M}) axes to compute --
+\code{"log_ratio"} and/or \code{"purity_corrected"}, see \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}. Like
+\code{zero_treatments}, several may be given: each contributes one
+\code{change_transform} level to \code{plot_data}, so a caller can switch axes by
+filtering rather than recomputing. Default \code{"log_ratio"}.}
+
+\item{pos_ig_freq, neg_ig_freq, cone_policy, pool_prior}{Passed to
+\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}; only read when \code{"purity_corrected"} is among
+\code{change_transform}.}
 }
 \value{
 A list with:
@@ -41,9 +68,14 @@ A list with:
 \item{\code{nb_zero_taxa}}{Number of taxa with a zero abundance in at
 least one compared fraction, before imputation.}
 \item{\code{plot_data}}{A long-format data frame (\code{M}, \code{A}, \code{comparison},
-\code{taxon_id}, \code{zero_treatment}) ready for \code{\link[=plot_ma]{plot_ma()}}.}
+\code{taxon_id}, \code{in_cone}, \code{imputed}, \code{zero_treatment}, \code{change_transform})
+ready for \code{\link[=plot_ma]{plot_ma()}}. \code{imputed} is per-row, i.e. per \code{zero_treatment}:
+whether \emph{that} treatment derived this taxon's coordinates from an
+imputed zero.}
 \item{\code{imputed_taxa}}{The union, across all \code{zero_treatments}, of
-\code{taxon_id}s imputed under that treatment (see \code{\link[=impute_zeros]{impute_zeros()}}).}
+\code{taxon_id}s imputed under that treatment (see \code{\link[=impute_zeros]{impute_zeros()}}). Kept
+for callers that want one set for the whole sample; use \code{plot_data$imputed}
+when the treatment matters.}
 }
 }
 \description{

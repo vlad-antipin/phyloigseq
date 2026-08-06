@@ -1,6 +1,6 @@
 Package: PhyloIgSeq
 Title: Immunoglobulin Coating and Diversity Analysis for 'phyloseq'
-Version: 0.3.0
+Version: 0.4.0
 Authors@R: c(
     person("Vladislav", "Antipin", , "Vladislav.Antipin@etu.sorbonne-universite.fr", role = c("aut", "cre", "cph")),
     person("Martin", "Larsen", role = c("aut", "ths", "cph")))

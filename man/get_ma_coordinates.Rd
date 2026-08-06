@@ -8,7 +8,12 @@ get_ma_coordinates(
   sorted_sample_df,
   positive_fraction_name,
   first_negative_fraction_name,
-  second_negative_fraction_name = NULL
+  second_negative_fraction_name = NULL,
+  change_transform = c("log_ratio", "purity_corrected"),
+  pos_ig_freq = NULL,
+  neg_ig_freq = NULL,
+  cone_policy = c("regularize", "na"),
+  pool_prior = NULL
 )
 }
 \arguments{
@@ -26,6 +31,25 @@ fraction for IgSeq).}
 \item{second_negative_fraction_name}{Name of the column holding a second
 negative fraction abundance (e.g. the remaining 1/10), used to build an
 empirical null distribution, or \code{NULL} (default) to skip it.}
+
+\item{change_transform}{Which change (\code{M}) axis to compute: \code{"log_ratio"}
+(default) or \code{"purity_corrected"}. See Details.}
+
+\item{pos_ig_freq, neg_ig_freq}{Single probabilities in \verb{[0, 1]}, the Ig+ frequencies
+measured inside the positive and first negative fractions (\code{p} and \code{q}). Required
+by \code{change_transform = "purity_corrected"}, ignored otherwise.}
+
+\item{cone_policy}{How to treat taxa outside the admissible cone
+\verb{pos/neg \\in [(1-q')/(1-p'), p'/q']} under \code{"purity_corrected"}, where the un-mixing
+returns a negative population. \code{"regularize"} (default) offsets both pools by
+\code{pool_prior}, so such taxa saturate at a finite, correctly-ordered value.
+\code{"na"} leaves them \code{NA}; this is for diagnostics only -- it discards a median of
+41.5\% of taxa per sample on the SMILE cohort, including the most strongly coated
+ones.}
+
+\item{pool_prior}{Passed to the un-mixing under \code{"purity_corrected"}; \code{NULL}
+(default) derives one read's worth of composition from the fraction depth. See
+\code{\link[=compute_ig_score]{compute_ig_score()}}.}
 }
 \value{
 A data frame with one row per taxon: \code{taxon_id}, \code{sample_id}, the
@@ -34,15 +58,55 @@ original fraction abundances (\code{pos}, \code{neg1}, \code{neg2}; \code{neg2} 
 (\code{obs_abundance}, \code{obs_change}, positive vs. first negative fraction),
 and, when a second negative fraction is supplied, the empirical-null
 coordinates (\code{null_abundance}, \code{null_change}, first vs. second negative
-fraction); otherwise \code{NA}.
+fraction); otherwise \code{NA}. Plus \code{change_transform}, recording which axis was
+computed, and \code{obs_in_cone}/\code{null_in_cone}, logical flags marking taxa the
+un-mixing had to clamp (\code{NA} throughout under \code{"log_ratio"}, which has no cone).
 }
 \description{
 Computes MA-plot-style coordinates (borrowed from microarray analysis: \code{M}
-= log-ratio, \code{A} = log-abundance) between a positive IgSeq fraction and a
+= change, \code{A} = log-abundance) between a positive IgSeq fraction and a
 negative fraction, per taxon. If a second negative fraction is supplied,
 the same coordinates are also computed between the two negative
 fractions, to serve as an empirical null distribution (see
 \code{\link[=get_slide_z]{get_slide_z()}}).
+}
+\details{
+The change (\code{M}) axis is selectable via \code{change_transform}, because the default
+\code{log2(pos/neg)} is a base-2 logit up to an additive constant -- it equals
+\code{"prob_ratio"} minus \code{log2(P/(1-P))}. Any \emph{affine} reparameterization of it is
+annihilated by \code{\link[=compute_slide_z]{compute_slide_z()}}'s centering and scaling, so only a non-affine
+change axis alters a sliding Z-score:
+\itemize{
+\item \code{"log_ratio"} (default) -- \code{log2(a) - log2(b)}, the classical MA-plot \code{M}, on the
+fraction abundances exactly as supplied.
+\item \code{"purity_corrected"} -- \code{log2(a_t/b_t)} on the populations recovered by un-mixing
+the two fractions with their measured Ig+ frequencies (see \code{\link[=compute_ig_score]{compute_ig_score()}}'s
+Details for the model). Requires \code{pos_ig_freq} and \code{neg_ig_freq}, but \emph{not} a
+pre-sort fraction: the prior term \code{log2(P/(1-P))} is an additive per-sample
+constant, so it is omitted, leaving an axis centred at 0 under the null and
+directly overlayable on \code{"log_ratio"}. Nonlinear in \code{pos/neg}, with local slope
+\code{1/(pos_ig_freq - neg_ig_freq)} at the null, so it stretches the tails while
+leaving taxa near the null essentially where they were.
+}
+
+The \code{A} axis is \code{log10(a) + log10(b)} for both: it is a precision proxy (how much
+evidence a taxon carries) and should not follow the change transform.
+
+Both the observed and the empirical-null pair go through the same map. Under the
+null hypothesis both are two samples of the same underlying composition at matched
+depth, so their ratios are identically distributed and identically transformed
+values are too -- which is what makes the null a valid reference for the observed
+axis, and why the second negative fraction's own Ig+ frequency is never needed.
+
+That equivalence is what the two axes trade against each other. \code{"log_ratio"} reads
+the abundances as given, so both pairs carry the same (zero, under matched depth)
+offset and \code{\link[=compute_slide_z]{compute_slide_z()}} cancels it exactly. \code{"purity_corrected"} must convert
+each fraction to a composition before un-mixing, which normalizes the two pairs
+independently; because the un-mixing is non-linear the resulting per-pair offsets do
+not cancel, so that axis carries a residual shift \code{"log_ratio"} does not. Do not
+"harmonize" the two by normalizing \code{"log_ratio"} as well -- that reintroduces the
+same non-cancelling shift on the default axis, and it is not visible in the scores,
+only in where the significance threshold lands.
 }
 \examples{
 data(ps_igseq)
