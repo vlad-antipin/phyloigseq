@@ -52,11 +52,18 @@
 #'   local abundance-dependent variance more closely at the cost of
 #'   noisier estimates. Default `50`; exposed to end users as an adjustable
 #'   parameter in the companion Shiny app.
-#' @param empirical_null_distribution If `TRUE` (default), center/scale
-#'   each taxon's observed log-ratio against the local Ig-.1 vs Ig-.2 null;
-#'   if `FALSE`, center/scale against the local Ig+ vs Ig-.1 distribution
-#'   itself. Forced to `FALSE` when `second_negative_fraction_name` is
-#'   `NULL`.
+#' @param empirical_null_distribution If `TRUE` (default), scale each taxon's
+#'   observed log-ratio by the local Ig-.1 vs Ig-.2 null's sd; if `FALSE`, by the
+#'   local Ig+ vs Ig-.1 distribution's own sd. Forced to `FALSE` when
+#'   `second_negative_fraction_name` is `NULL`. This chooses the *scale* only --
+#'   `center_on` chooses the location, and the two are separate decisions.
+#' @param center_on Which distribution supplies the local *location*: `"reference"`
+#'   (default, the mean of whichever distribution supplies the scale — at matched depth
+#'   this keeps `0` meaning "coated at the community's own Ig+ frequency") or
+#'   `"observed"` (the median Ig+ vs Ig-.1 change, which re-anchors on the typical
+#'   taxon). Also shifts the confidence ellipses to match, so both significance calls
+#'   agree. See [compute_slide_z()]'s "Where the centre comes from" — the two answer
+#'   different questions and `"observed"` gives up the tie to the pre-sort frequency.
 #' @param confidence_levels Optional numeric vector of confidence levels
 #'   (e.g. `c(0.95, 0.99, 0.999)`) to build confidence ellipses for; `NULL`
 #'   (default) skips ellipse construction.
@@ -134,7 +141,8 @@ get_slide_z <-
     first_negative_fraction_name = "neg1",
     second_negative_fraction_name = "neg2",
     window_size = 50,
-    empirical_null_distribution = TRUE,
+    empirical_null_distribution = TRUE, # picks the SCALE
+    center_on = c("reference", "observed"), # picks the LOCATION
     confidence_levels = NULL, # c(0.95, 0.99, 0.999)
     imputed_taxa = NULL, # calculate slide z differently on those taxa
     change_transform = c("log_ratio", "purity_corrected"),
@@ -146,6 +154,7 @@ get_slide_z <-
   ) {
     change_transform <- match.arg(change_transform)
     cone_policy <- match.arg(cone_policy)
+    center_on <- match.arg(center_on)
     if (empirical_null_distribution && is.null(second_negative_fraction_name)) {
       warning(
         "No second negative fraction furnished, cannot model empirical null ( Ig-.1 vs Ig-.2) distribution...\n"
@@ -195,13 +204,15 @@ get_slide_z <-
       ma_coords = ma_coords,
       was_imputed = ma_coords$taxon_id %in% imputed_taxa,
       window_size = window_size,
-      empirical_null_distribution = empirical_null_distribution
+      empirical_null_distribution = empirical_null_distribution,
+      center_on = center_on
     )
     if (!is.null(confidence_levels)) {
       ellipse_data <- get_ellipse_data(
         sorted_sample_df = ma_coords,
         imputed_taxa = imputed_taxa,
         empirical_null_distribution = empirical_null_distribution,
+        center_on = center_on,
         confidence_levels = confidence_levels
       )
     } else {
@@ -220,28 +231,34 @@ get_slide_z <-
 #' Center and Scale Observed Log-Ratios Against a Null Distribution
 #'
 #' Internal helper shared by [compute_slide_z()]'s imputed-taxa branch and
-#' its per-window loop: both center/scale `df$obs_change` against either the
-#' empirical null (`df$null_change`, Ig-.1 vs Ig-.2) or the observed
-#' distribution itself (`df$obs_change`, Ig+ vs Ig-.1), depending on
-#' `empirical_null_distribution`. Pulled out verbatim from two identical
-#' inline blocks — no formula change.
+#' its per-window loop: both center/scale `df$obs_change` against a location and a
+#' scale estimated by `.slide_z_params()`.
 #'
 #' @param df A data frame with `obs_change` and (if
 #'   `empirical_null_distribution`) `null_change` columns.
-#' @param empirical_null_distribution See [compute_slide_z()].
+#' @param empirical_null_distribution,center_on See [compute_slide_z()].
 #' @param estimate_from Optional logical vector, `nrow(df)` long, restricting which
-#'   rows may contribute to the reference's mean/sd. The numerator is never
-#'   restricted, so every row still gets a score on the same scale. `NULL` (default)
-#'   uses every row, i.e. the historical behaviour.
+#'   rows may contribute to the scale. The numerator is never restricted, so every
+#'   row still gets a score on the same scale. `NULL` (default) uses every row.
+#' @param center_from As `estimate_from`, but for the location; `NULL` reuses
+#'   `estimate_from`.
 #'
 #' @return Numeric vector of Z-scores, same length as `nrow(df)`.
 #' @noRd
 .slide_z_center_scale <- function(
   df,
   empirical_null_distribution,
-  estimate_from = NULL
+  estimate_from = NULL,
+  center_on = "reference",
+  center_from = NULL
 ) {
-  params <- .slide_z_params(df, empirical_null_distribution, estimate_from)
+  params <- .slide_z_params(
+    df,
+    empirical_null_distribution,
+    estimate_from,
+    center_on,
+    center_from
+  )
   (df$obs_change - params$center) / params$scale
 }
 
@@ -251,33 +268,66 @@ get_slide_z <-
 #' `.slide_z_center_scale()` so callers can inspect how many rows actually contributed
 #' before deciding whether the estimate is usable (see `.slide_z_windowed()`).
 #'
-#' @param df,empirical_null_distribution,estimate_from See `.slide_z_center_scale()`.
+#' Location and scale are estimated **separately**, because they are not properties of
+#' the same distribution -- see [compute_slide_z()]'s "Where the centre comes from"
+#' section for why, and what each choice assumes.
 #'
-#' @return A list with `center`, `scale` and `n`, the number of non-`NA` reference
-#'   values that contributed.
+#' @param df,empirical_null_distribution,estimate_from,center_on,center_from See
+#'   `.slide_z_center_scale()`.
+#'
+#' @return A list with `center`, `scale`, `n` (non-`NA` values behind the scale) and
+#'   `n_center` (non-`NA` values behind the location). Under
+#'   `center_on = "reference"` the two counts are equal by construction: both come
+#'   from the same vector.
 #' @noRd
 .slide_z_params <- function(
   df,
   empirical_null_distribution,
-  estimate_from = NULL
+  estimate_from = NULL,
+  center_on = c("reference", "observed"),
+  center_from = NULL
 ) {
+  center_on <- match.arg(center_on)
+
+  usable <- function(values, mask) {
+    if (is.logical(mask) && length(mask) == length(values)) {
+      values <- values[mask]
+    }
+    values[!is.na(values)]
+  }
+
   if (empirical_null_distribution) {
-    # aka "slide_z_modern": center/scale each pos vs neg ratio with the
-    # empirical null (neg vs neg) mean and sd.
+    # aka "slide_z_modern": scale each pos vs neg ratio by the empirical null
+    # (neg vs neg) sd.
     reference <- df$null_change
   } else {
-    # aka "slide_z_standard": center/scale against the same pos vs neg
-    # distribution itself.
+    # aka "slide_z_standard": scale against the same pos vs neg distribution
+    # itself.
     reference <- df$obs_change
   }
-  if (is.logical(estimate_from) && length(estimate_from) == length(reference)) {
-    reference <- reference[estimate_from]
+  reference <- usable(reference, estimate_from)
+
+  if (center_on == "reference") {
+    # Legacy behaviour: location and scale both read off the reference, so under
+    # the empirical null the centre is the mean of the Ig-.1 vs Ig-.2 pair.
+    location <- reference
+    center <- if (length(location) > 0) mean(location) else NA_real_
+  } else {
+    # The location belongs to the comparison being scored, not to the pair that
+    # supplies the scale. Median rather than mean so the coated taxa the score is
+    # meant to find cannot drag the point they are measured from.
+    location <- usable(
+      df$obs_change,
+      if (is.null(center_from)) estimate_from else center_from
+    )
+    center <- if (length(location) > 0) stats::median(location) else NA_real_
   }
-  reference <- reference[!is.na(reference)]
+
   list(
-    center = if (length(reference) > 0) mean(reference) else NA_real_,
+    center = center,
     scale = if (length(reference) > 1) sd(reference) else NA_real_,
-    n = length(reference)
+    n = length(reference),
+    n_center = length(location)
   )
 }
 
@@ -290,16 +340,22 @@ get_slide_z <-
 #' `estimate_from` rows only, and scores every row in the window's non-overlapping core
 #' against it.
 #'
-#' A window whose reference has fewer than `min_estimable` usable values falls back to
-#' the estimate pooled over this population's whole `estimate_from` set, rather than
-#' emitting `NA` or a scale derived from one or two points.
+#' A window whose location or scale rests on fewer than `min_estimable` usable values
+#' falls back, for that quantity alone, to the estimate pooled over this population's
+#' whole `estimate_from`/`center_from` set, rather than emitting `NA` or a scale
+#' derived from one or two points. The two fall back independently because they can
+#' rest on different vectors (see `.slide_z_params()`); under
+#' `center_on = "reference"` they rest on the same one, so they always fall back
+#' together and the behaviour is the historical one.
 #'
 #' @param coords MA-plot coordinates for one population, in any row order.
 #' @param estimate_from Logical vector, `nrow(coords)` long: which rows may contribute
-#'   to a window's mean/sd.
-#' @param window_size,empirical_null_distribution See [compute_slide_z()].
-#' @param min_estimable Minimum usable reference values for a window's own estimate to
-#'   be trusted.
+#'   to a window's scale.
+#' @param center_from As `estimate_from`, but for the location; `NULL` reuses
+#'   `estimate_from`.
+#' @param window_size,empirical_null_distribution,center_on See [compute_slide_z()].
+#' @param min_estimable Minimum usable values for a window's own estimate to be
+#'   trusted.
 #'
 #' @return A list with `slide_z` (numeric, `coords`'s original row order) and
 #'   `n_fallback`, how many windows had to use the pooled estimate.
@@ -309,11 +365,16 @@ get_slide_z <-
   estimate_from,
   window_size,
   empirical_null_distribution,
+  center_on = "reference",
+  center_from = NULL,
   min_estimable = 3L
 ) {
   n_rows <- nrow(coords)
   if (n_rows == 0) {
     return(list(slide_z = numeric(0), n_fallback = 0L))
+  }
+  if (is.null(center_from)) {
+    center_from <- estimate_from
   }
 
   # Make sure that coordinates are sorted by observed abundance, so that a
@@ -325,6 +386,7 @@ get_slide_z <-
   taxa_order <- order(coords$obs_abundance, decreasing = TRUE)
   coords <- coords[taxa_order, ]
   estimate_from <- estimate_from[taxa_order]
+  center_from <- center_from[taxa_order]
 
   # Overlap by the half of the size of the window
   overlap <- window_size %/% 2
@@ -345,7 +407,13 @@ get_slide_z <-
   # also exactly what a population smaller than `window_size` gets anyway: the
   # arithmetic above yields a single window spanning every row, so a small
   # population is pooled without needing a special case.
-  pooled <- .slide_z_params(coords, empirical_null_distribution, estimate_from)
+  pooled <- .slide_z_params(
+    coords,
+    empirical_null_distribution,
+    estimate_from,
+    center_on,
+    center_from
+  )
 
   slide_z_all <- c()
   n_fallback <- 0L
@@ -367,16 +435,24 @@ get_slide_z <-
     params <- .slide_z_params(
       taxa_slice,
       empirical_null_distribution,
-      estimate_from[slice_idx]
+      estimate_from[slice_idx],
+      center_on,
+      center_from[slice_idx]
     )
+    fell_back <- FALSE
     if (is.na(params$scale) || params$n < min_estimable) {
-      params <- pooled
-      # With a single window the pooled set and the window's own set are the same
-      # rows, so this is not a fallback and warning about one would be noise --
-      # it would fire for every population smaller than `window_size`.
-      if (n_last_window > 1) {
-        n_fallback <- n_fallback + 1L
-      }
+      params$scale <- pooled$scale
+      fell_back <- TRUE
+    }
+    if (is.na(params$center) || params$n_center < min_estimable) {
+      params$center <- pooled$center
+      fell_back <- TRUE
+    }
+    # With a single window the pooled set and the window's own set are the same
+    # rows, so this is not a fallback and warning about one would be noise --
+    # it would fire for every population smaller than `window_size`.
+    if (fell_back && n_last_window > 1) {
+      n_fallback <- n_fallback + 1L
     }
 
     slide_z_slice <- (taxa_slice$obs_change - params$center) / params$scale
@@ -426,23 +502,27 @@ get_slide_z <-
 #' from the numerator, which a mask would not, and that is the correct behaviour for an
 #' untestable observed pair.
 #'
+#' Which pair's flag applies is therefore a property of the *quantity* being
+#' estimated, not of the call: under `center_on = "observed"` the scale still comes
+#' from the null pair while the location comes from the observed one, so the two need
+#' different masks. `.slide_z_cone_mask()` builds either; `.slide_z_estimate_mask()`
+#' is the thin wrapper picking whichever pair supplies the scale.
+#'
 #' @param ma_coords MA-plot coordinates, optionally carrying `obs_in_cone`/`null_in_cone`.
+#' @param pair Which pair's admissibility to read: `"observed"` or `"null"`.
 #' @param empirical_null_distribution See [compute_slide_z()].
 #' @param was_imputed Optional logical vector, `nrow(ma_coords)` long, flagging the
 #'   imputed population; `NULL` (default) applies the cone to every row.
 #'
 #' @return Logical vector, `nrow(ma_coords)` long.
 #' @noRd
-.slide_z_estimate_mask <- function(
+.slide_z_cone_mask <- function(
   ma_coords,
-  empirical_null_distribution,
+  pair = c("observed", "null"),
   was_imputed = NULL
 ) {
-  flag <- if (empirical_null_distribution) {
-    ma_coords$null_in_cone
-  } else {
-    ma_coords$obs_in_cone
-  }
+  pair <- match.arg(pair)
+  flag <- if (pair == "null") ma_coords$null_in_cone else ma_coords$obs_in_cone
   if (is.null(flag)) {
     return(rep(TRUE, nrow(ma_coords)))
   }
@@ -451,6 +531,26 @@ get_slide_z <-
     mask[was_imputed] <- TRUE
   }
   mask
+}
+
+#' Mask for Whichever Pair Supplies the Slide-Z Scale
+#'
+#' See `.slide_z_cone_mask()`, of which this is the wrapper that reads
+#' `empirical_null_distribution` instead of a `pair`.
+#'
+#' @param ma_coords,empirical_null_distribution,was_imputed See `.slide_z_cone_mask()`.
+#' @return Logical vector, `nrow(ma_coords)` long.
+#' @noRd
+.slide_z_estimate_mask <- function(
+  ma_coords,
+  empirical_null_distribution,
+  was_imputed = NULL
+) {
+  .slide_z_cone_mask(
+    ma_coords,
+    pair = if (empirical_null_distribution) "null" else "observed",
+    was_imputed = was_imputed
+  )
 }
 
 #' Compute Sliding-Window Index Bounds for `compute_slide_z()`
@@ -529,10 +629,65 @@ get_slide_z <-
 #' The core sliding-window statistic behind [get_slide_z()]: rather than
 #' assuming one global null distribution for the whole sample, taxa are
 #' ranked by observed abundance and processed in overlapping windows of
-#' `window_size` taxa, each window's own local mean/sd (of either the
-#' empirical null or the observed change, see `empirical_null_distribution`)
-#' used to center/scale the Z-scores of the taxa in that window's non-
-#' overlapping "core".
+#' `window_size` taxa, each window's own local location and scale used to
+#' center/scale the Z-scores of the taxa in that window's non-overlapping
+#' "core".
+#'
+#' @section Where the centre comes from:
+#' Location and scale are estimated from **different** distributions, because they are
+#' not properties of the same thing. `empirical_null_distribution` chooses the scale:
+#' the sd of the Ig-.1 vs Ig-.2 pair measures replicate noise and carries no coating
+#' signal, which is what a yardstick should be. `center_on` chooses the location.
+#'
+#' **Zero on the change axis is not an arbitrary point.** Write `p_i` for the fraction
+#' of taxon `i`'s cells that are Ig-coated and `n_i` for its true abundance. The Ig+
+#' pool is `n_i p_i`, the Ig- pool `n_i (1 - p_i)`, and with both fractions sequenced to
+#' a common depth,
+#'
+#' \deqn{E[\mathrm{obs\_change}_i] = \mathrm{logit}_2(p_i) + \log_2\frac{\sum n(1-p)}{\sum n p}}
+#'
+#' The second term is one constant fixed by closure, and since `sum(n p) / sum(n)` is
+#' `P`, the community's overall Ig+ frequency -- the very quantity the assay measures on
+#' the pre-sort fraction -- that constant is exactly `-logit2(P)`. So
+#' `E[obs_change_i] = logit2(p_i) - logit2(P)`: the raw log-ratio already sits on an
+#' anchored scale where **0 means "coated at the community's own rate `P`"**. (Verified
+#' numerically to 6 decimals; a corollary is that a community where *every* taxon is
+#' coated at the same rate has `obs_change = 0` for every taxon, whatever that rate --
+#' uniform coating is invisible to this design, and no choice of centre changes that.)
+#'
+#' * `"reference"` (default) -- the mean of whichever distribution supplies the scale,
+#'   i.e. the mean of Ig-.1 vs Ig-.2 under the empirical null. At matched depth that is
+#'   ~0 by construction, so this **preserves the anchor**: `Z_i` estimates
+#'   `(logit2(p_i) - logit2(P))` over the local replicate sd. It answers "is this taxon
+#'   coated at a higher rate than the community as a whole?"
+#' * `"observed"` -- the **median** of `obs_change` over the window, which re-anchors on
+#'   the typical taxon instead. It answers "is this taxon coated at a higher rate than
+#'   the median taxon in its abundance band?" -- a legitimate but different question,
+#'   and one that gives up the tie to `P`.
+#'
+#' On simulations with known `p_i`, `"reference"` recovers the sign of the truth
+#' (whether taxon `i` is coated above `P`) in 100% / 97.2% / 83.2% of taxa across a
+#' coated minority, a coated majority and an all-coated community, against 68.2% /
+#' 65.2% / 83.5% for `"observed"`. Worse, when coating is confounded with abundance --
+#' the top decile coated at 0.95, the rest at 0.05 -- windowing the median puts the
+#' coated taxa in a window whose median *is* the coated level, collapsing
+#' `Spearman(Z, p_i)` from 0.62 to 0.22. `"observed"` centring removes signal in exactly
+#' the case where the signal is strongest.
+#'
+#' Prefer `"observed"` only when the tie to `P` is not wanted or not available, e.g. no
+#' pre-sort fraction and no reason to trust that the two sorted fractions were sequenced
+#' at comparable depth. Which brings up the one real hazard of `"reference"`:
+#'
+#' @section The anchor depends on matched depth:
+#' `"reference"` subtracts the mean of the Ig-.1 vs Ig-.2 pair, which is ~0 only while
+#' the fractions are at a common depth. It is not a general-purpose estimate of the
+#' anchor: with `rarefy_by_sample = FALSE` in [group_sorted_samples()] it subtracts
+#' `log2(S_neg1/S_neg2)` from a quantity carrying `log2(S_pos/S_neg1)`, two different
+#' constants. On `ps_igseq` that translated whole samples by -1.77 to +1.20 Z units and
+#' **inverted the conclusion**: sample_4 read 5 enriched / 29 depleted rarefied against
+#' 44 / 5 unrarefied, sample_5 1 / 10 against 13 / 0. Keep `rarefy_by_sample = TRUE`
+#' unless you have corrected the depth ratio yourself; the anchor argument above assumes
+#' it throughout.
 #'
 #' Taxa flagged via `was_imputed` form a **separate population**, scored against a
 #' single pooled mean/sd taken over all of them at once rather than mixed into the
@@ -589,12 +744,19 @@ get_slide_z <-
 #'   `ma_coords`, flagging which taxa had an imputed zero and should be
 #'   scored as a population apart.
 #' @param window_size See [get_slide_z()]. Default `50`.
-#' @param empirical_null_distribution See [get_slide_z()]. Default `TRUE`.
+#' @param empirical_null_distribution See [get_slide_z()]. Default `TRUE`. Chooses the
+#'   *scale* only; see the "Where the centre comes from" section and `center_on`.
+#' @param center_on Which distribution supplies each window's location:
+#'   `"reference"` (default) the mean of whichever distribution
+#'   `empirical_null_distribution` picked for the scale, `"observed"` the median of
+#'   `obs_change`. See the "Where the centre comes from" section -- these are different
+#'   statistics answering different questions, not a tuning knob.
 #' @param estimate_from Optional logical vector, same length/row order as `ma_coords`,
-#'   marking which taxa may contribute to a window's mean/sd. `NULL` (default) derives
-#'   it from `ma_coords`'s `obs_in_cone`/`null_in_cone` columns -- whichever pair
-#'   supplies the reference -- treating `NA` (the `"log_ratio"` axis, which has no
-#'   cone) as usable.
+#'   marking which taxa may contribute to a window's estimate. `NULL` (default) derives
+#'   it per quantity from `ma_coords`'s `obs_in_cone`/`null_in_cone` columns -- the
+#'   scale from whichever pair supplies it, the location always from `obs_in_cone`
+#'   under `center_on = "observed"` -- treating `NA` (the `"log_ratio"` axis, which has
+#'   no cone) as usable. Supplying it explicitly overrides **both**.
 #'
 #' @return A numeric vector of per-taxon sliding Z-scores, in `ma_coords`'s
 #'   original row order (or `NULL`, with a `warning()`, if `ma_coords` has
@@ -625,9 +787,11 @@ compute_slide_z <- function(
   # has imputed zero(s) and should
   # be considered separately
   window_size = 50,
-  empirical_null_distribution = TRUE,
-  estimate_from = NULL # which rows may inform a window's mean/sd
+  empirical_null_distribution = TRUE, # picks the SCALE
+  center_on = c("reference", "observed"), # picks the LOCATION
+  estimate_from = NULL # which rows may inform a window's estimate
 ) {
+  center_on <- match.arg(center_on)
   has_imputed <- is.logical(was_imputed) &&
     length(was_imputed) == nrow(ma_coords) &&
     any(was_imputed)
@@ -638,6 +802,21 @@ compute_slide_z <- function(
       empirical_null_distribution,
       was_imputed = if (has_imputed) was_imputed else NULL
     )
+    # The location is read off `obs_change`, so it is the OBSERVED pair's
+    # admissibility that governs it -- not the null pair's, which may differ (see
+    # `.slide_z_cone_mask()`). A saturated observed value must not shift the median
+    # even when its negative-vs-negative pair is perfectly good.
+    center_from <- if (center_on == "observed") {
+      .slide_z_cone_mask(
+        ma_coords,
+        pair = "observed",
+        was_imputed = if (has_imputed) was_imputed else NULL
+      )
+    } else {
+      estimate_from
+    }
+  } else {
+    center_from <- estimate_from
   }
 
   if (!has_imputed) {
@@ -645,7 +824,9 @@ compute_slide_z <- function(
       coords = ma_coords,
       estimate_from = estimate_from,
       window_size = window_size,
-      empirical_null_distribution = empirical_null_distribution
+      empirical_null_distribution = empirical_null_distribution,
+      center_on = center_on,
+      center_from = center_from
     )
     if (nrow(ma_coords) == 0) {
       warning(paste0(
@@ -690,16 +871,24 @@ compute_slide_z <- function(
     coords = clean_coords,
     estimate_from = estimate_from[!was_imputed],
     window_size = window_size,
-    empirical_null_distribution = empirical_null_distribution
+    empirical_null_distribution = empirical_null_distribution,
+    center_on = center_on,
+    center_from = center_from[!was_imputed]
   )
   .warn_slide_z_fallback(clean_result$n_fallback)
 
   slide_z_merged <- rep(NA_real_, length(was_imputed))
   slide_z_merged[!was_imputed] <- clean_result$slide_z
+  # This population gets its own location too, not the clean population's: its
+  # `obs_change` values are shifted by the zero treatment (a substituted count on
+  # one side of a pair moves the ratio), so borrowing the clean centre would score
+  # that shift as coating.
   slide_z_merged[was_imputed] <- .slide_z_center_scale(
     imputed_coords,
     empirical_null_distribution,
-    estimate_from = estimate_from[was_imputed]
+    estimate_from = estimate_from[was_imputed],
+    center_on = center_on,
+    center_from = center_from[was_imputed]
   )
   slide_z_merged
 }
@@ -745,6 +934,15 @@ compute_slide_z <- function(
 #'   fit over the observed (Ig+ vs Ig-.1) coordinates instead (a `warning()`
 #'   is issued in the latter case when `empirical_null_distribution` was
 #'   requested).
+#' @param center_on Where the fitted envelope sits on the change axis:
+#'   `"observed"` (default) translates it so its centre is the median observed
+#'   change, `"reference"` leaves it centred on the fitted cloud's own mean (the
+#'   behaviour before 2026-08-07). The same choice [compute_slide_z()] makes for the
+#'   Z-score, applied here so the two significance calls do not disagree — see its
+#'   "Where the centre comes from" section. Only the change axis is moved; the
+#'   abundance axis is left on the fitted cloud, which is a separate mismatch (an
+#'   observed point can lie outside the envelope on `A` alone, measured at 0-4 taxa
+#'   per sample on `ps_igseq`).
 #' @param confidence_levels Numeric vector of confidence levels (e.g.
 #'   `c(0.95, 0.99, 0.999)`) to build nested ellipses for.
 #'
@@ -794,8 +992,10 @@ get_ellipse_data <-
     sorted_sample_df,
     imputed_taxa = NULL,
     empirical_null_distribution = TRUE,
+    center_on = c("reference", "observed"),
     confidence_levels # a vector of confidence levels
   ) {
+    center_on <- match.arg(center_on)
     if (
       is.null(sorted_sample_df$null_abundance) ||
         all(is.na(sorted_sample_df$null_abundance)) ||
@@ -864,6 +1064,29 @@ get_ellipse_data <-
       ellipse_list[[as.character(confidence_levels)]] <- ellipse_data
     } else {
       ellipse_list <- ellipse_data
+    }
+
+    # `car::dataEllipse()` centres every level on the fitted cloud's own mean. Under
+    # `center_on = "observed"` the envelope keeps that cloud's shape, spread and tilt
+    # -- which is what the Ig-.1 vs Ig-.2 pair is there to measure -- but slides along
+    # the change axis to sit on the observed cloud's median, the same location
+    # compute_slide_z() subtracts. Without this the ellipse and the Z-score would
+    # disagree about which taxa are significant whenever the two clouds do not
+    # coincide, which on ps_igseq is always.
+    if (center_on == "observed") {
+      center_taxa <- valid_taxa_obs &
+        .slide_z_cone_mask(sorted_sample_df, pair = "observed")
+      observed_center <- stats::median(
+        sorted_sample_df$obs_change[center_taxa],
+        na.rm = TRUE
+      )
+      change_shift <- observed_center - mean(change_coords)
+      if (is.finite(change_shift)) {
+        ellipse_list <- lapply(ellipse_list, function(ellipse) {
+          ellipse[, 2] <- ellipse[, 2] + change_shift
+          ellipse
+        })
+      }
     }
 
     ellipse_coords <- data.frame()

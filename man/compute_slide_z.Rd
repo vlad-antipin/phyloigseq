@@ -9,6 +9,7 @@ compute_slide_z(
   was_imputed = NULL,
   window_size = 50,
   empirical_null_distribution = TRUE,
+  center_on = c("reference", "observed"),
   estimate_from = NULL
 )
 }
@@ -24,13 +25,21 @@ scored as a population apart.}
 
 \item{window_size}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{50}.}
 
-\item{empirical_null_distribution}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{TRUE}.}
+\item{empirical_null_distribution}{See \code{\link[=get_slide_z]{get_slide_z()}}. Default \code{TRUE}. Chooses the
+\emph{scale} only; see the "Where the centre comes from" section and \code{center_on}.}
+
+\item{center_on}{Which distribution supplies each window's location:
+\code{"reference"} (default) the mean of whichever distribution
+\code{empirical_null_distribution} picked for the scale, \code{"observed"} the median of
+\code{obs_change}. See the "Where the centre comes from" section -- these are different
+statistics answering different questions, not a tuning knob.}
 
 \item{estimate_from}{Optional logical vector, same length/row order as \code{ma_coords},
-marking which taxa may contribute to a window's mean/sd. \code{NULL} (default) derives
-it from \code{ma_coords}'s \code{obs_in_cone}/\code{null_in_cone} columns -- whichever pair
-supplies the reference -- treating \code{NA} (the \code{"log_ratio"} axis, which has no
-cone) as usable.}
+marking which taxa may contribute to a window's estimate. \code{NULL} (default) derives
+it per quantity from \code{ma_coords}'s \code{obs_in_cone}/\code{null_in_cone} columns -- the
+scale from whichever pair supplies it, the location always from \code{obs_in_cone}
+under \code{center_on = "observed"} -- treating \code{NA} (the \code{"log_ratio"} axis, which has
+no cone) as usable. Supplying it explicitly overrides \strong{both}.}
 }
 \value{
 A numeric vector of per-taxon sliding Z-scores, in \code{ma_coords}'s
@@ -41,12 +50,70 @@ zero non-imputed rows).
 The core sliding-window statistic behind \code{\link[=get_slide_z]{get_slide_z()}}: rather than
 assuming one global null distribution for the whole sample, taxa are
 ranked by observed abundance and processed in overlapping windows of
-\code{window_size} taxa, each window's own local mean/sd (of either the
-empirical null or the observed change, see \code{empirical_null_distribution})
-used to center/scale the Z-scores of the taxa in that window's non-
-overlapping "core".
+\code{window_size} taxa, each window's own local location and scale used to
+center/scale the Z-scores of the taxa in that window's non-overlapping
+"core".
 }
-\details{
+\section{Where the centre comes from}{
+
+Location and scale are estimated from \strong{different} distributions, because they are
+not properties of the same thing. \code{empirical_null_distribution} chooses the scale:
+the sd of the Ig-.1 vs Ig-.2 pair measures replicate noise and carries no coating
+signal, which is what a yardstick should be. \code{center_on} chooses the location.
+
+\strong{Zero on the change axis is not an arbitrary point.} Write \code{p_i} for the fraction
+of taxon \code{i}'s cells that are Ig-coated and \code{n_i} for its true abundance. The Ig+
+pool is \verb{n_i p_i}, the Ig- pool \code{n_i (1 - p_i)}, and with both fractions sequenced to
+a common depth,
+
+\deqn{E[\mathrm{obs\_change}_i] = \mathrm{logit}_2(p_i) + \log_2\frac{\sum n(1-p)}{\sum n p}}
+
+The second term is one constant fixed by closure, and since \verb{sum(n p) / sum(n)} is
+\code{P}, the community's overall Ig+ frequency -- the very quantity the assay measures on
+the pre-sort fraction -- that constant is exactly \code{-logit2(P)}. So
+\code{E[obs_change_i] = logit2(p_i) - logit2(P)}: the raw log-ratio already sits on an
+anchored scale where \strong{0 means "coated at the community's own rate \code{P}"}. (Verified
+numerically to 6 decimals; a corollary is that a community where \emph{every} taxon is
+coated at the same rate has \code{obs_change = 0} for every taxon, whatever that rate --
+uniform coating is invisible to this design, and no choice of centre changes that.)
+\itemize{
+\item \code{"reference"} (default) -- the mean of whichever distribution supplies the scale,
+i.e. the mean of Ig-.1 vs Ig-.2 under the empirical null. At matched depth that is
+~0 by construction, so this \strong{preserves the anchor}: \code{Z_i} estimates
+\code{(logit2(p_i) - logit2(P))} over the local replicate sd. It answers "is this taxon
+coated at a higher rate than the community as a whole?"
+\item \code{"observed"} -- the \strong{median} of \code{obs_change} over the window, which re-anchors on
+the typical taxon instead. It answers "is this taxon coated at a higher rate than
+the median taxon in its abundance band?" -- a legitimate but different question,
+and one that gives up the tie to \code{P}.
+}
+
+On simulations with known \code{p_i}, \code{"reference"} recovers the sign of the truth
+(whether taxon \code{i} is coated above \code{P}) in 100\% / 97.2\% / 83.2\% of taxa across a
+coated minority, a coated majority and an all-coated community, against 68.2\% /
+65.2\% / 83.5\% for \code{"observed"}. Worse, when coating is confounded with abundance --
+the top decile coated at 0.95, the rest at 0.05 -- windowing the median puts the
+coated taxa in a window whose median \emph{is} the coated level, collapsing
+\code{Spearman(Z, p_i)} from 0.62 to 0.22. \code{"observed"} centring removes signal in exactly
+the case where the signal is strongest.
+
+Prefer \code{"observed"} only when the tie to \code{P} is not wanted or not available, e.g. no
+pre-sort fraction and no reason to trust that the two sorted fractions were sequenced
+at comparable depth. Which brings up the one real hazard of \code{"reference"}:
+}
+
+\section{The anchor depends on matched depth}{
+
+\code{"reference"} subtracts the mean of the Ig-.1 vs Ig-.2 pair, which is ~0 only while
+the fractions are at a common depth. It is not a general-purpose estimate of the
+anchor: with \code{rarefy_by_sample = FALSE} in \code{\link[=group_sorted_samples]{group_sorted_samples()}} it subtracts
+\code{log2(S_neg1/S_neg2)} from a quantity carrying \code{log2(S_pos/S_neg1)}, two different
+constants. On \code{ps_igseq} that translated whole samples by -1.77 to +1.20 Z units and
+\strong{inverted the conclusion}: sample_4 read 5 enriched / 29 depleted rarefied against
+44 / 5 unrarefied, sample_5 1 / 10 against 13 / 0. Keep \code{rarefy_by_sample = TRUE}
+unless you have corrected the depth ratio yourself; the anchor argument above assumes
+it throughout.
+
 Taxa flagged via \code{was_imputed} form a \strong{separate population}, scored against a
 single pooled mean/sd taken over all of them at once rather than mixed into the
 sliding windows. Two separate reasons, both measured on \code{ps_igseq} under
@@ -94,6 +161,7 @@ so pooling over all of them is the least-wrong estimate, not a good one. Their \
 remains a floor rather than a test, exactly as for the saturated taxa described in
 \code{\link[=get_slide_z]{get_slide_z()}}.
 }
+
 \examples{
 data(ps_igseq)
 grouped <- group_sorted_samples(

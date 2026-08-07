@@ -11,6 +11,7 @@ get_slide_z(
   second_negative_fraction_name = "neg2",
   window_size = 50,
   empirical_null_distribution = TRUE,
+  center_on = c("reference", "observed"),
   confidence_levels = NULL,
   imputed_taxa = NULL,
   change_transform = c("log_ratio", "purity_corrected"),
@@ -44,11 +45,19 @@ local abundance-dependent variance more closely at the cost of
 noisier estimates. Default \code{50}; exposed to end users as an adjustable
 parameter in the companion Shiny app.}
 
-\item{empirical_null_distribution}{If \code{TRUE} (default), center/scale
-each taxon's observed log-ratio against the local Ig-.1 vs Ig-.2 null;
-if \code{FALSE}, center/scale against the local Ig+ vs Ig-.1 distribution
-itself. Forced to \code{FALSE} when \code{second_negative_fraction_name} is
-\code{NULL}.}
+\item{empirical_null_distribution}{If \code{TRUE} (default), scale each taxon's
+observed log-ratio by the local Ig-.1 vs Ig-.2 null's sd; if \code{FALSE}, by the
+local Ig+ vs Ig-.1 distribution's own sd. Forced to \code{FALSE} when
+\code{second_negative_fraction_name} is \code{NULL}. This chooses the \emph{scale} only --
+\code{center_on} chooses the location, and the two are separate decisions.}
+
+\item{center_on}{Which distribution supplies the local \emph{location}: \code{"reference"}
+(default, the mean of whichever distribution supplies the scale — at matched depth
+this keeps \code{0} meaning "coated at the community's own Ig+ frequency") or
+\code{"observed"} (the median Ig+ vs Ig-.1 change, which re-anchors on the typical
+taxon). Also shifts the confidence ellipses to match, so both significance calls
+agree. See \code{\link[=compute_slide_z]{compute_slide_z()}}'s "Where the centre comes from" — the two answer
+different questions and \code{"observed"} gives up the tie to the pre-sort frequency.}
 
 \item{confidence_levels}{Optional numeric vector of confidence levels
 (e.g. \code{c(0.95, 0.99, 0.999)}) to build confidence ellipses for; \code{NULL}

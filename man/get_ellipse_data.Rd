@@ -8,6 +8,7 @@ get_ellipse_data(
   sorted_sample_df,
   imputed_taxa = NULL,
   empirical_null_distribution = TRUE,
+  center_on = c("reference", "observed"),
   confidence_levels
 )
 }
@@ -28,6 +29,16 @@ over the empirical null (Ig-.1 vs Ig-.2) coordinates; if \code{FALSE}, or if
 fit over the observed (Ig+ vs Ig-.1) coordinates instead (a \code{warning()}
 is issued in the latter case when \code{empirical_null_distribution} was
 requested).}
+
+\item{center_on}{Where the fitted envelope sits on the change axis:
+\code{"observed"} (default) translates it so its centre is the median observed
+change, \code{"reference"} leaves it centred on the fitted cloud's own mean (the
+behaviour before 2026-08-07). The same choice \code{\link[=compute_slide_z]{compute_slide_z()}} makes for the
+Z-score, applied here so the two significance calls do not disagree — see its
+"Where the centre comes from" section. Only the change axis is moved; the
+abundance axis is left on the fitted cloud, which is a separate mismatch (an
+observed point can lie outside the envelope on \code{A} alone, measured at 0-4 taxa
+per sample on \code{ps_igseq}).}
 
 \item{confidence_levels}{Numeric vector of confidence levels (e.g.
 \code{c(0.95, 0.99, 0.999)}) to build nested ellipses for.}

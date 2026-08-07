@@ -20,7 +20,7 @@ make_ma_coords <- function(obs_abundance, obs_change, null_change = NA_real_) {
 
 test_that("compute_slide_z matches a hand-computed Z-score for a single window", {
   # window_size >= nrow(ma_coords), so this is the "only one window" branch:
-  # every taxon is centered/scaled against the same overall mean/sd.
+  # every taxon is centered/scaled against the same overall location/scale.
   obs_change <- c(1, 2, 3, 4, 5, 6, 7)
   ma_coords <- make_ma_coords(obs_abundance = 7:1, obs_change = obs_change)
 
@@ -64,7 +64,38 @@ test_that("compute_slide_z restores the caller's original row order after intern
   )
 })
 
-test_that("compute_slide_z uses the empirical null instead of obs_change when requested", {
+test_that("compute_slide_z centres on the reference and scales by it too, by default", {
+  # The default keeps the anchor: obs_change already estimates
+  # logit2(p_i) - logit2(P), so 0 means "coated at the community's own rate". The
+  # null pair's mean is ~0 at matched depth, which preserves that; here it is
+  # deliberately not, to pin down which statistic is used.
+  obs_change <- c(1, 2, 3, 4, 5)
+  null_change <- c(100, 102, 104, 106, 108)
+  ma_coords <- make_ma_coords(
+    obs_abundance = 5:1,
+    obs_change = obs_change,
+    null_change = null_change
+  )
+
+  expect_equal(
+    compute_slide_z(
+      ma_coords,
+      window_size = 50,
+      empirical_null_distribution = TRUE
+    ),
+    (obs_change - mean(null_change)) / sd(null_change)
+  )
+  expect_equal(
+    compute_slide_z(
+      ma_coords,
+      window_size = 50,
+      empirical_null_distribution = FALSE
+    ),
+    (obs_change - mean(obs_change)) / sd(obs_change)
+  )
+})
+
+test_that("compute_slide_z takes the scale from the null and the centre from the observed change under center_on = 'observed'", {
   obs_change <- c(1, 2, 3, 4, 5)
   null_change <- c(100, 102, 104, 106, 108)
   ma_coords <- make_ma_coords(
@@ -76,11 +107,82 @@ test_that("compute_slide_z uses the empirical null instead of obs_change when re
   result <- compute_slide_z(
     ma_coords,
     window_size = 50,
-    empirical_null_distribution = TRUE
+    empirical_null_distribution = TRUE,
+    center_on = "observed"
   )
 
-  expected <- (obs_change - mean(null_change)) / sd(null_change)
+  expected <- (obs_change - median(obs_change)) / sd(null_change)
   expect_equal(result, expected)
+})
+
+test_that("center_on = 'observed' is immune to where the null pair sits, the default is not", {
+  # The trade-off in one test. A depth mismatch between the two negative fractions
+  # puts a constant into every null_change that the observed pair does not carry;
+  # "observed" cannot see it, the default subtracts it wholesale. That is the price
+  # of the anchor, and the reason rarefy_by_sample = TRUE is not optional.
+  set.seed(3)
+  ma_coords <- make_ma_coords(
+    obs_abundance = 40:1,
+    obs_change = rnorm(40),
+    null_change = rnorm(40)
+  )
+  shifted <- ma_coords
+  shifted$null_change <- ma_coords$null_change + 5
+
+  expect_equal(
+    compute_slide_z(shifted, window_size = 50, center_on = "observed"),
+    compute_slide_z(ma_coords, window_size = 50, center_on = "observed")
+  )
+  expect_equal(
+    compute_slide_z(shifted, window_size = 50) + 5 / sd(ma_coords$null_change),
+    compute_slide_z(ma_coords, window_size = 50)
+  )
+})
+
+test_that("center_on = 'observed' re-anchors on the typical taxon and loses a real global shift", {
+  # The regime this choice actually decides. Every taxon here is genuinely coated
+  # above the community rate -- obs_change sits at +6 against a null pair centred
+  # on 0, which is what "coated above P" looks like. The default reports that; the
+  # median moves onto the coated bulk and reports nothing.
+  set.seed(21)
+  n <- 40
+  ma_coords <- make_ma_coords(
+    obs_abundance = n:1,
+    obs_change = rnorm(n, mean = 6, sd = 0.5),
+    null_change = rnorm(n, mean = 0, sd = 0.5)
+  )
+
+  anchored <- compute_slide_z(ma_coords, window_size = 50)
+  observed <- compute_slide_z(ma_coords, window_size = 50, center_on = "observed")
+
+  expect_gt(median(anchored), 8) # ~6 / 0.5, i.e. unmistakably enriched
+  expect_lt(abs(median(observed)), 0.2) # ...and unremarkable once re-anchored
+})
+
+test_that("center_on = 'observed' uses a median, so outliers cannot drag its centre", {
+  # Within that mode the location is robust: the scale is held identical
+  # (empirical_null_distribution = FALSE) so only mean vs median differs.
+  base_change <- seq(-1, 1, length.out = 20)
+  bulk <- seq_along(base_change)
+  ma_coords <- make_ma_coords(
+    obs_abundance = 23:1,
+    obs_change = c(base_change, 40, 50, 60)
+  )
+
+  observed <- compute_slide_z(
+    ma_coords,
+    window_size = 50,
+    empirical_null_distribution = FALSE,
+    center_on = "observed"
+  )
+  mean_centred <- compute_slide_z(
+    ma_coords,
+    window_size = 50,
+    empirical_null_distribution = FALSE
+  )
+
+  expect_lt(abs(median(observed[bulk])), 0.02)
+  expect_gt(abs(median(mean_centred[bulk])), 10 * abs(median(observed[bulk])))
 })
 
 test_that("compute_slide_z scores imputed taxa from their own change distribution, not the sliding window", {
@@ -218,6 +320,33 @@ test_that("compute_slide_z keeps out-of-cone taxa out of the null but still scor
   expect_false(anyNA(result))
 })
 
+test_that("compute_slide_z keeps out-of-cone taxa out of the centre as well as the scale", {
+  # The centre is read off obs_change, so it is the OBSERVED pair's cone flag that
+  # governs it -- taxon 7's saturated observed value must not move the median even
+  # though its negative-vs-negative pair is fine.
+  obs_change <- c(1, 2, 3, 4, 5, 6, 500)
+  ma_coords <- make_ma_coords(
+    obs_abundance = 7:1,
+    obs_change = obs_change,
+    null_change = c(0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.2)
+  )
+  ma_coords$obs_in_cone <- c(rep(TRUE, 6), FALSE)
+  ma_coords$null_in_cone <- TRUE
+
+  result <- compute_slide_z(
+    ma_coords,
+    window_size = 50,
+    empirical_null_distribution = TRUE,
+    center_on = "observed"
+  )
+
+  expected <- (obs_change - median(obs_change[ma_coords$obs_in_cone])) /
+    sd(ma_coords$null_change)
+  expect_equal(result, expected)
+  # ...and the saturated taxon is still scored, on that centre.
+  expect_false(anyNA(result))
+})
+
 test_that("compute_slide_z does not apply the cone mask inside the imputed population", {
   # Regression guard. Inside the imputed population the cone flag reports the
   # imputation pattern, not measurement quality: a taxon zeroed in BOTH negative
@@ -259,7 +388,7 @@ test_that("compute_slide_z does not apply the cone mask inside the imputed popul
   expect_false(anyNA(result))
 })
 
-test_that("compute_slide_z's mask follows whichever pair supplies the reference", {
+test_that("compute_slide_z's mask follows whichever pair supplies each quantity", {
   ma_coords <- make_ma_coords(
     obs_abundance = 6:1,
     obs_change = c(1, 2, 3, 4, 5, 6),
@@ -270,27 +399,39 @@ test_that("compute_slide_z's mask follows whichever pair supplies the reference"
   ma_coords$obs_in_cone <- c(FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)
   ma_coords$null_in_cone <- c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE)
 
-  empirical <- compute_slide_z(
-    ma_coords,
-    window_size = 50,
-    empirical_null_distribution = TRUE
-  )
-  # Empirical mode reads null_change, so it must drop taxon 6, not taxon 1.
-  ref_null <- ma_coords$null_change[c(1:5)]
+  # Under "observed" the two quantities come from different pairs, so they take
+  # different masks: the scale drops taxon 6 (bad null pair), the centre drops
+  # taxon 1 (bad observed pair).
   expect_equal(
-    empirical,
-    (ma_coords$obs_change - mean(ref_null)) / sd(ref_null)
+    compute_slide_z(
+      ma_coords,
+      window_size = 50,
+      empirical_null_distribution = TRUE,
+      center_on = "observed"
+    ),
+    (ma_coords$obs_change - median(ma_coords$obs_change[2:6])) /
+      sd(ma_coords$null_change[1:5])
   )
 
-  theoretical <- compute_slide_z(
-    ma_coords,
-    window_size = 50,
-    empirical_null_distribution = FALSE
+  # Under the default both come from the reference pair and take its mask.
+  expect_equal(
+    compute_slide_z(
+      ma_coords,
+      window_size = 50,
+      empirical_null_distribution = TRUE,
+      center_on = "reference"
+    ),
+    (ma_coords$obs_change - mean(ma_coords$null_change[1:5])) /
+      sd(ma_coords$null_change[1:5])
   )
-  # Theoretical mode reads obs_change, so it must drop taxon 1 instead.
   ref_obs <- ma_coords$obs_change[2:6]
   expect_equal(
-    theoretical,
+    compute_slide_z(
+      ma_coords,
+      window_size = 50,
+      empirical_null_distribution = FALSE,
+      center_on = "reference"
+    ),
     (ma_coords$obs_change - mean(ref_obs)) / sd(ref_obs)
   )
 })
@@ -323,7 +464,7 @@ test_that("compute_slide_z pools the imputed population instead of windowing it"
     window_size = n_per,
     empirical_null_distribution = FALSE
   )
-  # One mean/sd over every imputed taxon, whatever its abundance.
+  # One location/scale over every imputed taxon, whatever its abundance.
   imputed_vals <- ma_coords$obs_change[was_imputed]
   pooled <- (imputed_vals - mean(imputed_vals)) / sd(imputed_vals)
 
@@ -332,6 +473,44 @@ test_that("compute_slide_z pools the imputed population instead of windowing it"
   expect_equal(slide_z[was_imputed], pooled)
   # The non-imputed taxa are unaffected: they are still windowed among themselves.
   expect_false(anyNA(slide_z[!was_imputed]))
+})
+
+test_that("compute_slide_z falls back per quantity, not all-or-nothing", {
+  # Location and scale now rest on different vectors, so a window can have plenty
+  # of one and too little of the other. Here every window has a full obs_change
+  # but only the first has enough null_change: the rest must borrow the pooled
+  # SCALE while keeping their own local centre.
+  set.seed(17)
+  n <- 40
+  ma_coords <- make_ma_coords(
+    obs_abundance = n:1,
+    obs_change = seq_len(n),
+    null_change = c(rnorm(10, sd = 2), rep(NA_real_, n - 10))
+  )
+
+  result <- suppressWarnings(
+    compute_slide_z(ma_coords, window_size = 10, center_on = "observed")
+  )
+  pooled_scale <- sd(ma_coords$null_change, na.rm = TRUE)
+
+  expect_false(anyNA(result))
+  # Last window's core (rows 31:40), estimated from rows 26:40: the centre is its
+  # own local median, the scale is the pooled one.
+  tail_idx <- 31:40
+  expect_equal(
+    result[tail_idx],
+    (ma_coords$obs_change[tail_idx] - median(ma_coords$obs_change[26:40])) /
+      pooled_scale
+  )
+  # Had the centre fallen back along with the scale, this block would be measured
+  # from the whole population's median and sit several times further out.
+  pooled_centre_z <- (ma_coords$obs_change[tail_idx] -
+    median(ma_coords$obs_change)) /
+    pooled_scale
+  expect_lt(
+    abs(median(result[tail_idx])),
+    abs(median(pooled_centre_z)) / 3
+  )
 })
 
 test_that("compute_slide_z pools a two-taxon imputed population", {
@@ -502,6 +681,39 @@ test_that("get_ellipse_data falls back to observed coordinates with a warning wh
 
   expect_equal(result_requested_empirical$levels, result_observed$levels)
   expect_equal(result_requested_empirical$coords, result_observed$coords)
+})
+
+test_that("get_ellipse_data slides the envelope onto the observed median change", {
+  # The null cloud measures replicate spread but sits 20 units away from the
+  # comparison being tested. Under the default the envelope keeps its shape and
+  # moves to the observed median; under "reference" it stays where it was fitted
+  # and flags every taxon as significant.
+  set.seed(5)
+  n <- 60
+  df <- data.frame(
+    sample_id = "sample_1",
+    taxon_id = paste0("taxon_", seq_len(n)),
+    obs_abundance = rnorm(n, mean = 5),
+    obs_change = rnorm(n),
+    null_abundance = rnorm(n, mean = 5),
+    null_change = rnorm(n) + 20
+  )
+
+  centred <- get_ellipse_data(df, center_on = "observed", confidence_levels = 0.95)
+  legacy <- get_ellipse_data(df, confidence_levels = 0.95)
+
+  # Same envelope, translated: identical shape, offset by one constant.
+  offsets <- centred$coords$y - legacy$coords$y
+  expect_equal(centred$coords$x, legacy$coords$x)
+  expect_equal(diff(range(offsets)), 0)
+  expect_equal(
+    unique(round(offsets, 10)),
+    round(median(df$obs_change) - mean(df$null_change), 10)
+  )
+
+  # ...and that is the difference between a usable call and a useless one.
+  expect_true(all(legacy$levels != "ns"))
+  expect_true(mean(centred$levels == "ns") > 0.8)
 })
 
 test_that("get_ellipse_data assigns NA confidence level to imputed taxa", {

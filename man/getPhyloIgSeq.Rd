@@ -22,6 +22,7 @@ getPhyloIgSeq(
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
+  center_on = c("reference", "observed"),
   confidence_levels = NULL,
   scores = IG_SCORES,
   taxon_id_source = c("sequential", "original")
@@ -107,7 +108,16 @@ row's own positive fraction.}
 
 \item{window_size}{Integer. Window size for smoothing.}
 
-\item{empirical_null_distribution}{Logical. Whether to estimate null distribution.}
+\item{empirical_null_distribution}{Logical. Whether to scale the sliding Z-score by
+the empirical (Ig-.1 vs Ig-.2) null's sd rather than the observed distribution's.
+Chooses the scale only; \code{center_on} chooses the location. See \code{\link[=get_slide_z]{get_slide_z()}}.}
+
+\item{center_on}{Which distribution locates the sliding Z-score: \code{"reference"}
+(default, the mean of whatever supplies the scale, which at matched depth keeps \code{0}
+meaning "coated at the community's own Ig+ frequency") or \code{"observed"} (the local
+median observed change, which re-anchors on the typical taxon). Passed to
+\code{\link[=get_slide_z]{get_slide_z()}}; read \code{\link[=compute_slide_z]{compute_slide_z()}}'s "Where the centre comes from" before
+changing it.}
 
 \item{confidence_levels}{Optional. Confidence levels for scoring.}
 

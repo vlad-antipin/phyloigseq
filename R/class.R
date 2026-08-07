@@ -391,7 +391,15 @@ ig_fraction_names <- function(phyloigseq_obj) {
 #'   row's own positive fraction.
 #' @param zero_treatment How to handle zeros ("no_zero", "pseudocount", etc.).
 #' @param window_size Integer. Window size for smoothing.
-#' @param empirical_null_distribution Logical. Whether to estimate null distribution.
+#' @param empirical_null_distribution Logical. Whether to scale the sliding Z-score by
+#'   the empirical (Ig-.1 vs Ig-.2) null's sd rather than the observed distribution's.
+#'   Chooses the scale only; `center_on` chooses the location. See [get_slide_z()].
+#' @param center_on Which distribution locates the sliding Z-score: `"reference"`
+#'   (default, the mean of whatever supplies the scale, which at matched depth keeps `0`
+#'   meaning "coated at the community's own Ig+ frequency") or `"observed"` (the local
+#'   median observed change, which re-anchors on the typical taxon). Passed to
+#'   [get_slide_z()]; read [compute_slide_z()]'s "Where the centre comes from" before
+#'   changing it.
 #' @param confidence_levels Optional. Confidence levels for scoring.
 #' @param scores Vector of score names to compute, from [IG_SCORES] (the default is all of
 #'   them). A requested score whose inputs are not available -- a fraction it divides by, or
@@ -447,6 +455,7 @@ getPhyloIgSeq <- function(
   zero_treatment = "no_zero",
   window_size = 50,
   empirical_null_distribution = TRUE,
+  center_on = c("reference", "observed"),
   confidence_levels = NULL,
   scores = IG_SCORES,
   taxon_id_source = c("sequential", "original")
@@ -454,6 +463,7 @@ getPhyloIgSeq <- function(
   taxon_id_source <- match.arg(taxon_id_source)
   ig_freq_units <- match.arg(ig_freq_units)
   ig_freq_layout <- match.arg(ig_freq_layout)
+  center_on <- match.arg(center_on)
   if (
     is.null(first_negative_fraction_name) &&
       (is.null(presorting_fraction_name) || is.null(ig_freq_name))
@@ -816,6 +826,7 @@ getPhyloIgSeq <- function(
             second_negative_fraction_name = second_negative_fraction_name,
             window_size = window_size,
             empirical_null_distribution = empirical_null_distribution,
+            center_on = center_on,
             confidence_levels = confidence_levels,
             imputed_taxa = zero_imputation_result$imputed_taxa,
             change_transform = this_transform,
