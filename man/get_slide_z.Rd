@@ -17,7 +17,8 @@ get_slide_z(
   pos_ig_freq = NULL,
   neg_ig_freq = NULL,
   cone_policy = c("regularize", "na"),
-  pool_prior = NULL
+  pool_prior = NULL,
+  was_zero = NULL
 )
 }
 \arguments{
@@ -68,6 +69,16 @@ taxa below before thresholding its output.}}
 \item{pos_ig_freq, neg_ig_freq, cone_policy, pool_prior}{Passed to
 \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}; only read under \code{change_transform = "purity_corrected"},
 which needs the two Ig+ frequencies but \emph{not} a pre-sort fraction.}
+
+\item{was_zero}{Passed to \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}: the \code{was_zero} element of
+\code{\link[=impute_zeros]{impute_zeros()}}'s result, marking which counts were really zero before
+imputation. \strong{Pass it whenever \code{sorted_sample_df} has been imputed.} Taxa
+whose Ig+ and Ig-.1 were both zero then score \code{NA} instead of receiving one
+shared, manufactured Z-score, and taxa whose two negative fractions were both
+zero stop contributing an exact 0 to the null. Both effects are large: on
+\code{ps_igseq} under \code{pseudo_count}, 13-43\% of the imputed population's reference
+values were such manufactured zeros, and removing them widens the pooled null
+sd by 7-31\%.}
 }
 \value{
 A list:

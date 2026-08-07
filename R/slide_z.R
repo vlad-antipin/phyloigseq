@@ -73,6 +73,15 @@
 #' @param pos_ig_freq,neg_ig_freq,cone_policy,pool_prior Passed to
 #'   [get_ma_coordinates()]; only read under `change_transform = "purity_corrected"`,
 #'   which needs the two Ig+ frequencies but *not* a pre-sort fraction.
+#' @param was_zero Passed to [get_ma_coordinates()]: the `was_zero` element of
+#'   [impute_zeros()]'s result, marking which counts were really zero before
+#'   imputation. **Pass it whenever `sorted_sample_df` has been imputed.** Taxa
+#'   whose Ig+ and Ig-.1 were both zero then score `NA` instead of receiving one
+#'   shared, manufactured Z-score, and taxa whose two negative fractions were both
+#'   zero stop contributing an exact 0 to the null. Both effects are large: on
+#'   `ps_igseq` under `pseudo_count`, 13-43% of the imputed population's reference
+#'   values were such manufactured zeros, and removing them widens the pooled null
+#'   sd by 7-31%.
 #'
 #' @return A list:
 #'   \describe{
@@ -132,7 +141,8 @@ get_slide_z <-
     pos_ig_freq = NULL, # "p", required by "purity_corrected"
     neg_ig_freq = NULL, # "q", -//-
     cone_policy = c("regularize", "na"),
-    pool_prior = NULL
+    pool_prior = NULL,
+    was_zero = NULL # pre-imputation zero pattern, see impute_zeros()
   ) {
     change_transform <- match.arg(change_transform)
     cone_policy <- match.arg(cone_policy)
@@ -177,7 +187,8 @@ get_slide_z <-
         pos_ig_freq = pos_ig_freq,
         neg_ig_freq = neg_ig_freq,
         cone_policy = cone_policy,
-        pool_prior = pool_prior
+        pool_prior = pool_prior,
+        was_zero = was_zero
       )
 
     slide_z <- compute_slide_z(
@@ -408,6 +419,13 @@ get_slide_z <-
 #' population the flag no longer reports measurement quality -- see the note in
 #' [compute_slide_z()]'s Details.
 #'
+#' This mask covers admissibility only. The *other* exclusion -- pairs with both
+#' fractions really zero, which carry no information at all -- is not handled here:
+#' [get_ma_coordinates()] already marks those `NA`, and `.slide_z_params()` drops `NA`
+#' references on its own. Do not re-encode it as a mask; `NA` also removes such a taxon
+#' from the numerator, which a mask would not, and that is the correct behaviour for an
+#' untestable observed pair.
+#'
 #' @param ma_coords MA-plot coordinates, optionally carrying `obs_in_cone`/`null_in_cone`.
 #' @param empirical_null_distribution See [compute_slide_z()].
 #' @param was_imputed Optional logical vector, `nrow(ma_coords)` long, flagging the
@@ -537,19 +555,31 @@ get_slide_z <-
 #'
 #' That cone exclusion is deliberately **not** applied inside the imputed population,
 #' where the flag stops reporting measurement quality and starts reporting the
-#' imputation pattern. A taxon zeroed in *both* negative fractions receives the same
-#' substituted value twice, so its Ig-.1 vs Ig-.2 ratio is exactly 1 and it lands inside
-#' the cone with a `null_change` of exactly 0 -- a number the zero treatment
-#' manufactured, not replicate noise it measured. A taxon zeroed in only one of them
-#' gets an extreme ratio and falls outside. Masking on the cone therefore keeps the
-#' fabricated zeros and discards the taxa carrying real spread: on `ps_igseq` under
-#' `pseudo_count` it retained a subset that was 58-62% exact zeros and shrank the
-#' reference sd from 1.8-3.4 to 0.84-1.4, inflating every imputed taxon's `|Z|` about
-#' 2.5x and calling 92-412 of them significant per sample instead of 20-71. Neither
-#' subset of this population is clean -- the in-cone ones are fabricated, the
-#' out-of-cone ones saturated -- so pooling over all of them is the least-wrong
-#' estimate, not a good one. Their `|Z|` remains a floor rather than a test, exactly as
-#' for the saturated taxa described in [get_slide_z()].
+#' imputation pattern. A taxon zeroed in only one of the two negative fractions gets an
+#' extreme ratio and falls outside the cone; one zeroed in neither stays inside. Masking
+#' on the cone there therefore keeps only the taxa whose negative fractions were both
+#' measured and discards every censored pair -- and censored pairs are the dominant mode
+#' of genuine replicate noise in this assay, not an edge case (see
+#' [get_ma_coordinates()]'s Uninformative pairs section). Measured on `ps_igseq` under
+#' `pseudo_count`, masking halves the reference sd (pooled 2.2-3.6 versus masked
+#' 1.0-1.8, ratio 0.47-0.64), which would roughly double every imputed taxon's `|Z|`.
+#'
+#' The pairs that genuinely carry no information -- *both* fractions zero, so the change
+#' is one substituted value over itself -- are cut upstream instead, by
+#' [get_ma_coordinates()], which marks them `NA` on the affected axis; `.slide_z_params()`
+#' then drops them from the estimate, and from the numerator too when they are the
+#' observed pair. That is a cleaner cut than the cone, because it targets exactly the
+#' fabricated values without touching the censored ones. Before it existed those pairs
+#' were reported as a change of exactly 0: on `ps_igseq` under `pseudo_count` they made
+#' up 13-43% of this population's reference values and deflated its pooled sd by 7-31%,
+#' and every taxon whose Ig+ and Ig-.1 were both zero received the same single
+#' manufactured Z-score as all the others.
+#'
+#' Even so, neither remaining subset of this population is clean -- the censored ones
+#' depend on the pseudocount for their magnitude, the out-of-cone ones are saturated --
+#' so pooling over all of them is the least-wrong estimate, not a good one. Their `|Z|`
+#' remains a floor rather than a test, exactly as for the saturated taxa described in
+#' [get_slide_z()].
 #'
 #' @param ma_coords MA-plot coordinates for one biological sample, as
 #'   returned by [get_ma_coordinates()] (`taxon_id`, `obs_abundance`,
@@ -725,7 +755,10 @@ compute_slide_z <- function(
 #'       highest confidence level whose ellipse it falls outside of (as a
 #'       character level, e.g. `"0.99"`), `"ns"` ("not significant" — inside
 #'       every ellipse), or `NA` for taxa in `imputed_taxa` or with a
-#'       missing `obs_abundance`/`obs_change`. `NULL` instead if there
+#'       missing `obs_abundance`/`obs_change`. That last case now also covers taxa
+#'       whose observed pair was zero in both fractions, which [get_ma_coordinates()]
+#'       marks `NA`: they are reported as untested rather than as `"ns"`, which is
+#'       what they used to be — a fabricated negative. `NULL` instead if there
 #'       weren't enough points (`> 2`) to fit an ellipse at all.}
 #'     \item{`coords`}{A data frame of ellipse boundary coordinates (`x`,
 #'       `y`, `ellipse_level`, `sample_id`), one block of rows per

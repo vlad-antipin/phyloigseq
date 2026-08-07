@@ -68,19 +68,31 @@ is within noise of it.
 
 That cone exclusion is deliberately \strong{not} applied inside the imputed population,
 where the flag stops reporting measurement quality and starts reporting the
-imputation pattern. A taxon zeroed in \emph{both} negative fractions receives the same
-substituted value twice, so its Ig-.1 vs Ig-.2 ratio is exactly 1 and it lands inside
-the cone with a \code{null_change} of exactly 0 -- a number the zero treatment
-manufactured, not replicate noise it measured. A taxon zeroed in only one of them
-gets an extreme ratio and falls outside. Masking on the cone therefore keeps the
-fabricated zeros and discards the taxa carrying real spread: on \code{ps_igseq} under
-\code{pseudo_count} it retained a subset that was 58-62\% exact zeros and shrank the
-reference sd from 1.8-3.4 to 0.84-1.4, inflating every imputed taxon's \verb{|Z|} about
-2.5x and calling 92-412 of them significant per sample instead of 20-71. Neither
-subset of this population is clean -- the in-cone ones are fabricated, the
-out-of-cone ones saturated -- so pooling over all of them is the least-wrong
-estimate, not a good one. Their \verb{|Z|} remains a floor rather than a test, exactly as
-for the saturated taxa described in \code{\link[=get_slide_z]{get_slide_z()}}.
+imputation pattern. A taxon zeroed in only one of the two negative fractions gets an
+extreme ratio and falls outside the cone; one zeroed in neither stays inside. Masking
+on the cone there therefore keeps only the taxa whose negative fractions were both
+measured and discards every censored pair -- and censored pairs are the dominant mode
+of genuine replicate noise in this assay, not an edge case (see
+\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}'s Uninformative pairs section). Measured on \code{ps_igseq} under
+\code{pseudo_count}, masking halves the reference sd (pooled 2.2-3.6 versus masked
+1.0-1.8, ratio 0.47-0.64), which would roughly double every imputed taxon's \verb{|Z|}.
+
+The pairs that genuinely carry no information -- \emph{both} fractions zero, so the change
+is one substituted value over itself -- are cut upstream instead, by
+\code{\link[=get_ma_coordinates]{get_ma_coordinates()}}, which marks them \code{NA} on the affected axis; \code{.slide_z_params()}
+then drops them from the estimate, and from the numerator too when they are the
+observed pair. That is a cleaner cut than the cone, because it targets exactly the
+fabricated values without touching the censored ones. Before it existed those pairs
+were reported as a change of exactly 0: on \code{ps_igseq} under \code{pseudo_count} they made
+up 13-43\% of this population's reference values and deflated its pooled sd by 7-31\%,
+and every taxon whose Ig+ and Ig-.1 were both zero received the same single
+manufactured Z-score as all the others.
+
+Even so, neither remaining subset of this population is clean -- the censored ones
+depend on the pseudocount for their magnitude, the out-of-cone ones are saturated --
+so pooling over all of them is the least-wrong estimate, not a good one. Their \verb{|Z|}
+remains a floor rather than a test, exactly as for the saturated taxa described in
+\code{\link[=get_slide_z]{get_slide_z()}}.
 }
 \examples{
 data(ps_igseq)

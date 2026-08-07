@@ -823,7 +823,12 @@ getPhyloIgSeq <- function(
             # reads them, and its score is dropped from `scores` above when the
             # long layout isn't in use.
             pos_ig_freq = ig_freqs$pos_ig_freq,
-            neg_ig_freq = ig_freqs$neg1_ig_freq
+            neg_ig_freq = ig_freqs$neg1_ig_freq,
+            # `ig_coating` is `zero_imputation_result$data` with columns selected,
+            # so the two are still row-aligned. Without this the imputed counts
+            # look like measured ones and every pair that was zero on both sides
+            # would be scored off a manufactured change of exactly 0.
+            was_zero = zero_imputation_result$was_zero
           )
 
         ig_coating[[slide_score]] <- slide_z_result$slide_z
@@ -841,7 +846,9 @@ getPhyloIgSeq <- function(
                 "null_abundance",
                 "null_change",
                 "obs_in_cone",
-                "null_in_cone"
+                "null_in_cone",
+                "obs_estimable",
+                "null_estimable"
               )],
               ellipse_level = if (is.null(slide_z_result$ellipse_level)) {
                 NA

@@ -435,3 +435,44 @@ test_that("resolve_ig_freqs returns all NA for a NULL or unknown ig_freq_name", 
   )
   expect_true(all(is.na(unlist(result))))
 })
+
+# ---- impute_zeros(): the pre-imputation zero pattern ----
+
+test_that("impute_zeros reports which counts were really zero, per fraction", {
+  df <- data.frame(
+    sample_id = rep("s1", 4),
+    taxon_id = paste0("taxon_", 1:4),
+    Pos = c(10, 0, 5, 0),
+    Neg1 = c(8, 0, 0, 0),
+    Neg2 = c(9, 4, 0, 0)
+  )
+  res <- impute_zeros(df, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+
+  # taxon_4 is zero everywhere and is dropped before anything else happens.
+  expect_equal(nrow(res$data), 3)
+  expect_equal(nrow(res$was_zero), 3)
+  expect_equal(colnames(res$was_zero), c("Pos", "Neg1", "Neg2"))
+  expect_equal(res$was_zero$Pos, c(FALSE, TRUE, FALSE))
+  expect_equal(res$was_zero$Neg1, c(FALSE, TRUE, TRUE))
+  expect_equal(res$was_zero$Neg2, c(FALSE, FALSE, TRUE))
+  expect_identical(rownames(res$was_zero), rownames(res$data))
+  # The imputed frame itself no longer carries the information, which is the
+  # whole reason this is returned separately.
+  expect_false(any(res$data[, c("Pos", "Neg1", "Neg2")] == 0))
+})
+
+test_that("impute_zeros keeps was_zero aligned when the method drops rows too", {
+  df <- data.frame(
+    sample_id = rep("s1", 4),
+    taxon_id = paste0("taxon_", 1:4),
+    Pos = c(10, 0, 5, 3),
+    Neg1 = c(8, 7, 0, 4),
+    Neg2 = c(9, 4, 2, 6)
+  )
+  res <- impute_zeros(df, c("Pos", "Neg1", "Neg2"), "no_zero")
+  # "no_zero" drops every taxon with a zero, so the pattern must be all-FALSE
+  # over exactly the survivors rather than over the input rows.
+  expect_equal(res$data$taxon_id, c("taxon_1", "taxon_4"))
+  expect_equal(nrow(res$was_zero), 2)
+  expect_false(any(as.matrix(res$was_zero)))
+})

@@ -68,10 +68,13 @@ A list with:
 \item{\code{nb_zero_taxa}}{Number of taxa with a zero abundance in at
 least one compared fraction, before imputation.}
 \item{\code{plot_data}}{A long-format data frame (\code{M}, \code{A}, \code{comparison},
-\code{taxon_id}, \code{in_cone}, \code{imputed}, \code{zero_treatment}, \code{change_transform})
-ready for \code{\link[=plot_ma]{plot_ma()}}. \code{imputed} is per-row, i.e. per \code{zero_treatment}:
-whether \emph{that} treatment derived this taxon's coordinates from an
-imputed zero.}
+\code{taxon_id}, \code{in_cone}, \code{estimable}, \code{imputed}, \code{zero_treatment},
+\code{change_transform}) ready for \code{\link[=plot_ma]{plot_ma()}}. \code{imputed} is per-row, i.e. per
+\code{zero_treatment}: whether \emph{that} treatment derived this taxon's coordinates
+from an imputed zero. \code{estimable} is \code{FALSE} where both fractions of \emph{this
+row's} comparison were really zero, so \code{M} is \code{NA} rather than a
+manufactured 0 (see \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}'s Uninformative pairs section);
+\code{\link[=plot_ma]{plot_ma()}} drops those rows and counts them in its subtitle.}
 \item{\code{imputed_taxa}}{The union, across all \code{zero_treatments}, of
 \code{taxon_id}s imputed under that treatment (see \code{\link[=impute_zeros]{impute_zeros()}}). Kept
 for callers that want one set for the whole sample; use \code{plot_data$imputed}

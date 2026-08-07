@@ -237,11 +237,20 @@ group_sorted_samples <- function(
 #'   zero replacement via [zCompositions::cmultRepl()]; only zeros are
 #'   modified), or `"keep_zeros"` (leave zeros as-is).
 #'
-#' @return A list with `data` (the input data frame, restricted to retained
-#'   taxa, with the `fraction_names` columns updated per `method`) and
-#'   `imputed_taxa` (the `taxon_id`s that had at least one zero fraction
-#'   before imputation, or `NULL` if `data` has no `taxon_id` column, or none
-#'   were imputed).
+#' @return A list with:
+#'   \describe{
+#'     \item{`data`}{The input data frame, restricted to retained taxa, with the
+#'       `fraction_names` columns updated per `method`.}
+#'     \item{`imputed_taxa`}{The `taxon_id`s that had at least one zero fraction
+#'       before imputation, or `NULL` if `data` has no `taxon_id` column, or none
+#'       were imputed.}
+#'     \item{`was_zero`}{A logical data frame, row-aligned with `data` and with one
+#'       column per entry of `fraction_names`, `TRUE` where that fraction's count was
+#'       *really* zero before imputation. Pass it to [get_ma_coordinates()], which
+#'       cannot otherwise tell a substituted value from a measured one -- and needs
+#'       to, because a comparison between two substituted values is the pseudocount
+#'       over itself, i.e. exactly 0 on a log-ratio axis, rather than a measurement.}
+#'   }
 #'
 #' @examples
 #' data(ps_igseq)
@@ -279,6 +288,14 @@ impute_zeros <- function(
     ,
     drop = FALSE
   ]
+
+  # Which counts were *really* zero, recorded before any imputation touches them.
+  # Nothing downstream can recover this: once a zero is filled, the substituted
+  # value is indistinguishable from a measured one, and a comparison between two
+  # filled values is a constant over itself -- exactly 0 on a log-ratio axis --
+  # rather than a measurement. `get_ma_coordinates()` needs the distinction to
+  # tell an uninformative pair from an informative one.
+  was_zero_all <- fractions == 0
 
   rows_with_zeros <- rownames(fractions)[apply(fractions, 1, function(row) {
     any(row == 0)
@@ -347,7 +364,24 @@ impute_zeros <- function(
     imputed_taxa <- NULL
   }
 
-  return(list(data = data, imputed_taxa = imputed_taxa))
+  # Restrict the pre-imputation zero pattern to the rows that survived. `no_zero`
+  # drops the zero-bearing rows itself, and `bayesian_inference` can drop further
+  # rows of its own (zCompositions::cmultRepl()'s `z.delete`), so this subset is
+  # not always the identity.
+  retained <- rownames(fractions)
+  if (!all(retained %in% rownames(was_zero_all))) {
+    stop(
+      "`method = \"",
+      method,
+      "\"` did not preserve row identity, so the pre-imputation zero pattern ",
+      "cannot be aligned to the returned data.",
+      call. = FALSE
+    )
+  }
+  was_zero <- as.data.frame(was_zero_all[retained, , drop = FALSE])
+  rownames(was_zero) <- rownames(data)
+
+  return(list(data = data, imputed_taxa = imputed_taxa, was_zero = was_zero))
 }
 
 

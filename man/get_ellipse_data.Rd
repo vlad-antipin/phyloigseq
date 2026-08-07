@@ -40,7 +40,10 @@ A list:
 highest confidence level whose ellipse it falls outside of (as a
 character level, e.g. \code{"0.99"}), \code{"ns"} ("not significant" — inside
 every ellipse), or \code{NA} for taxa in \code{imputed_taxa} or with a
-missing \code{obs_abundance}/\code{obs_change}. \code{NULL} instead if there
+missing \code{obs_abundance}/\code{obs_change}. That last case now also covers taxa
+whose observed pair was zero in both fractions, which \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}
+marks \code{NA}: they are reported as untested rather than as \code{"ns"}, which is
+what they used to be — a fabricated negative. \code{NULL} instead if there
 weren't enough points (\verb{> 2}) to fit an ellipse at all.}
 \item{\code{coords}}{A data frame of ellipse boundary coordinates (\code{x},
 \code{y}, \code{ellipse_level}, \code{sample_id}), one block of rows per

@@ -22,11 +22,20 @@ zero replacement via \code{\link[zCompositions:cmultRepl]{zCompositions::cmultRe
 modified), or \code{"keep_zeros"} (leave zeros as-is).}
 }
 \value{
-A list with \code{data} (the input data frame, restricted to retained
-taxa, with the \code{fraction_names} columns updated per \code{method}) and
-\code{imputed_taxa} (the \code{taxon_id}s that had at least one zero fraction
+A list with:
+\describe{
+\item{\code{data}}{The input data frame, restricted to retained taxa, with the
+\code{fraction_names} columns updated per \code{method}.}
+\item{\code{imputed_taxa}}{The \code{taxon_id}s that had at least one zero fraction
 before imputation, or \code{NULL} if \code{data} has no \code{taxon_id} column, or none
-were imputed).
+were imputed.}
+\item{\code{was_zero}}{A logical data frame, row-aligned with \code{data} and with one
+column per entry of \code{fraction_names}, \code{TRUE} where that fraction's count was
+\emph{really} zero before imputation. Pass it to \code{\link[=get_ma_coordinates]{get_ma_coordinates()}}, which
+cannot otherwise tell a substituted value from a measured one -- and needs
+to, because a comparison between two substituted values is the pseudocount
+over itself, i.e. exactly 0 on a log-ratio axis, rather than a measurement.}
+}
 }
 \description{
 Resolves zero counts in a taxa (rows) by fraction (columns) abundance data

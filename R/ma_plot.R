@@ -71,6 +71,29 @@
 #' @param pool_prior Passed to the un-mixing under `"purity_corrected"`; `NULL`
 #'   (default) derives one read's worth of composition from the fraction depth. See
 #'   [compute_ig_score()].
+#' @param was_zero The `was_zero` element of [impute_zeros()]'s result: a logical
+#'   data frame, row-aligned with `sorted_sample_df`, marking which counts were
+#'   really zero before imputation. **Pass it whenever `sorted_sample_df` has been
+#'   through [impute_zeros()]**, otherwise the pairs that carry no information are
+#'   indistinguishable from measured ones -- see the Uninformative pairs section.
+#'   `NULL` (default) reads the zeros off `sorted_sample_df` itself, which is
+#'   correct only for un-imputed abundances.
+#'
+#' @section Uninformative pairs:
+#' A comparison says nothing about a taxon when *both* of its fractions were zero
+#' before imputation: the zero treatment substitutes one value for both sides, so
+#' the change is that value over itself -- exactly 0 on a log-ratio axis, identical
+#' for every such taxon. Those entries are set to `NA` on the affected axis rather
+#' than reported as a change of zero, and flagged by `obs_estimable` /
+#' `null_estimable`. This is per *comparison*, not per taxon: a taxon zeroed in both
+#' negative fractions has no usable empirical null but a perfectly real Ig+ vs Ig-
+#' change (and is often among the most strongly coated), while a taxon zeroed in
+#' Ig+ and Ig-.1 is untestable yet still contributes a real null observation.
+#'
+#' A pair with exactly *one* zero is kept: it is censored, not fabricated, and it is
+#' the dominant mode of genuine replicate noise in this assay rather than an edge
+#' case -- see the note in the source. Excluding those too would understate the null
+#' and inflate every Z-score.
 #'
 #' @return A data frame with one row per taxon: `taxon_id`, `sample_id`, the
 #'   original fraction abundances (`pos`, `neg1`, `neg2`; `neg2` is `NA` when
@@ -79,8 +102,11 @@
 #'   and, when a second negative fraction is supplied, the empirical-null
 #'   coordinates (`null_abundance`, `null_change`, first vs. second negative
 #'   fraction); otherwise `NA`. Plus `change_transform`, recording which axis was
-#'   computed, and `obs_in_cone`/`null_in_cone`, logical flags marking taxa the
-#'   un-mixing had to clamp (`NA` throughout under `"log_ratio"`, which has no cone).
+#'   computed, `obs_in_cone`/`null_in_cone`, logical flags marking taxa the
+#'   un-mixing had to clamp (`NA` throughout under `"log_ratio"`, which has no cone),
+#'   and `obs_estimable`/`null_estimable`, logical flags marking the pairs that
+#'   carry information at all (see the Uninformative pairs section; `null_estimable`
+#'   is `NA` when there is no second negative fraction).
 #'
 #' @examples
 #' data(ps_igseq)
@@ -109,7 +135,8 @@ get_ma_coordinates <- function(
   pos_ig_freq = NULL, # "p", required by "purity_corrected"
   neg_ig_freq = NULL, # "q", -//-
   cone_policy = c("regularize", "na"),
-  pool_prior = NULL
+  pool_prior = NULL,
+  was_zero = NULL # pre-imputation zero pattern, see impute_zeros()
 ) {
   change_transform <- match.arg(change_transform)
   cone_policy <- match.arg(cone_policy)
@@ -124,6 +151,26 @@ get_ma_coordinates <- function(
     neg2 <- rep(NA, nrow(sorted_sample_df))
     empirical_null <- FALSE
   }
+
+  # Which of the two fractions of each pair were really zero before imputation.
+  # Only fractions that enter a pair are looked up, so a pre-sort column being
+  # present in `sorted_sample_df` (or in `was_zero`) changes nothing here: it is
+  # not part of either MA comparison.
+  pos_was_zero <- .fraction_was_zero(
+    sorted_sample_df,
+    was_zero,
+    positive_fraction_name
+  )
+  neg1_was_zero <- .fraction_was_zero(
+    sorted_sample_df,
+    was_zero,
+    first_negative_fraction_name
+  )
+  neg2_was_zero <- .fraction_was_zero(
+    sorted_sample_df,
+    was_zero,
+    second_negative_fraction_name
+  )
 
   if (change_transform == "purity_corrected") {
     if (
@@ -205,7 +252,27 @@ get_ma_coordinates <- function(
   # are identically distributed and identically transformed values are too. That
   # is what makes the null usable as a reference for the observed axis, and it is
   # why the second negative fraction's own Ig+ frequency is not needed here.
-  compute_ma_pair <- function(a, b) {
+  compute_ma_pair <- function(a, b, a_was_zero, b_was_zero) {
+    # A pair is informative about this comparison only if at least one of its two
+    # members was really measured above zero. When BOTH were zero, the imputer put
+    # the same substituted value on both sides, so the change is that value over
+    # itself -- exactly 0 on a log-ratio axis -- for every such taxon in the sample.
+    # That is a number the zero treatment manufactured, not one the experiment
+    # measured, and it must not be reported as a change nor allowed to inform a
+    # null: it shrinks the reference sd toward 0 and piles a stack of identical
+    # points on the MA plot's zero line. Marked NA here, which is what removes it
+    # from `.slide_z_params()`'s estimate and from `get_ellipse_data()`'s fit alike.
+    #
+    # A pair with exactly ONE zero is kept. It is censored rather than fabricated --
+    # the magnitude depends on the pseudocount, but the direction and the fact of
+    # the difference are real -- and on IgSeq data it is the dominant mode of
+    # genuine replicate noise, not a rarity: measured on ps_igseq, the negative
+    # fractions are heavily overdispersed relative to Poisson (dispersion index
+    # 3.4-60 against 1) and 42% of taxa with >= 10 reads in one negative fraction
+    # have exactly 0 in the other, where Poisson would predict under 0.005%.
+    # Dropping those would understate the null badly and inflate every Z-score.
+    estimable <- !(a_was_zero & b_was_zero)
+
     # A stays on the raw count scale: more reads means more precision, which is
     # what this axis stands in for, and it is only ever used for ranking taxa into
     # windows and for display.
@@ -248,23 +315,37 @@ get_ma_coordinates <- function(
     change <- res$change
     abundance[is.nan(abundance) | is.infinite(abundance)] <- NA
     change[is.nan(change) | is.infinite(change)] <- NA
-    list(abundance = abundance, change = change, in_cone = res$in_cone)
+    # The abundance is left alone: it is only a precision proxy and a ranking key,
+    # and blanking it would drop the taxon out of the MA plot entirely rather than
+    # just out of the change axis.
+    change[!estimable] <- NA
+    list(
+      abundance = abundance,
+      change = change,
+      in_cone = res$in_cone,
+      estimable = estimable
+    )
   }
 
-  obs <- compute_ma_pair(pos, neg1)
+  obs <- compute_ma_pair(pos, neg1, pos_was_zero, neg1_was_zero)
   obs_abundance <- obs$abundance
   obs_change <- obs$change
   obs_in_cone <- obs$in_cone
+  obs_estimable <- obs$estimable
 
   if (empirical_null) {
-    null <- compute_ma_pair(neg1, neg2)
+    null <- compute_ma_pair(neg1, neg2, neg1_was_zero, neg2_was_zero)
     null_abundance <- null$abundance
     null_change <- null$change
     null_in_cone <- null$in_cone
+    null_estimable <- null$estimable
   } else {
     null_abundance <- rep(NA, nrow(sorted_sample_df))
     null_change <- rep(NA, nrow(sorted_sample_df))
     null_in_cone <- rep(NA, nrow(sorted_sample_df))
+    # No second negative fraction means no null pair to judge, which is not the
+    # same as an inadmissible one -- NA, matching how `in_cone` reports "no cone".
+    null_estimable <- rep(NA, nrow(sorted_sample_df))
   }
 
   ma_coords <-
@@ -280,10 +361,56 @@ get_ma_coordinates <- function(
       null_change,
       change_transform = change_transform,
       obs_in_cone,
-      null_in_cone
+      null_in_cone,
+      obs_estimable,
+      null_estimable
     )
 
   return(ma_coords)
+}
+
+#' Was One Fraction's Count Really Zero, Before Imputation?
+#'
+#' Internal. Resolves a single fraction's pre-imputation zero pattern for
+#' [get_ma_coordinates()], either from a `was_zero` table supplied by
+#' [impute_zeros()] or, failing that, from the abundances themselves.
+#'
+#' The fallback is what makes the argument optional for callers that never
+#' imputed -- the companion Shiny app's MA-plot preview goes straight from
+#' [group_sorted_samples()] to [get_ma_coordinates()] on raw counts, where a
+#' zero in the data frame *is* a real zero. It is also why `was_zero` must be
+#' passed whenever imputation did happen: the imputed frame has no zeros left,
+#' so the fallback would silently report that nothing was ever zero.
+#'
+#' @param sorted_sample_df The abundance data frame handed to [get_ma_coordinates()].
+#' @param was_zero The `was_zero` element of [impute_zeros()]'s result, or `NULL`.
+#' @param fraction_name The fraction column to resolve, or `NULL` (no such
+#'   fraction in this comparison, e.g. a missing second negative one).
+#'
+#' @return A logical vector, `nrow(sorted_sample_df)` long. All-`FALSE` when
+#'   `fraction_name` is `NULL`, so that a pair involving a missing fraction is
+#'   never declared uninformative on these grounds.
+#' @noRd
+.fraction_was_zero <- function(sorted_sample_df, was_zero, fraction_name) {
+  n_rows <- nrow(sorted_sample_df)
+  if (is.null(fraction_name)) {
+    return(rep(FALSE, n_rows))
+  }
+  if (!is.null(was_zero) && fraction_name %in% colnames(was_zero)) {
+    flags <- as.logical(was_zero[[fraction_name]])
+    if (length(flags) != n_rows) {
+      stop(
+        "`was_zero` has ",
+        length(flags),
+        " row(s) but `sorted_sample_df` has ",
+        n_rows,
+        "; they must be row-aligned, as `impute_zeros()` returns them.",
+        call. = FALSE
+      )
+    }
+    return(!is.na(flags) & flags)
+  }
+  as.numeric(sorted_sample_df[[fraction_name]]) == 0
 }
 
 #' Build MA-Plot Data Across Zero-Handling Strategies
@@ -337,10 +464,13 @@ get_ma_coordinates <- function(
 #'     \item{`nb_zero_taxa`}{Number of taxa with a zero abundance in at
 #'       least one compared fraction, before imputation.}
 #'     \item{`plot_data`}{A long-format data frame (`M`, `A`, `comparison`,
-#'       `taxon_id`, `in_cone`, `imputed`, `zero_treatment`, `change_transform`)
-#'       ready for [plot_ma()]. `imputed` is per-row, i.e. per `zero_treatment`:
-#'       whether *that* treatment derived this taxon's coordinates from an
-#'       imputed zero.}
+#'       `taxon_id`, `in_cone`, `estimable`, `imputed`, `zero_treatment`,
+#'       `change_transform`) ready for [plot_ma()]. `imputed` is per-row, i.e. per
+#'       `zero_treatment`: whether *that* treatment derived this taxon's coordinates
+#'       from an imputed zero. `estimable` is `FALSE` where both fractions of *this
+#'       row's* comparison were really zero, so `M` is `NA` rather than a
+#'       manufactured 0 (see [get_ma_coordinates()]'s Uninformative pairs section);
+#'       [plot_ma()] drops those rows and counts them in its subtitle.}
 #'     \item{`imputed_taxa`}{The union, across all `zero_treatments`, of
 #'       `taxon_id`s imputed under that treatment (see [impute_zeros()]). Kept
 #'       for callers that want one set for the whole sample; use `plot_data$imputed`
@@ -440,7 +570,10 @@ get_ma_plot_data <- function(
         pos_ig_freq = pos_ig_freq,
         neg_ig_freq = neg_ig_freq,
         cone_policy = cone_policy,
-        pool_prior = pool_prior
+        pool_prior = pool_prior,
+        # Without this the imputed frame looks zero-free and every fabricated
+        # pair would be reported as a measured change of exactly 0.
+        was_zero = zero_imputation_result$was_zero
       )
 
       # Per-treatment, NOT the union below: whether a taxon's coordinates are
@@ -463,6 +596,7 @@ get_ma_plot_data <- function(
           ),
           taxon_id = ma_coords$taxon_id,
           in_cone = ma_coords$obs_in_cone,
+          estimable = ma_coords$obs_estimable,
           imputed = imputed
         )
 
@@ -481,6 +615,7 @@ get_ma_plot_data <- function(
             ),
             taxon_id = ma_coords$taxon_id,
             in_cone = ma_coords$null_in_cone,
+            estimable = ma_coords$null_estimable,
             imputed = imputed
           )
         )
@@ -527,6 +662,11 @@ get_ma_plot_data <- function(
 #' the y-axis. Taxa whose coordinates come from an imputed zero are drawn
 #' separately, jittered just past the plot's x-range rather than placed at their
 #' imputed/undefined `A` value.
+#'
+#' Rows flagged `estimable = FALSE` -- both fractions of that comparison really
+#' zero, so `M` is `NA` rather than a measurement -- are not drawn at all, and
+#' counted in the subtitle instead. They are the reason a stack of points used to
+#' sit exactly on the zero line: every one of them was the pseudocount over itself.
 #'
 #' Which taxa those are is read per `zero_treatment`, from `plot_data$imputed`,
 #' not from the `imputed_taxa` union: a treatment that imputes nothing (`"no_zero"`,
@@ -595,6 +735,19 @@ plot_ma <-
       plot_data <- plot_data[
         as.character(plot_data$change_transform) == change_transform,
       ]
+    }
+
+    # Pairs where both fractions were really zero carry no information about their
+    # comparison, and get_ma_coordinates() marks their change NA. ggplot would drop
+    # them anyway, with a warning that says nothing useful; drop them here and say
+    # how many in the subtitle instead. Before the split below, so they cannot land
+    # in the jitter band and reappear as a stack of points on the zero line -- which
+    # is what they looked like when they were reported as a change of exactly 0.
+    n_not_estimable <- 0L
+    if (!is.null(plot_data$estimable)) {
+      not_estimable <- !is.na(plot_data$estimable) & !plot_data$estimable
+      n_not_estimable <- sum(not_estimable)
+      plot_data <- plot_data[!not_estimable, ]
     }
 
     # `imputed` is per zero-treatment; the union in `imputed_taxa` is the
@@ -685,6 +838,13 @@ plot_ma <-
         subtitle = paste0(
           ma_plot_data$nb_zero_taxa,
           " taxa with zero abundances in at least one fraction",
+          if (n_not_estimable > 0) {
+            paste0(
+              "; ",
+              n_not_estimable,
+              " point(s) not shown (zero in both compared fractions)"
+            )
+          },
           if (nrow(ma_saturated) > 0) {
             paste0(
               "; ",

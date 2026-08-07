@@ -42,7 +42,9 @@ test_that("get_ma_coordinates computes obs coordinates and keeps raw fraction co
       "null_change",
       "change_transform",
       "obs_in_cone",
-      "null_in_cone"
+      "null_in_cone",
+      "obs_estimable",
+      "null_estimable"
     )
   )
   expect_equal(ma_coords$pos, df$Pos)
@@ -393,4 +395,144 @@ test_that("plot_ma reads `imputed` per treatment, so a treatment that imputes no
   ]
   expect_gt(nrow(no_zero_rows), 0)
   expect_false(any(no_zero_rows$imputed))
+})
+
+# ---- Uninformative pairs (both fractions really zero) ----
+#
+# A pair whose two fractions were BOTH zero before imputation carries no
+# information about that comparison: the zero treatment substitutes one value
+# for both sides, so the change is that value over itself. These must not be
+# reported as a measured change of 0. Per comparison, not per taxon -- the
+# fixture below has one taxon of each kind so the two axes can disagree.
+
+make_zero_pattern_df <- function() {
+  data.frame(
+    sample_id = rep("sample_1", 5),
+    taxon_id = paste0("taxon_", 1:5),
+    #             clean  obs-dead  null-dead  obs-censored  null-censored
+    Pos =  c(10, 0, 7, 0, 9),
+    Neg1 = c(8, 0, 0, 6, 0),
+    Neg2 = c(9, 4, 0, 5, 7),
+    Whole = c(20, 3, 0, 11, 14)
+  )
+}
+
+test_that("get_ma_coordinates flags and NAs pairs that were zero on both sides", {
+  zdf <- make_zero_pattern_df()
+  imputed <- impute_zeros(zdf, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+
+  ma <- get_ma_coordinates(
+    sorted_sample_df = imputed$data,
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    second_negative_fraction_name = "Neg2",
+    was_zero = imputed$was_zero
+  )
+
+  # taxon_2: Pos and Neg1 both zero -> observed pair carries nothing.
+  # taxon_3: Neg1 and Neg2 both zero -> empirical-null pair carries nothing.
+  expect_equal(ma$obs_estimable, c(TRUE, FALSE, TRUE, TRUE, TRUE))
+  expect_equal(ma$null_estimable, c(TRUE, TRUE, FALSE, TRUE, TRUE))
+  expect_true(is.na(ma$obs_change[2]))
+  expect_true(is.na(ma$null_change[3]))
+  # The other axis of each of those taxa is untouched: the cut is per comparison.
+  expect_false(is.na(ma$null_change[2]))
+  expect_false(is.na(ma$obs_change[3]))
+  # Censored (one zero) pairs are kept -- they are real, if pseudocount-scaled.
+  expect_false(anyNA(ma$obs_change[c(1, 4, 5)]))
+  expect_false(anyNA(ma$null_change[c(1, 4, 5)]))
+  # The abundance axis is left alone; only the change is blanked.
+  expect_false(anyNA(ma$obs_abundance))
+})
+
+test_that("get_ma_coordinates would otherwise report a manufactured change of zero", {
+  zdf <- make_zero_pattern_df()
+  imputed <- impute_zeros(zdf, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+
+  # Without `was_zero` the imputed frame looks zero-free, which is precisely the
+  # failure this guards: both fabricated pairs come back as an exact 0.
+  ma_blind <- get_ma_coordinates(
+    sorted_sample_df = imputed$data,
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    second_negative_fraction_name = "Neg2"
+  )
+  expect_equal(ma_blind$obs_change[2], 0)
+  expect_equal(ma_blind$null_change[3], 0)
+  expect_true(all(ma_blind$obs_estimable))
+})
+
+test_that("get_ma_coordinates ignores a pre-sort fraction when judging the two pairs", {
+  zdf <- make_zero_pattern_df()
+  # taxon_3 is zero in Whole as well; the pre-sort is in neither comparison, so
+  # it must change neither flag. Imputing it too must not change them either.
+  with_pre <- impute_zeros(zdf, c("Pos", "Neg1", "Neg2", "Whole"), "pseudo_count")
+  without_pre <- impute_zeros(zdf, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+
+  flags <- function(res) {
+    ma <- get_ma_coordinates(
+      sorted_sample_df = res$data,
+      positive_fraction_name = "Pos",
+      first_negative_fraction_name = "Neg1",
+      second_negative_fraction_name = "Neg2",
+      was_zero = res$was_zero
+    )
+    ma[, c("obs_estimable", "null_estimable")]
+  }
+  expect_equal(flags(with_pre), flags(without_pre))
+})
+
+test_that("get_ma_coordinates leaves null_estimable NA without a second negative fraction", {
+  zdf <- make_zero_pattern_df()
+  imputed <- impute_zeros(zdf, c("Pos", "Neg1"), "pseudo_count")
+  ma <- get_ma_coordinates(
+    sorted_sample_df = imputed$data,
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    was_zero = imputed$was_zero
+  )
+  # No second negative fraction means no null pair to judge, which is not the
+  # same as an inadmissible one.
+  expect_true(all(is.na(ma$null_estimable)))
+  # With only two fractions in play, impute_zeros()' own "zero in every fraction"
+  # drop already removes the taxon whose observed pair carries nothing (taxon_2),
+  # so the two rules coincide and nothing is left for the flag to catch. It is
+  # only when a second negative fraction keeps such a taxon alive that they part.
+  expect_equal(imputed$data$taxon_id, paste0("taxon_", c(1, 3, 4, 5)))
+  expect_true(all(ma$obs_estimable))
+})
+
+test_that("get_ma_coordinates rejects a was_zero table that is not row-aligned", {
+  zdf <- make_zero_pattern_df()
+  imputed <- impute_zeros(zdf, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+  expect_error(
+    get_ma_coordinates(
+      sorted_sample_df = imputed$data,
+      positive_fraction_name = "Pos",
+      first_negative_fraction_name = "Neg1",
+      was_zero = imputed$was_zero[1:2, ]
+    ),
+    "row-aligned"
+  )
+})
+
+test_that("plot_ma drops uninformative points and counts them in the subtitle", {
+  zdf <- make_zero_pattern_df()
+  ma_plot_data <- get_ma_plot_data(
+    sorted_sample_df = zdf,
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    second_negative_fraction_name = "Neg2",
+    zero_treatments = c("pseudo_count")
+  )
+  # One dead observed pair + one dead null pair, one row each in long format.
+  expect_equal(sum(!ma_plot_data$plot_data$estimable), 2)
+
+  plt <- plot_ma(ma_plot_data)
+  expect_match(plt$labels$subtitle, "2 point\\(s\\) not shown")
+  # Nothing reaches a layer with a missing y, so ggplot has no rows to drop and
+  # emits no "removed rows containing missing values" warning.
+  drawn <- ggplot2::ggplot_build(plt)$data
+  expect_false(any(vapply(drawn, function(d) anyNA(d$y), logical(1))))
+  expect_equal(sum(vapply(drawn, nrow, integer(1))), sum(ma_plot_data$plot_data$estimable))
 })

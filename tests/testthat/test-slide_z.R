@@ -516,3 +516,103 @@ test_that("get_ellipse_data assigns NA confidence level to imputed taxa", {
 
   expect_true(is.na(result$levels[1]))
 })
+
+# ---- get_slide_z: pairs that were zero on both sides ----
+#
+# See get_ma_coordinates()' "Uninformative pairs" section. These check the two
+# consequences that matter for scoring: such a taxon is not scored off a
+# manufactured change, and it does not enter the reference the others are scored
+# against. Both reference modes are covered, because which pair supplies the
+# reference decides which of the two flags does the work.
+#
+# The fixture mirrors the zero patterns real IgSeq data actually shows, with
+# one-sided dropouts running in BOTH directions on each axis. That matters for
+# the spread checks below: deleting a spike of exact zeros widens the reference
+# only when the rest of it straddles zero, as a null distribution does. On a
+# one-sided fixture the same deletion would narrow it, so a test built on one
+# would assert the opposite and prove nothing about the real case.
+
+make_zero_pattern_sample <- function() {
+  set.seed(42)
+  big <- function(n) sample(20:200, n, replace = TRUE)
+  groups <- rbind(
+    # 30 taxa with nothing zero.
+    data.frame(Pos = big(30), Neg1 = big(30), Neg2 = big(30)),
+    # A: observed pair dead; null pair censored, negative.
+    data.frame(Pos = rep(0, 10), Neg1 = rep(0, 10), Neg2 = big(10)),
+    # B: null pair dead; observed pair censored, positive.
+    data.frame(Pos = big(10), Neg1 = rep(0, 10), Neg2 = rep(0, 10)),
+    # C: null pair censored, positive; observed pair intact.
+    data.frame(Pos = big(10), Neg1 = big(10), Neg2 = rep(0, 10)),
+    # D: observed pair censored, negative; null pair intact.
+    data.frame(Pos = rep(0, 10), Neg1 = big(10), Neg2 = big(10))
+  )
+  data.frame(
+    sample_id = "sample_1",
+    taxon_id = paste0("taxon_", seq_len(nrow(groups))),
+    groups
+  )
+}
+
+slide_z_on_fixture <- function(..., guarded) {
+  sdf <- make_zero_pattern_sample()
+  res <- impute_zeros(sdf, c("Pos", "Neg1", "Neg2"), "pseudo_count")
+  args <- list(
+    sorted_sample_df = res$data,
+    positive_fraction_name = "Pos",
+    first_negative_fraction_name = "Neg1",
+    second_negative_fraction_name = "Neg2",
+    imputed_taxa = res$imputed_taxa,
+    ...
+  )
+  if (guarded) {
+    args$was_zero <- res$was_zero
+  }
+  out <- suppressWarnings(do.call(get_slide_z, args))
+  out$imputed <- res$data$taxon_id %in% res$imputed_taxa
+  out
+}
+
+test_that("get_slide_z does not score a taxon whose observed pair was zero on both sides", {
+  scored <- slide_z_on_fixture(guarded = TRUE)
+  dead_obs <- !scored$ma_coords$obs_estimable
+  expect_equal(sum(dead_obs), 10)
+  expect_true(all(is.na(scored$slide_z[dead_obs])))
+  expect_false(anyNA(scored$slide_z[!dead_obs]))
+
+  # Unguarded they are all scored -- off one shared, manufactured change of
+  # exactly 0, so all ten receive the same single Z-score.
+  blind <- slide_z_on_fixture(guarded = FALSE)
+  expect_false(anyNA(blind$slide_z[dead_obs]))
+  expect_equal(blind$ma_coords$obs_change[dead_obs], rep(0, 10))
+  expect_equal(length(unique(blind$slide_z[dead_obs])), 1)
+})
+
+test_that("get_slide_z keeps manufactured zeros out of the empirical null", {
+  guarded <- slide_z_on_fixture(guarded = TRUE)
+  blind <- slide_z_on_fixture(guarded = FALSE)
+
+  ref_blind <- blind$ma_coords$null_change[blind$imputed]
+  ref_guarded <- guarded$ma_coords$null_change[guarded$imputed]
+  expect_equal(sum(ref_blind == 0), 10)
+  expect_equal(sum(ref_guarded == 0, na.rm = TRUE), 0)
+  expect_true(all(is.na(
+    guarded$ma_coords$null_change[!guarded$ma_coords$null_estimable]
+  )))
+  expect_gt(sd(ref_guarded, na.rm = TRUE), sd(ref_blind, na.rm = TRUE))
+})
+
+test_that("get_slide_z applies the same cut when the observed pair supplies the reference", {
+  # empirical_null_distribution = FALSE centers/scales against obs_change itself,
+  # so the manufactured zeros land in the reference rather than in the null.
+  # Marking obs_change NA covers both modes through one mechanism.
+  guarded <- slide_z_on_fixture(empirical_null_distribution = FALSE, guarded = TRUE)
+  blind <- slide_z_on_fixture(empirical_null_distribution = FALSE, guarded = FALSE)
+
+  ref_blind <- blind$ma_coords$obs_change[blind$imputed]
+  ref_guarded <- guarded$ma_coords$obs_change[guarded$imputed]
+  expect_equal(sum(ref_blind == 0), 10)
+  expect_equal(sum(ref_guarded == 0, na.rm = TRUE), 0)
+  expect_gt(sd(ref_guarded, na.rm = TRUE), sd(ref_blind, na.rm = TRUE))
+  expect_true(all(is.na(guarded$slide_z[!guarded$ma_coords$obs_estimable])))
+})

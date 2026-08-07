@@ -37,6 +37,11 @@ separately, jittered just past the plot's x-range rather than placed at their
 imputed/undefined \code{A} value.
 }
 \details{
+Rows flagged \code{estimable = FALSE} -- both fractions of that comparison really
+zero, so \code{M} is \code{NA} rather than a measurement -- are not drawn at all, and
+counted in the subtitle instead. They are the reason a stack of points used to
+sit exactly on the zero line: every one of them was the pseudocount over itself.
+
 Which taxa those are is read per \code{zero_treatment}, from \code{plot_data$imputed},
 not from the \code{imputed_taxa} union: a treatment that imputes nothing (\code{"no_zero"},
 which drops the taxa instead) must not inherit another treatment's imputed set,

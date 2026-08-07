@@ -13,7 +13,8 @@ get_ma_coordinates(
   pos_ig_freq = NULL,
   neg_ig_freq = NULL,
   cone_policy = c("regularize", "na"),
-  pool_prior = NULL
+  pool_prior = NULL,
+  was_zero = NULL
 )
 }
 \arguments{
@@ -50,6 +51,14 @@ ones.}
 \item{pool_prior}{Passed to the un-mixing under \code{"purity_corrected"}; \code{NULL}
 (default) derives one read's worth of composition from the fraction depth. See
 \code{\link[=compute_ig_score]{compute_ig_score()}}.}
+
+\item{was_zero}{The \code{was_zero} element of \code{\link[=impute_zeros]{impute_zeros()}}'s result: a logical
+data frame, row-aligned with \code{sorted_sample_df}, marking which counts were
+really zero before imputation. \strong{Pass it whenever \code{sorted_sample_df} has been
+through \code{\link[=impute_zeros]{impute_zeros()}}}, otherwise the pairs that carry no information are
+indistinguishable from measured ones -- see the Uninformative pairs section.
+\code{NULL} (default) reads the zeros off \code{sorted_sample_df} itself, which is
+correct only for un-imputed abundances.}
 }
 \value{
 A data frame with one row per taxon: \code{taxon_id}, \code{sample_id}, the
@@ -59,8 +68,11 @@ original fraction abundances (\code{pos}, \code{neg1}, \code{neg2}; \code{neg2} 
 and, when a second negative fraction is supplied, the empirical-null
 coordinates (\code{null_abundance}, \code{null_change}, first vs. second negative
 fraction); otherwise \code{NA}. Plus \code{change_transform}, recording which axis was
-computed, and \code{obs_in_cone}/\code{null_in_cone}, logical flags marking taxa the
-un-mixing had to clamp (\code{NA} throughout under \code{"log_ratio"}, which has no cone).
+computed, \code{obs_in_cone}/\code{null_in_cone}, logical flags marking taxa the
+un-mixing had to clamp (\code{NA} throughout under \code{"log_ratio"}, which has no cone),
+and \code{obs_estimable}/\code{null_estimable}, logical flags marking the pairs that
+carry information at all (see the Uninformative pairs section; \code{null_estimable}
+is \code{NA} when there is no second negative fraction).
 }
 \description{
 Computes MA-plot-style coordinates (borrowed from microarray analysis: \code{M}
@@ -108,6 +120,24 @@ not cancel, so that axis carries a residual shift \code{"log_ratio"} does not. D
 same non-cancelling shift on the default axis, and it is not visible in the scores,
 only in where the significance threshold lands.
 }
+\section{Uninformative pairs}{
+
+A comparison says nothing about a taxon when \emph{both} of its fractions were zero
+before imputation: the zero treatment substitutes one value for both sides, so
+the change is that value over itself -- exactly 0 on a log-ratio axis, identical
+for every such taxon. Those entries are set to \code{NA} on the affected axis rather
+than reported as a change of zero, and flagged by \code{obs_estimable} /
+\code{null_estimable}. This is per \emph{comparison}, not per taxon: a taxon zeroed in both
+negative fractions has no usable empirical null but a perfectly real Ig+ vs Ig-
+change (and is often among the most strongly coated), while a taxon zeroed in
+Ig+ and Ig-.1 is untestable yet still contributes a real null observation.
+
+A pair with exactly \emph{one} zero is kept: it is censored, not fabricated, and it is
+the dominant mode of genuine replicate noise in this assay rather than an edge
+case -- see the note in the source. Excluding those too would understate the null
+and inflate every Z-score.
+}
+
 \examples{
 data(ps_igseq)
 grouped <- group_sorted_samples(
